@@ -1,0 +1,281 @@
+# ============================================================================
+# NIDAW - Deploy to Production
+# Triggered on release tags (v*)
+# ============================================================================
+
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy'
+        required: true
+        type: string
+      skip_canary:
+        description: 'Skip canary deployment'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false  # Never cancel production deploys
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ${{ github.repository }}/backend
+  FRONTEND_IMAGE: ${{ github.repository }}/frontend
+  AWS_REGION: us-east-1
+  EKS_CLUSTER: nidaw-production
+  HELM_RELEASE: nidaw-production
+  NAMESPACE: nidaw-production
+
+jobs:
+  # ==========================================================================
+  # VALIDATION
+  # ==========================================================================
+  validate:
+    name: Pre-deploy Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version tag
+        run: |
+          VERSION=${{ github.ref_name || inputs.version }}
+          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "✅ Version: $VERSION"
+
+      - name: Run full test suite
+        run: |
+          cd backend && go test -v -race -cover ./...
+          cd ../frontend && flutter pub get && flutter test
+
+      - name: Security scan
+        run: |
+          trivy fs --severity CRITICAL,HIGH .
+          gitleaks detect --source . --no-git
+
+  # ==========================================================================
+  # BUILD
+  # ==========================================================================
+  build:
+    name: Build Images
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=${{ github.ref_name || inputs.version }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
+          build-args: |
+            API_BASE_URL=https://api.nidaw.com
+            WS_BASE_URL=wss://api.nidaw.com/ws
+            ENVIRONMENT=production
+
+  # ==========================================================================
+  # CANARY DEPLOYMENT
+  # ==========================================================================
+  canary:
+    name: Canary Deploy (10%)
+    needs: build
+    if: inputs.skip_canary != 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Deploy canary (10%)
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }}-canary ./helm/nidaw \
+            --namespace ${{ env.NAMESPACE }} \
+            --values ./helm/nidaw/values-prod.yaml \
+            --set backend.image.tag=${{ needs.build.outputs.version }} \
+            --set frontend.image.tag=${{ needs.build.outputs.version }} \
+            --set deployment.strategy=canary \
+            --set deployment.canaryWeight=10 \
+            --wait --timeout 10m
+
+      - name: Monitor canary (15 minutes)
+        run: |
+          echo "⏳ Monitoring canary for 15 minutes..."
+          for i in $(seq 1 15); do
+            sleep 60
+            ERROR_RATE=$(curl -sf https://api.nidaw.com/metrics | grep 'http_requests_total{status=~"5.."}' | awk '{print $2}')
+            echo "Minute $i: Error rate = ${ERROR_RATE:-0}"
+            if (( $(echo "$ERROR_RATE > 0.05" | bc -l 2>/dev/null || echo 0) )); then
+              echo "❌ Error rate too high, aborting canary"
+              helm uninstall ${{ env.HELM_RELEASE }}-canary -n ${{ env.NAMESPACE }}
+              exit 1
+            fi
+          done
+          echo "✅ Canary healthy"
+
+  # ==========================================================================
+  # FULL DEPLOYMENT
+  # ==========================================================================
+  deploy:
+    name: Full Production Deploy
+    needs: [build, canary]
+    if: always() && needs.build.result == 'success' && (needs.canary.result == 'success' || needs.canary.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Remove canary
+        if: needs.canary.result == 'success'
+        run: helm uninstall ${{ env.HELM_RELEASE }}-canary -n ${{ env.NAMESPACE }} || true
+
+      - name: Full deployment
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./helm/nidaw \
+            --namespace ${{ env.NAMESPACE }} \
+            --values ./helm/nidaw/values-prod.yaml \
+            --set backend.image.tag=${{ needs.build.outputs.version }} \
+            --set frontend.image.tag=${{ needs.build.outputs.version }} \
+            --wait --timeout 15m
+
+      - name: Run database migrations
+        run: |
+          kubectl exec -n ${{ env.NAMESPACE }} deploy/${{ env.HELM_RELEASE }}-backend -- \
+            /app/server migrate --up
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }}-backend -n ${{ env.NAMESPACE }} --timeout=300s
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }}-frontend -n ${{ env.NAMESPACE }} --timeout=300s
+
+  # ==========================================================================
+  # POST-DEPLOY VERIFICATION
+  # ==========================================================================
+  verify:
+    name: Post-deploy Verification
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Health checks
+        run: |
+          curl -sf https://api.nidaw.com/health
+          curl -sf https://api.nidaw.com/ready
+          curl -sf https://app.nidaw.com/
+
+      - name: Smoke tests
+        run: ./scripts/smoke-test.sh production
+
+      - name: Performance baseline
+        run: |
+          k6 run --env BASE_URL=https://api.nidaw.com \
+            --vus 50 --duration 2m \
+            scripts/benchmarks/load-test.js
+
+  # ==========================================================================
+  # RELEASE
+  # ==========================================================================
+  release:
+    name: Create GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.build.outputs.version || github.ref_name }}
+          generate_release_notes: true
+          body: |
+            ## NIDAW ${{ needs.build.outputs.version || github.ref_name }}
+            
+            Deployed to production successfully.
+            
+            - Backend: `${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ needs.build.outputs.version || github.ref_name }}`
+            - Frontend: `${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ needs.build.outputs.version || github.ref_name }}`
+
+  # ==========================================================================
+  # NOTIFICATION
+  # ==========================================================================
+  notify:
+    name: Notify
+    needs: [deploy, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack notification
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "${{ needs.deploy.result == 'success' && '🚀' || '❌' }} NIDAW Production Deploy ${{ needs.deploy.result }}\nVersion: ${{ needs.build.outputs.version || github.ref_name }}\nActor: ${{ github.actor }}\nURL: https://app.nidaw.com"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Update status page
+        if: needs.deploy.result == 'success'
+        run: |
+          curl -X POST https://status.nidaw.com/api/v1/incidents \
+            -H "Authorization: Bearer ${{ secrets.STATUS_PAGE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Deployment v${{ needs.build.outputs.version }}","status":"resolved"}'

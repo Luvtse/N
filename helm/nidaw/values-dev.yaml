@@ -1,0 +1,190 @@
+# ============================================================================
+# NIDAW Helm Chart - Development Values
+# ============================================================================
+
+# Global settings
+global:
+  environment: development
+  region: us-east-1
+  domain: nidaw.local
+  
+  imagePullSecrets: []
+  
+  commonLabels:
+    app.kubernetes.io/part-of: nidaw-platform
+    environment: dev
+  
+  commonAnnotations:
+    prometheus.io/scrape: "true"
+
+# ============================================================================
+# Backend Configuration
+# ============================================================================
+
+backend:
+  enabled: true
+  
+  replicaCount: 1
+  
+  image:
+    repository: nidaw/backend
+    tag: dev-latest
+    pullPolicy: Always
+  
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    metricsPort: 9090
+  
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  
+  autoscaling:
+    enabled: false
+  
+  env:
+    ENVIRONMENT: development
+    LOG_LEVEL: debug
+    LOG_FORMAT: console
+    ENABLE_PROFILING: true
+  
+  secrets:
+    existingSecret: nidaw-backend-secrets
+  
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# ============================================================================
+# Frontend Configuration
+# ============================================================================
+
+frontend:
+  enabled: true
+  
+  replicaCount: 1
+  
+  image:
+    repository: nidaw/frontend
+    tag: dev-latest
+    pullPolicy: Always
+  
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+  
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  
+  autoscaling:
+    enabled: false
+  
+  env:
+    API_BASE_URL: http://dev-api.nidaw.local
+    WS_BASE_URL: ws://dev-api.nidaw.local/ws
+    ENVIRONMENT: development
+    ENABLE_DEBUG: "true"
+    LOG_LEVEL: debug
+  
+  configMap:
+    enabled: true
+  
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# ============================================================================
+# Ingress Configuration
+# ============================================================================
+
+ingress:
+  enabled: true
+  className: nginx
+  
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  
+  hosts:
+    - host: dev-api.nidaw.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+          port: 80
+        - path: /
+          pathType: Prefix
+          service: frontend
+          port: 80
+  
+  tls: []
+
+# ============================================================================
+# Service Account
+# ============================================================================
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: nidaw-sa
+
+# ============================================================================
+# Monitoring
+# ============================================================================
+
+monitoring:
+  enabled: true
+  
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+  
+  prometheusRule:
+    enabled: false
+
+# ============================================================================
+# Pod Disruption Budget
+# ============================================================================
+
+podDisruptionBudget:
+  enabled: false
+
+# ============================================================================
+# Network Policy
+# ============================================================================
+
+networkPolicy:
+  enabled: false

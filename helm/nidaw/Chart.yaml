@@ -1,0 +1,13 @@
+apiVersion: v2
+name: nidaw
+description: NIDAW - AI-Native Mobility Super-App
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - mobility
+  - ridesharing
+  - super-app
+maintainers:
+  - name: NIDAW Team
+    email: tech@nidaw.com

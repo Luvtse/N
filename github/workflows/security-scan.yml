@@ -1,0 +1,299 @@
+# ============================================================================
+# NIDAW - Security Scanning Pipeline
+# Runs Trivy, Gitleaks, OWASP ZAP on every PR and scheduled
+# ============================================================================
+
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  # ==========================================================================
+  # TRIVY - Container & Dependency Scanning
+  # ==========================================================================
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Filesystem scan
+      - name: Trivy FS Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          ignore-unfixed: true
+          exit-code: '0'
+          trivy-config: 'security/scanning/trivy-config.yaml'
+
+      - name: Upload Trivy FS results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-fs-results.sarif'
+          category: 'trivy-fs'
+
+      # Build and scan backend image
+      - name: Build backend image
+        run: docker build -t nidaw-backend-scan ./backend
+
+      - name: Trivy Image Scan (Backend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'nidaw-backend-scan'
+          severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-backend-results.sarif'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload Trivy Backend results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-backend-results.sarif'
+          category: 'trivy-backend'
+
+      # Build and scan frontend image
+      - name: Build frontend image
+        run: docker build -t nidaw-frontend-scan ./frontend
+
+      - name: Trivy Image Scan (Frontend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'nidaw-frontend-scan'
+          severity: 'CRITICAL,HIGH'
+          format: 'sarif'
+          output: 'trivy-frontend-results.sarif'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload Trivy Frontend results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-frontend-results.sarif'
+          category: 'trivy-frontend'
+
+      # IaC scanning
+      - name: Trivy IaC Scan (Terraform)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'infrastructure/'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          format: 'sarif'
+          output: 'trivy-iac-results.sarif'
+          exit-code: '0'
+
+      - name: Upload Trivy IaC results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-iac-results.sarif'
+          category: 'trivy-iac'
+
+  # ==========================================================================
+  # GITLEAKS - Secret Detection
+  # ==========================================================================
+  gitleaks-scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for secret scanning
+
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: security/scanning/gitleaks-config.toml
+          GITLEAKS_ENABLE_COMMENTS: true
+          GITLEAKS_ENABLE_SUMMARY: true
+
+      - name: Gitleaks Full History Scan
+        if: github.event_name == 'schedule'
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: security/scanning/gitleaks-config.toml
+          GITLEAKS_ENABLE_COMMENTS: true
+
+  # ==========================================================================
+  # OWASP ZAP - DAST Scanning
+  # ==========================================================================
+  zap-scan:
+    name: OWASP ZAP DAST Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start application
+        run: |
+          docker-compose -f docker/compose/base.yaml -f docker/compose/dev.yaml up -d
+          sleep 60
+          curl -sf http://localhost:8080/health || exit 1
+
+      - name: OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: 'http://localhost:8080'
+          rules_file_name: 'security/scanning/owasp-zap-config.yaml'
+          cmd_options: '-a -j'
+          fail_action: 'warn'
+          allow_issue_writing: false
+
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-report
+          path: report_html.html
+          retention-days: 30
+
+      - name: ZAP API Scan
+        uses: zaproxy/action-api-scan@v0.7.0
+        with:
+          target: 'http://localhost:8080/api/openapi.yaml'
+          format: 'openapi'
+          fail_action: 'warn'
+
+      - name: Stop application
+        if: always()
+        run: docker-compose -f docker/compose/base.yaml -f docker/compose/dev.yaml down
+
+  # ==========================================================================
+  # CODEQL - Code Analysis
+  # ==========================================================================
+  codeql-scan:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['go', 'python', 'javascript']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ==========================================================================
+  # DEPENDENCY AUDIT
+  # ==========================================================================
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go dependencies
+      - name: Go vulnerability check
+        uses: golang/govulncheck-action@v1
+        with:
+          work-dir: ./backend
+
+      # Python dependencies
+      - name: Python dependency audit
+        run: |
+          pip install safety pip-audit
+          pip-audit -r ml/requirements.txt --format json > python-audit.json || true
+        continue-on-error: true
+
+      # Node.js dependencies
+      - name: npm audit
+        working-directory: blockchain
+        run: npm audit --audit-level=high || true
+
+      # Upload results
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit
+          path: |
+            python-audit.json
+          retention-days: 30
+
+  # ==========================================================================
+  # LICENSE CHECK
+  # ==========================================================================
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check licenses
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'license'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          format: 'table'
+
+  # ==========================================================================
+  # SUMMARY
+  # ==========================================================================
+  security-summary:
+    name: Security Summary
+    needs: [trivy-scan, gitleaks-scan, codeql-scan, dependency-audit, license-check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🔐 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy | ${{ needs.trivy-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Gitleaks | ${{ needs.gitleaks-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL | ${{ needs.codeql-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Licenses | ${{ needs.license-check.result }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Slack alert on failure
+        if: contains(needs.*.result, 'failure')
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "🚨 NIDAW Security Scan FAILED\nPR: ${{ github.event.pull_request.html_url }}\nCommit: ${{ github.sha }}\nCheck: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_SECURITY_WEBHOOK }}

@@ -1,0 +1,228 @@
+# ============================================================================
+# NIDAW - Deploy to Staging
+# Triggered on push to develop branch
+# ============================================================================
+
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [develop]
+    paths-ignore:
+      - 'docs/**'
+      - 'legal/**'
+      - '*.md'
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests (emergency deploy)'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ${{ github.repository }}/backend
+  FRONTEND_IMAGE: ${{ github.repository }}/frontend
+  AWS_REGION: us-east-1
+  EKS_CLUSTER: nidaw-staging
+  HELM_RELEASE: nidaw-staging
+  NAMESPACE: nidaw-staging
+
+jobs:
+  # ==========================================================================
+  # BUILD & TEST
+  # ==========================================================================
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: backend/go.sum
+
+      - name: Run tests
+        if: inputs.skip_tests != 'true'
+        working-directory: backend
+        run: |
+          go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        if: inputs.skip_tests != 'true'
+        uses: codecov/codecov-action@v4
+        with:
+          file: backend/coverage.out
+          flags: backend
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=sha,prefix=staging-
+            type=ref,event=branch
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.sha }}
+
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.5'
+          cache: true
+
+      - name: Run tests
+        if: inputs.skip_tests != 'true'
+        working-directory: frontend
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test --coverage
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}
+          tags: |
+            type=sha,prefix=staging-
+            type=ref,event=branch
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            API_BASE_URL=https://staging-api.nidaw.com
+            WS_BASE_URL=wss://staging-api.nidaw.com/ws
+            ENVIRONMENT=staging
+
+  # ==========================================================================
+  # DEPLOY
+  # ==========================================================================
+  deploy:
+    name: Deploy to Staging
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./helm/nidaw \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
+            --values ./helm/nidaw/values-staging.yaml \
+            --set backend.image.tag=staging-${{ github.sha }} \
+            --set frontend.image.tag=staging-${{ github.sha }} \
+            --wait --timeout 10m
+
+      - name: Run database migrations
+        run: |
+          kubectl exec -n ${{ env.NAMESPACE }} deploy/${{ env.HELM_RELEASE }}-backend -- \
+            /app/server migrate --up
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }}-backend -n ${{ env.NAMESPACE }} --timeout=300s
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }}-frontend -n ${{ env.NAMESPACE }} --timeout=300s
+
+  # ==========================================================================
+  # SMOKE TESTS
+  # ==========================================================================
+  smoke-tests:
+    name: Smoke Tests
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run smoke tests
+        run: |
+          ./scripts/smoke-test.sh staging
+        env:
+          STAGING_URL: https://staging-api.nidaw.com
+
+      - name: Run API tests
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+        run: |
+          curl -sf https://staging-api.nidaw.com/health
+          curl -sf https://staging-api.nidaw.com/ready
+
+  # ==========================================================================
+  # NOTIFICATION
+  # ==========================================================================
+  notify:
+    name: Notify
+    needs: [deploy, smoke-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack notification
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "${{ needs.deploy.result == 'success' && '✅' || '❌' }} NIDAW Staging Deploy ${{ needs.deploy.result }}\nCommit: ${{ github.sha }}\nActor: ${{ github.actor }}\nURL: https://staging-app.nidaw.com"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

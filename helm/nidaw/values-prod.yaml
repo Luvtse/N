@@ -1,0 +1,37 @@
+# Production overrides
+replicaCount: 5
+
+image:
+  backend:
+    tag: v1.0.0
+  frontend:
+    tag: v1.0.0
+
+resources:
+  backend:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+  frontend:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 5
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 70
+
+env:
+  ENVIRONMENT: production
+  LOG_LEVEL: warn
+  LOG_FORMAT: json
+  ENABLE_PROFILING: false

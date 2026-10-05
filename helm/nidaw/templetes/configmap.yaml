@@ -1,0 +1,36 @@
+{{/*
+============================================================================
+NIDAW ConfigMap
+============================================================================
+*/}}
+
+{{- if .Values.frontend.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nidaw.frontend.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nidaw.frontend.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.frontend.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+
+---
+
+{{/*
+Backend ConfigMap
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nidaw.backend.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nidaw.backend.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.backend.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

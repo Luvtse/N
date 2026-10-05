@@ -1,0 +1,34 @@
+{{/*
+============================================================================
+NIDAW Backend Service
+============================================================================
+*/}}
+
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nidaw.backend.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nidaw.backend.labels" . | nindent 4 }}
+  {{- with .Values.global.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.backend.service.type }}
+  ports:
+    - port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.targetPort }}
+      protocol: TCP
+      name: http
+    {{- if .Values.backend.service.metricsPort }}
+    - port: {{ .Values.backend.service.metricsPort }}
+      targetPort: {{ .Values.backend.service.metricsPort }}
+      protocol: TCP
+      name: metrics
+    {{- end }}
+  selector:
+    {{- include "nidaw.backend.selectorLabels" . | nindent 4 }}
+{{- end }}
