@@ -1,0 +1,214 @@
+openapi: 3.0.3
+info:
+  title: NIDAW API
+  description: AI-Native Mobility Super-App API
+  version: 1.0.0
+  contact:
+    email: api@nidaw.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Development
+  - url: https://api.nidaw.com
+    description: Production
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /api/v1/nidus/rides:
+    post:
+      tags: [Rides]
+      summary: Request a ride
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RideRequest'
+      responses:
+        '201':
+          description: Ride requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RideResponse'
+
+  /api/v1/nidus/rides/estimate:
+    post:
+      tags: [Rides]
+      summary: Get fare estimate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstimateRequest'
+      responses:
+        '200':
+          description: Fare estimate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstimateResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name, phone]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        full_name:
+          type: string
+        phone:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        full_name:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+
+    RideRequest:
+      type: object
+      required: [pickup_lat, pickup_lng, dropoff_lat, dropoff_lng]
+      properties:
+        pickup_lat:
+          type: number
+        pickup_lng:
+          type: number
+        dropoff_lat:
+          type: number
+        dropoff_lng:
+          type: number
+        ride_type:
+          type: string
+          enum: [standard, premium, electric, shared]
+
+    RideResponse:
+      type: object
+      properties:
+        ride_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        fare:
+          type: number
+        eta:
+          type: integer
+
+    EstimateRequest:
+      type: object
+      required: [pickup_lat, pickup_lng, dropoff_lat, dropoff_lng]
+      properties:
+        pickup_lat:
+          type: number
+        pickup_lng:
+          type: number
+        dropoff_lat:
+          type: number
+        dropoff_lng:
+          type: number
+
+    EstimateResponse:
+      type: object
+      properties:
+        estimates:
+          type: array
+          items:
+            $ref: '#/components/schemas/FareEstimate'
+
+    FareEstimate:
+      type: object
+      properties:
+        ride_type:
+          type: string
+        total_fare:
+          type: number
+        distance_km:
+          type: number
+        duration_minutes:
+          type: integer

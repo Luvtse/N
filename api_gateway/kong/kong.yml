@@ -1,0 +1,763 @@
+# ============================================================================
+# NIDAW API Gateway - Kong Declarative Configuration
+# Mode: DB-less (declarative)
+# Version: 3.5+
+# ============================================================================
+
+_format_version: "3.0"
+_transform: true
+
+# ============================================================================
+# SERVICES (Upstream microservices)
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # NIDUS - Ride Hailing Service
+  # --------------------------------------------------------------------------
+  - name: nidus-service
+    url: http://nidaw-backend:8080
+    protocol: http
+    host: nidaw-backend
+    port: 8080
+    path: /api/v1/nidus
+    retries: 3
+    connect_timeout: 5000
+    write_timeout: 10000
+    read_timeout: 10000
+    tags:
+      - nidus
+      - rides
+    routes:
+      - name: nidus-rides-create
+        paths:
+          - /api/v1/nidus/rides
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-rides-list
+        paths:
+          - /api/v1/nidus/rides
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-rides-detail
+        paths:
+          - ~/api/v1/nidus/rides/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-rides-cancel
+        paths:
+          - ~/api/v1/nidus/rides/[0-9a-f-]+/cancel$
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-rides-rate
+        paths:
+          - ~/api/v1/nidus/rides/[0-9a-f-]+/rate$
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-rides-estimate
+        paths:
+          - /api/v1/nidus/rides/estimate
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-drivers-nearby
+        paths:
+          - /api/v1/nidus/drivers/nearby
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+      - name: nidus-location-update
+        paths:
+          - /api/v1/nidus/location/update
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - nidus
+
+  # --------------------------------------------------------------------------
+  # HAVEN - Hotel Booking Service
+  # --------------------------------------------------------------------------
+  - name: haven-service
+    url: http://nidaw-backend:8080
+    protocol: http
+    host: nidaw-backend
+    port: 8080
+    path: /api/v1/haven
+    retries: 3
+    connect_timeout: 5000
+    write_timeout: 10000
+    read_timeout: 15000
+    tags:
+      - haven
+      - hotels
+    routes:
+      - name: haven-hotels-search
+        paths:
+          - /api/v1/haven/hotels
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - haven
+      - name: haven-hotels-detail
+        paths:
+          - ~/api/v1/haven/hotels/[0-9a-f-]+$
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - haven
+      - name: haven-bookings-create
+        paths:
+          - /api/v1/haven/bookings
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - haven
+      - name: haven-bookings-list
+        paths:
+          - /api/v1/haven/bookings
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - haven
+
+  # --------------------------------------------------------------------------
+  # VORAX - Food Delivery Service
+  # --------------------------------------------------------------------------
+  - name: vorax-service
+    url: http://nidaw-backend:8080
+    protocol: http
+    host: nidaw-backend
+    port: 8080
+    path: /api/v1/vorax
+    retries: 3
+    connect_timeout: 5000
+    write_timeout: 10000
+    read_timeout: 10000
+    tags:
+      - vorax
+      - food
+    routes:
+      - name: vorax-restaurants-list
+        paths:
+          - /api/v1/vorax/restaurants
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - vorax
+      - name: vorax-restaurant-menu
+        paths:
+          - ~/api/v1/vorax/restaurants/[0-9a-f-]+/menu$
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - vorax
+      - name: vorax-orders-create
+        paths:
+          - /api/v1/vorax/orders
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - vorax
+      - name: vorax-orders-list
+        paths:
+          - /api/v1/vorax/orders
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - vorax
+      - name: vorax-orders-tracking
+        paths:
+          - ~/api/v1/vorax/orders/[0-9a-f-]+/tracking$
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - vorax
+
+  # --------------------------------------------------------------------------
+  # AUTH - Authentication Service
+  # --------------------------------------------------------------------------
+  - name: auth-service
+    url: http://nidaw-backend:8080
+    protocol: http
+    host: nidaw-backend
+    port: 8080
+    path: /api/v1/auth
+    retries: 2
+    connect_timeout: 3000
+    write_timeout: 5000
+    read_timeout: 5000
+    tags:
+      - auth
+    routes:
+      - name: auth-login
+        paths:
+          - /api/v1/auth/login
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - auth
+          - public
+      - name: auth-register
+        paths:
+          - /api/v1/auth/register
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - auth
+          - public
+      - name: auth-refresh
+        paths:
+          - /api/v1/auth/refresh
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - auth
+      - name: auth-me
+        paths:
+          - /api/v1/auth/me
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: true
+        tags:
+          - auth
+      - name: auth-logout
+        paths:
+          - /api/v1/auth/logout
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: true
+        tags:
+          - auth
+
+  # --------------------------------------------------------------------------
+  # HEALTH - Health Check Service
+  # --------------------------------------------------------------------------
+  - name: health-service
+    url: http://nidaw-backend:8080
+    protocol: http
+    host: nidaw-backend
+    port: 8080
+    retries: 1
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    tags:
+      - health
+    routes:
+      - name: health-check
+        paths:
+          - /health
+          - /ready
+        methods:
+          - GET
+        strip_path: false
+        tags:
+          - health
+          - public
+
+  # --------------------------------------------------------------------------
+  # WEBSOCKET - Real-time Service
+  # --------------------------------------------------------------------------
+  - name: websocket-service
+    url: http://nidaw-backend:8080
+    protocol: http
+    host: nidaw-backend
+    port: 8080
+    path: /ws
+    retries: 1
+    connect_timeout: 5000
+    write_timeout: 30000
+    read_timeout: 30000
+    tags:
+      - websocket
+    routes:
+      - name: websocket-connection
+        paths:
+          - /ws
+        strip_path: false
+        preserve_host: true
+        protocols:
+          - http
+          - https
+        tags:
+          - websocket
+
+# ============================================================================
+# PLUGINS (Global & Per-Service)
+# ============================================================================
+
+plugins:
+  # --------------------------------------------------------------------------
+  # GLOBAL PLUGINS (Applied to all routes)
+  # --------------------------------------------------------------------------
+
+  # CORS
+  - name: cors
+    config:
+      origins:
+        - "https://app.nidaw.com"
+        - "https://admin.nidaw.com"
+        - "http://localhost:3000"
+        - "http://localhost:8080"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - X-Auth-Token
+        - X-Request-ID
+        - Authorization
+      exposed_headers:
+        - X-Auth-Token
+        - X-Request-ID
+        - X-RateLimit-Limit
+        - X-RateLimit-Remaining
+        - X-RateLimit-Reset
+      credentials: true
+      max_age: 86400
+      preflight_continue: false
+    tags:
+      - global
+
+  # Request Transformer (Add headers)
+  - name: request-transformer
+    config:
+      add:
+        headers:
+          - "X-Gateway: kong"
+          - "X-Gateway-Version: 3.5"
+      remove:
+        headers:
+          - "X-Powered-By"
+          - "Server"
+    tags:
+      - global
+
+  # Response Transformer (Security headers)
+  - name: response-transformer
+    config:
+      add:
+        headers:
+          - "X-Content-Type-Options: nosniff"
+          - "X-Frame-Options: DENY"
+          - "X-XSS-Protection: 1; mode=block"
+          - "Referrer-Policy: strict-origin-when-cross-origin"
+          - "Permissions-Policy: camera=(), microphone=(), geolocation=()"
+          - "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload"
+      remove:
+        headers:
+          - "X-Powered-By"
+          - "Server"
+          - "Via"
+    tags:
+      - global
+
+  # Global Rate Limiting
+  - name: rate-limiting
+    config:
+      minute: 100
+      hour: 3000
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      fault_tolerant: true
+      hide_client_headers: false
+      limit_by: ip
+    tags:
+      - global
+
+  # IP Restriction (Block known bad actors)
+  - name: ip-restriction
+    config:
+      deny:
+        - "10.0.0.0/8"
+      status: 403
+      message: "Access denied"
+    enabled: false
+    tags:
+      - global
+
+  # Bot Detection
+  - name: bot-detection
+    config:
+      deny:
+        - "sqlmap"
+        - "nikto"
+        - "nmap"
+        - "masscan"
+        - "zgrab"
+      allow:
+        - "Googlebot"
+        - "Bingbot"
+        - "Applebot"
+    tags:
+      - global
+
+  # Request Size Limiting
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 10
+      size_unit: megabytes
+      require_content_length: false
+    tags:
+      - global
+
+  # --------------------------------------------------------------------------
+  # AUTH-SPECIFIC PLUGINS
+  # --------------------------------------------------------------------------
+
+  # JWT Authentication (for protected routes)
+  - name: jwt
+    service: nidus-service
+    config:
+      key_claim_name: kid
+      secret_is_base64: false
+      claims_to_verify:
+        - exp
+        - nbf
+      maximum_expiration: 900
+      run_on_preflight: false
+    tags:
+      - auth
+
+  - name: jwt
+    service: haven-service
+    config:
+      key_claim_name: kid
+      secret_is_base64: false
+      claims_to_verify:
+        - exp
+        - nbf
+      maximum_expiration: 900
+      run_on_preflight: false
+    tags:
+      - auth
+
+  - name: jwt
+    service: vorax-service
+    config:
+      key_claim_name: kid
+      secret_is_base64: false
+      claims_to_verify:
+        - exp
+        - nbf
+      maximum_expiration: 900
+      run_on_preflight: false
+    tags:
+      - auth
+
+  # --------------------------------------------------------------------------
+  # SERVICE-SPECIFIC RATE LIMITS
+  # --------------------------------------------------------------------------
+
+  # Ride requests - stricter rate limit
+  - name: rate-limiting
+    route: nidus-rides-create
+    config:
+      minute: 10
+      hour: 100
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      fault_tolerant: true
+      limit_by: consumer
+    tags:
+      - nidus
+
+  # Hotel searches - moderate rate limit
+  - name: rate-limiting
+    route: haven-hotels-search
+    config:
+      minute: 30
+      hour: 500
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      fault_tolerant: true
+      limit_by: consumer
+    tags:
+      - haven
+
+  # Food orders - moderate rate limit
+  - name: rate-limiting
+    route: vorax-orders-create
+    config:
+      minute: 15
+      hour: 150
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      fault_tolerant: true
+      limit_by: consumer
+    tags:
+      - vorax
+
+  # Auth endpoints - strict rate limit (brute force protection)
+  - name: rate-limiting
+    route: auth-login
+    config:
+      minute: 5
+      hour: 20
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      fault_tolerant: true
+      limit_by: ip
+    tags:
+      - auth
+
+  - name: rate-limiting
+    route: auth-register
+    config:
+      minute: 3
+      hour: 10
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_database: 1
+      fault_tolerant: true
+      limit_by: ip
+    tags:
+      - auth
+
+  # --------------------------------------------------------------------------
+  # LOGGING & OBSERVABILITY
+  # --------------------------------------------------------------------------
+
+  # HTTP Log (to stdout for Loki collection)
+  - name: http-log
+    config:
+      http_endpoint: http://loki:3100/loki/api/v1/push
+      method: POST
+      content_type: application/json
+      timeout: 5000
+      keepalive: 60000
+      flush_timeout: 2
+      retry_count: 3
+    tags:
+      - logging
+
+  # Prometheus Metrics
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+    tags:
+      - monitoring
+
+  # OpenTelemetry
+  - name: opentelemetry
+    config:
+      endpoint: http://jaeger:4318/v1/traces
+      batch_span_count: 200
+      batch_flush_delay: 3
+      header_type: w3c
+    tags:
+      - tracing
+
+# ============================================================================
+# CONSUMERS (API clients)
+# ============================================================================
+
+consumers:
+  - username: nidaw-mobile-app
+    tags:
+      - mobile
+    jwt_secrets:
+      - key: nidaw-mobile-app-key
+        algorithm: HS256
+        secret: "${JWT_SECRET}"
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 100
+          hour: 3000
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+
+  - username: nidaw-web-app
+    tags:
+      - web
+    jwt_secrets:
+      - key: nidaw-web-app-key
+        algorithm: HS256
+        secret: "${JWT_SECRET}"
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 200
+          hour: 5000
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+
+  - username: nidaw-driver-app
+    tags:
+      - driver
+    jwt_secrets:
+      - key: nidaw-driver-app-key
+        algorithm: HS256
+        secret: "${JWT_SECRET}"
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 300
+          hour: 10000
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+
+  - username: nidaw-corporate-api
+    tags:
+      - corporate
+    jwt_secrets:
+      - key: nidaw-corporate-key
+        algorithm: HS256
+        secret: "${JWT_SECRET}"
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 500
+          hour: 20000
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+
+  - username: nidaw-partner-api
+    tags:
+      - partner
+    jwt_secrets:
+      - key: nidaw-partner-key
+        algorithm: HS256
+        secret: "${JWT_SECRET}"
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 1000
+          hour: 50000
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+
+# ============================================================================
+# UPSTREAMS (Load balancing)
+# ============================================================================
+
+upstreams:
+  - name: nidaw-backend-upstream
+    algorithm: round-robin
+    hash_on: none
+    slots: 10000
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        timeout: 5
+        concurrency: 10
+        healthy:
+          interval: 10
+          successes: 3
+          http_statuses:
+            - 200
+        unhealthy:
+          interval: 5
+          tcp_failures: 3
+          http_failures: 3
+          http_statuses:
+            - 429
+            - 500
+            - 502
+            - 503
+            - 504
+      passive:
+        type: http
+        healthy:
+          successes: 5
+          http_statuses:
+            - 200
+            - 201
+            - 204
+        unhealthy:
+          tcp_failures: 3
+          http_failures: 5
+          http_statuses:
+            - 500
+            - 502
+            - 503
+    targets:
+      - target: nidaw-backend:8080
+        weight: 100
+        tags:
+          - primary

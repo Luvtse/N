@@ -1,0 +1,146 @@
+{
+  "tableName": "hotel_realtime",
+  "tableType": "REALTIME",
+  "isDimTable": false,
+  "segmentsConfig": {
+    "timeColumnName": "event_time",
+    "timeType": "MILLISECONDS",
+    "retentionTimeUnit": "DAYS",
+    "retentionTimeValue": "90",
+    "segmentPushType": "APPEND",
+    "segmentAssignmentStrategy": "BalanceNumSegment",
+    "replicasPerPartition": "3",
+    "replication": "3",
+    "minNumberOfReplicas": "2",
+    "maxNumberOfReplicas": "5",
+    "segmentPushFrequency": "1h",
+    "schemaName": "hotel_realtime"
+  },
+  "tenants": {
+    "broker": "nidawBroker",
+    "server": "nidawServer",
+    "tagOverrideConfig": {}
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "noDictionaryColumns": [
+      "hotel_id",
+      "user_id"
+    ],
+    "invertedIndexColumns": [
+      "city",
+      "country_code",
+      "status",
+      "star_rating"
+    ],
+    "rangeIndexColumns": [
+      "price_per_night",
+      "rating",
+      "latitude",
+      "longitude",
+      "event_time"
+    ],
+    "bloomFilterColumns": [
+      "hotel_id"
+    ],
+    "sortedColumn": [
+      "event_time"
+    ],
+    "starTreeIndexConfigs": [
+      {
+        "dimensionsSplitColumnNames": [
+          "city",
+          "country_code",
+          "star_rating"
+        ],
+        "metricAggregateTypes": [
+          "SUM",
+          "AVG",
+          "COUNT",
+          "MIN",
+          "MAX"
+        ],
+        "maxLeafRecords": 100
+      }
+    ],
+    "streamConfigs": {
+      "streamType": "kafka",
+      "stream.kafka.consumer.type": "lowlevel",
+      "stream.kafka.topic.name": "haven.hotels",
+      "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.stream.kafka.KafkaJSONMessageDecoder",
+      "stream.kafka.consumer.factory.class.name": "org.apache.pinot.plugin.stream.kafka20.KafkaConsumerFactory",
+      "stream.kafka.zk.broker.list": "kafka:9092",
+      "stream.kafka.consumer.prop.auto.offset.reset": "smallest",
+      "stream.kafka.consumer.properties": {
+        "fetch.message.max.bytes": "10485760"
+      }
+    },
+    "columnMinMaxValueGeneratorMode": "all",
+    "nullHandlingEnabled": true
+  },
+  "metadata": {
+    "customConfigs": {
+      "replicaGroupStrategyConfig": "{\"partitionColumn\":\"city\",\"numPartitions\":10}"
+    }
+  },
+  "ingestionConfig": {
+    "transformConfigs": [
+      {
+        "columnName": "city_lower",
+        "transformFunction": "lower(city)"
+      },
+      {
+        "columnName": "country_lower",
+        "transformFunction": "lower(country_code)"
+      }
+    ],
+    "filterConfig": {
+      "filterFunction": "status = 'active'"
+    }
+  },
+  "quota": {
+    "storage": "50G",
+    "maxPartitions": 10
+  },
+  "task": {
+    "taskTypeConfigsMap": {
+      "RealtimeToOfflineSegmentsTask": {
+        "bucketTimePeriod": "6h",
+        "bufferTimePeriod": "3d",
+        "schedule": "0 */6 * * *",
+        "timeoutInSeconds": "86400"
+      }
+    }
+  },
+  "routing": {
+    "instanceSelectorType": "strictReplicaGroup"
+  },
+  "query": {
+    "timeoutMs": 30000
+  },
+  "upsertConfig": {
+    "mode": "FULL",
+    "partialUpsertStrategies": {
+      "defaultPartialUpsertStrategy": "OVERWRITE"
+    },
+    "deleteRecordColumn": "__deleted",
+    "hashFunction": "MD5",
+    "metadataTTL": 0,
+    "outOfOrderRecordColumn": "__outOfOrder"
+  },
+  "fieldConfigList": [
+    {
+      "name": "amenities",
+      "encodingType": "RAW",
+      "indexes": {
+        "fst": {
+          "fstType": "native"
+        }
+      }
+    },
+    {
+      "name": "images",
+      "encodingType": "RAW"
+    }
+  ]
+}

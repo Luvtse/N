@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "lastUpdated": "2026-07-27T10:00:00Z",
+  "flags": {
+    "core_services": {
+      "nidus_rides": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["development", "staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-01-15T00:00:00Z",
+          "expires": null,
+          "description": "Core ride-hailing service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "haven_hotels": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["development", "staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "haven-team@nidaw.com",
+          "created": "2026-02-01T00:00:00Z",
+          "expires": null,
+          "description": "Hotel booking service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "vorax_food": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["development", "staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "vorax-team@nidaw.com",
+          "created": "2026-02-15T00:00:00Z",
+          "expires": null,
+          "description": "Food delivery service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "logix_freight": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["development", "staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "logix-team@nidaw.com",
+          "created": "2026-03-01T00:00:00Z",
+          "expires": null,
+          "description": "Freight and logistics service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "corpus_corporate": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["development", "staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "corpus-team@nidaw.com",
+          "created": "2026-03-15T00:00:00Z",
+          "expires": null,
+          "description": "Corporate travel service",
+          "category": "core",
+          "abTestId": null
+        }
+      }
+    },
+    "experimental_features": {
+      "autonomous_vehicles": {
+        "enabled": true,
+        "rolloutPercentage": 5,
+        "targeting": {
+          "environments": ["production"],
+          "regions": ["US"],
+          "userSegments": ["beta_testers", "early_adopters"]
+        },
+        "metadata": {
+          "owner": "autonomous-team@nidaw.com",
+          "created": "2026-05-01T00:00:00Z",
+          "expires": "2026-12-31T23:59:59Z",
+          "description": "Autonomous vehicle ride service (experimental)",
+          "category": "experimental",
+          "abTestId": "av-beta-2026-q3"
+        }
+      },
+      "drone_delivery": {
+        "enabled": true,
+        "rolloutPercentage": 10,
+        "targeting": {
+          "environments": ["production"],
+          "regions": ["US"],
+          "userSegments": ["beta_testers"]
+        },
+        "metadata": {
+          "owner": "drone-team@nidaw.com",
+          "created": "2026-05-15T00:00:00Z",
+          "expires": "2026-12-31T23:59:59Z",
+          "description": "Drone delivery service (experimental)",
+          "category": "experimental",
+          "abTestId": "drone-beta-2026-q3"
+        }
+      },
+      "ar_navigation": {
+        "enabled": true,
+        "rolloutPercentage": 50,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU", "APAC"],
+          "deviceTypes": ["ios", "android"]
+        },
+        "metadata": {
+          "owner": "mobile-team@nidaw.com",
+          "created": "2026-04-01T00:00:00Z",
+          "expires": null,
+          "description": "AR-powered navigation for rides",
+          "category": "experimental",
+          "abTestId": "ar-nav-2026-q2"
+        }
+      },
+      "voice_commands": {
+        "enabled": true,
+        "rolloutPercentage": 30,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU"],
+          "languages": ["en", "es", "fr"]
+        },
+        "metadata": {
+          "owner": "mobile-team@nidaw.com",
+          "created": "2026-04-15T00:00:00Z",
+          "expires": null,
+          "description": "Voice command interface",
+          "category": "experimental",
+          "abTestId": "voice-2026-q2"
+        }
+      }
+    },
+    "blockchain_features": {
+      "nidaw_token_payments": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "blockchain-team@nidaw.com",
+          "created": "2026-03-01T00:00:00Z",
+          "expires": null,
+          "description": "NIDAW token payment method",
+          "category": "blockchain",
+          "abTestId": null
+        }
+      },
+      "token_staking": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "blockchain-team@nidaw.com",
+          "created": "2026-03-15T00:00:00Z",
+          "expires": null,
+          "description": "NIDAW token staking",
+          "category": "blockchain",
+          "abTestId": null
+        }
+      },
+      "governance_voting": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": ["development"],
+          "regions": []
+        },
+        "metadata": {
+          "owner": "blockchain-team@nidaw.com",
+          "created": "2026-04-01T00:00:00Z",
+          "expires": "2027-01-01T00:00:00Z",
+          "description": "DAO governance voting (planned)",
+          "category": "blockchain",
+          "abTestId": null
+        }
+      }
+    },
+    "ai_ml_features": {
+      "federated_learning": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-02-01T00:00:00Z",
+          "expires": null,
+          "description": "Federated learning for privacy-preserving ML",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      },
+      "dynamic_pricing": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-01-15T00:00:00Z",
+          "expires": null,
+          "description": "AI-powered dynamic pricing",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      },
+      "demand_forecasting": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-01-15T00:00:00Z",
+          "expires": null,
+          "description": "ML-based demand forecasting",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      },
+      "restaurant_recommendations": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-02-15T00:00:00Z",
+          "expires": null,
+          "description": "AI restaurant recommendations",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      }
+    },
+    "ui_features": {
+      "dark_mode": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["development", "staging", "production"],
+          "regions": ["US", "EU", "APAC"]
+        },
+        "metadata": {
+          "owner": "design-team@nidaw.com",
+          "created": "2026-01-01T00:00:00Z",
+          "expires": null,
+          "description": "Dark mode theme",
+          "category": "ui",
+          "abTestId": null
+        }
+      },
+      "multi_language": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": ["production"],
+          "regions": ["US", "EU", "APAC"],
+          "languages": ["en", "es", "fr", "de", "ja", "zh", "pt", "ar", "hi", "ko"]
+        },
+        "metadata": {
+          "owner": "i18n-team@nidaw.com",
+          "created": "2026-04-01T00:00:00Z",
+          "expires": null,
+          "description": "Multi-language support",
+          "category": "ui",
+          "abTestId": null
+        }
+      },
+      "new_homepage_design": {
+        "enabled": true,
+        "rolloutPercentage": 25,
+        "targeting": {
+          "environments": ["production"],
+          "regions": ["US"],
+          "userSegments": ["group_a"]
+        },
+        "metadata": {
+          "owner": "design-team@nidaw.com",
+          "created": "2026-07-01T00:00:00Z",
+          "expires": "2026-09-30T23:59:59Z",
+          "description": "New homepage design A/B test",
+          "category": "ui",
+          "abTestId": "homepage-redesign-2026-q3"
+        }
+      }
+    },
+    "operational_features": {
+      "maintenance_mode": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": ["production"]
+        },
+        "metadata": {
+          "owner": "ops-team@nidaw.com",
+          "created": "2026-01-01T00:00:00Z",
+          "expires": null,
+          "description": "Maintenance mode toggle",
+          "category": "operational",
+          "abTestId": null
+        }
+      },
+      "read_only_mode": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": ["production"]
+        },
+        "metadata": {
+          "owner": "ops-team@nidaw.com",
+          "created": "2026-01-01T00:00:00Z",
+          "expires": null,
+          "description": "Read-only mode for database maintenance",
+          "category": "operational",
+          "abTestId": null
+        }
+      },
+      "beta_api_v2": {
+        "enabled": true,
+        "rolloutPercentage": 10,
+        "targeting": {
+          "environments": ["production"],
+          "userSegments": ["beta_testers", "partners"]
+        },
+        "metadata": {
+          "owner": "api-team@nidaw.com",
+          "created": "2026-06-01T00:00:00Z",
+          "expires": "2026-12-31T23:59:59Z",
+          "description": "API v2 beta access",
+          "category": "operational",
+          "abTestId": null
+        }
+      }
+    }
+  },
+  "segments": {
+    "beta_testers": {
+      "description": "Users enrolled in beta testing program",
+      "criteria": {
+        "userAttribute": "beta_enrolled",
+        "value": true
+      }
+    },
+    "early_adopters": {
+      "description": "Early adopter users",
+      "criteria": {
+        "userAttribute": "signup_date",
+        "operator": "before",
+        "value": "2026-03-01"
+      }
+    },
+    "premium_users": {
+      "description": "Users with premium subscription",
+      "criteria": {
+        "userAttribute": "subscription_tier",
+        "value": "premium"
+      }
+    },
+    "group_a": {
+      "description": "A/B test group A",
+      "criteria": {
+        "userAttribute": "ab_group",
+        "value": "A"
+      }
+    },
+    "partners": {
+      "description": "Partner accounts",
+      "criteria": {
+        "userAttribute": "account_type",
+        "value": "partner"
+      }
+    }
+  }
+}

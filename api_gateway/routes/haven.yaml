@@ -1,0 +1,234 @@
+# ============================================================================
+# HAVEN Routes - Hotel Booking Service
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# HOTEL SEARCH (PUBLIC)
+# --------------------------------------------------------------------------
+
+- name: haven-hotel-search
+  service: haven-service
+  protocols:
+    - https
+    - http
+  paths:
+    - /api/v1/haven/hotels
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - hotels
+    - public
+  plugins:
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: false
+    - name: proxy-cache
+      config:
+        response_code:
+          - 200
+        request_method:
+          - GET
+        content_type:
+          - application/json
+        cache_ttl: 300
+        strategy: memory
+        memory:
+          dictionary_name: kong_db_cache
+    - name: request-transformer
+      config:
+        add:
+          headers:
+            - "X-Service: haven"
+            - "X-Action: search_hotels"
+
+- name: haven-hotel-detail
+  service: haven-service
+  protocols:
+    - https
+    - http
+  paths:
+    - ~/api/v1/haven/hotels/[0-9a-f-]+$
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - hotels
+    - public
+  plugins:
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: false
+    - name: proxy-cache
+      config:
+        response_code:
+          - 200
+        request_method:
+          - GET
+        content_type:
+          - application/json
+        cache_ttl: 600
+        strategy: memory
+        memory:
+          dictionary_name: kong_db_cache
+
+# --------------------------------------------------------------------------
+# BOOKING ROUTES (AUTHENTICATED)
+# --------------------------------------------------------------------------
+
+- name: haven-booking-create
+  service: haven-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/haven/bookings
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - bookings
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - corporate
+          - admin
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: true
+    - name: request-transformer
+      config:
+        add:
+          headers:
+            - "X-Service: haven"
+            - "X-Action: create_booking"
+
+- name: haven-booking-list
+  service: haven-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/haven/bookings
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - bookings
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - corporate
+          - admin
+
+- name: haven-booking-detail
+  service: haven-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/haven/bookings/[0-9a-f-]+$
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - bookings
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - corporate
+          - admin
+
+- name: haven-booking-cancel
+  service: haven-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/haven/bookings/[0-9a-f-]+/cancel$
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - bookings
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - corporate
+          - admin
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: true
+
+# --------------------------------------------------------------------------
+# REVIEW ROUTES
+# --------------------------------------------------------------------------
+
+- name: haven-review-create
+  service: haven-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/haven/hotels/[0-9a-f-]+/reviews$
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - reviews
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - admin
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: true
+
+- name: haven-review-list
+  service: haven-service
+  protocols:
+    - https
+    - http
+  paths:
+    - ~/api/v1/haven/hotels/[0-9a-f-]+/reviews$
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - haven
+    - reviews
+    - public
+  plugins:
+    - name: proxy-cache
+      config:
+        response_code:
+          - 200
+        request_method:
+          - GET
+        cache_ttl: 60
+        strategy: memory

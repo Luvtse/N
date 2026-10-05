@@ -1,0 +1,54 @@
+{
+  "tableName": "rides_realtime",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "timeColumnName": "event_time",
+    "timeType": "MILLISECONDS",
+    "retentionTimeUnit": "DAYS",
+    "retentionTimeValue": "90",
+    "segmentPushType": "APPEND",
+    "segmentAssignmentStrategy": "BalanceNumSegment",
+    "replication": "3",
+    "replicasPerPartition": "3"
+  },
+  "tenants": {
+    "broker": "nidawBroker",
+    "server": "nidawServer"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "noDictionaryColumns": ["ride_id", "user_id", "driver_id"],
+    "invertedIndexColumns": ["city", "country", "ride_type", "status", "currency"],
+    "rangeIndexColumns": ["fare_amount", "distance_km", "duration_minutes", "event_time"],
+    "bloomFilterColumns": ["ride_id", "user_id"],
+    "starTreeIndexConfigs": [
+      {
+        "dimensionsSplitColumnNames": ["city", "ride_type", "status"],
+        "metricAggregateTypes": ["SUM", "AVG", "COUNT", "MIN", "MAX"],
+        "maxLeafRecords": 100
+      }
+    ],
+    "streamConfigs": {
+      "streamType": "kafka",
+      "stream.kafka.consumer.type": "lowlevel",
+      "stream.kafka.topic.name": "nidus.rides.realtime",
+      "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.stream.kafka.KafkaJSONMessageDecoder",
+      "stream.kafka.consumer.factory.class.name": "org.apache.pinot.plugin.stream.kafka20.KafkaConsumerFactory",
+      "stream.kafka.zk.broker.list": "kafka:9092",
+      "stream.kafka.consumer.prop.auto.offset.reset": "smallest"
+    }
+  },
+  "metadata": {
+    "customConfigs": {
+      "replicaGroupStrategyConfig": "{\"partitionColumn\":\"city\",\"numPartitions\":10}"
+    }
+  },
+  "ingestionConfig": {
+    "transformConfigs": [
+      {
+        "columnName": "city_lower",
+        "transformFunction": "lower(city)"
+      }
+    ]
+  }
+}

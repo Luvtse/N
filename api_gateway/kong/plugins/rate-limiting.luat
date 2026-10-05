@@ -1,0 +1,370 @@
+-- ============================================================================
+-- NIDAW Custom Rate Limiting Plugin for Kong
+-- Extends built-in rate-limiting with:
+--   - Per-tenant rate limiting
+--   - Tier-based quotas (free, premium, enterprise)
+--   - Burst allowance with token bucket algorithm
+--   - Graceful degradation under load
+-- ============================================================================
+
+local plugin = {
+  PRIORITY = 910,
+  VERSION  = "1.0.0",
+}
+
+local kong = kong
+local ngx = ngx
+local time = ngx.time
+local pairs = pairs
+local tonumber = tonumber
+local tostring = tostring
+local math = math
+
+-- ============================================================================
+-- CONSTANTS
+-- ============================================================================
+
+local TIER_LIMITS = {
+  free = {
+    minute = 30,
+    hour   = 500,
+    day    = 5000,
+    burst  = 10,
+  },
+  premium = {
+    minute = 200,
+    hour   = 5000,
+    day    = 50000,
+    burst  = 50,
+  },
+  enterprise = {
+    minute = 1000,
+    hour   = 30000,
+    day    = 500000,
+    burst  = 200,
+  },
+  driver = {
+    minute = 300,
+    hour   = 10000,
+    day    = 100000,
+    burst  = 100,
+  },
+  internal = {
+    minute = 10000,
+    hour   = 100000,
+    day    = 1000000,
+    burst  = 1000,
+  },
+}
+
+local WINDOW_SIZES = {
+  minute = 60,
+  hour   = 3600,
+  day    = 86400,
+}
+
+-- ============================================================================
+-- REDIS HELPERS
+-- ============================================================================
+
+local function get_redis_connection(conf)
+  local redis = require "resty.redis"
+  local red = redis:new()
+  red:set_timeout(conf.redis_timeout or 2000)
+
+  local ok, err = red:connect(conf.redis_host, conf.redis_port)
+  if not ok then
+    kong.log.err("Failed to connect to Redis: ", err)
+    return nil, err
+  end
+
+  if conf.redis_password and conf.redis_password ~= "" then
+    local auth_ok, auth_err = red:auth(conf.redis_password)
+    if not auth_ok then
+      kong.log.err("Failed to authenticate with Redis: ", auth_err)
+      return nil, auth_err
+    end
+  end
+
+  if conf.redis_database and conf.redis_database > 0 then
+    red:select(conf.redis_database)
+  end
+
+  return red
+end
+
+-- ============================================================================
+-- TOKEN BUCKET ALGORITHM
+-- ============================================================================
+
+local function check_token_bucket(red, key, capacity, refill_rate, now)
+  local bucket_key = "nidaw:bucket:" .. key
+  local last_refill_key = "nidaw:last_refill:" .. key
+
+  -- Get current bucket state
+  local tokens, err = red:get(bucket_key)
+  if err then
+    kong.log.warn("Redis GET error: ", err)
+    return true, capacity -- Fail open
+  end
+
+  local last_refill, err2 = red:get(last_refill_key)
+  if err2 then
+    kong.log.warn("Redis GET error: ", err2)
+    return true, capacity
+  end
+
+  tokens = tonumber(tokens) or capacity
+  last_refill = tonumber(last_refill) or now
+
+  -- Calculate token refill
+  local elapsed = now - last_refill
+  local new_tokens = math.min(capacity, tokens + (elapsed * refill_rate))
+
+  if new_tokens >= 1 then
+    -- Consume a token
+    new_tokens = new_tokens - 1
+    red:set(bucket_key, tostring(new_tokens))
+    red:set(last_refill_key, tostring(now))
+    red:expire(bucket_key, 3600)
+    red:expire(last_refill_key, 3600)
+    return true, new_tokens
+  else
+    -- No tokens available
+    red:set(bucket_key, tostring(new_tokens))
+    red:set(last_refill_key, tostring(now))
+    return false, 0
+  end
+end
+
+-- ============================================================================
+-- SLIDING WINDOW COUNTER
+-- ============================================================================
+
+local function check_sliding_window(red, key, limit, window_size, now)
+  local window_key = "nidaw:window:" .. key .. ":" .. math.floor(now / window_size)
+  local prev_window_key = "nidaw:window:" .. key .. ":" .. math.floor((now - window_size) / window_size)
+
+  -- Get counts from current and previous windows
+  local current_count, err1 = red:get(window_key)
+  local prev_count, err2 = red:get(prev_window_key)
+
+  if err1 or err2 then
+    kong.log.warn("Redis error in sliding window check")
+    return true, limit -- Fail open
+  end
+
+  current_count = tonumber(current_count) or 0
+  prev_count = tonumber(prev_count) or 0
+
+  -- Calculate weighted count (sliding window approximation)
+  local window_progress = (now % window_size) / window_size
+  local weighted_count = prev_count * (1 - window_progress) + current_count
+
+  if weighted_count >= limit then
+    return false, math.max(0, limit - weighted_count)
+  end
+
+  -- Increment counter
+  red:incr(window_key)
+  red:expire(window_key, window_size * 2)
+
+  return true, math.max(0, limit - weighted_count - 1)
+end
+
+-- ============================================================================
+-- TIER DETECTION
+-- ============================================================================
+
+local function get_consumer_tier(consumer)
+  if not consumer then
+    return "free"
+  end
+
+  -- Check consumer tags for tier information
+  if consumer.tags then
+    for _, tag in pairs(consumer.tags) do
+      if tag == "enterprise" then return "enterprise" end
+      if tag == "premium" then return "premium" end
+      if tag == "driver" then return "driver" end
+      if tag == "internal" then return "internal" end
+    end
+  end
+
+  -- Check consumer custom_id
+  if consumer.custom_id then
+    if consumer.custom_id:find("enterprise") then return "enterprise" end
+    if consumer.custom_id:find("premium") then return "premium" end
+    if consumer.custom_id:find("driver") then return "driver" end
+  end
+
+  return "free"
+end
+
+-- ============================================================================
+-- PLUGIN SCHEMA
+-- ============================================================================
+
+plugin.schema = {
+  name = "nidaw-rate-limiting",
+  fields = {
+    {
+      config = {
+        type = "record",
+        fields = {
+          { redis_host = { type = "string", default = "redis" } },
+          { redis_port = { type = "number", default = 6379 } },
+          { redis_password = { type = "string", default = "" } },
+          { redis_database = { type = "number", default = 1 } },
+          { redis_timeout = { type = "number", default = 2000 } },
+          { enable_tier_limiting = { type = "boolean", default = true } },
+          { enable_burst = { type = "boolean", default = true } },
+          { default_tier = { type = "string", default = "free" } },
+          { hide_client_headers = { type = "boolean", default = false } },
+          { fault_tolerant = { type = "boolean", default = true } },
+        },
+      },
+    },
+  },
+}
+
+-- ============================================================================
+-- ACCESS PHASE (Main rate limiting logic)
+-- ============================================================================
+
+function plugin:access(conf)
+  local now = time()
+  local consumer = kong.client.get_consumer()
+  local tier = get_consumer_tier(consumer)
+  local limits = TIER_LIMITS[tier] or TIER_LIMITS[conf.default_tier]
+
+  if not limits then
+    kong.log.warn("Unknown tier: ", tier, ", using free tier")
+    limits = TIER_LIMITS.free
+  end
+
+  -- Build rate limit key
+  local identifier
+  if consumer then
+    identifier = consumer.username or consumer.id
+  else
+    identifier = kong.client.get_forwarded_ip() or kong.client.get_ip()
+  end
+
+  local base_key = "nidaw:rl:" .. identifier
+
+  -- Connect to Redis
+  local red, err = get_redis_connection(conf)
+  if not red then
+    if conf.fault_tolerant then
+      kong.log.warn("Rate limiting disabled due to Redis failure")
+      return -- Fail open
+    else
+      return kong.response.exit(503, {
+        error = {
+          code = "RATE_LIMIT_UNAVAILABLE",
+          message = "Rate limiting service unavailable",
+        },
+      })
+    end
+  end
+
+  -- Check per-minute limit (sliding window)
+  local minute_ok, minute_remaining = check_sliding_window(
+    red, base_key .. ":minute", limits.minute, WINDOW_SIZES.minute, now
+  )
+
+  if not minute_ok then
+    red:set_keepalive(10000, 100)
+    return kong.response.exit(429, {
+      error = {
+        code = "RATE_LIMIT_EXCEEDED",
+        message = "Too many requests per minute",
+        retry_after = 60,
+        tier = tier,
+      },
+    }, {
+      ["Retry-After"] = "60",
+      ["X-RateLimit-Limit-Minute"] = tostring(limits.minute),
+      ["X-RateLimit-Remaining-Minute"] = "0",
+      ["X-RateLimit-Tier"] = tier,
+    })
+  end
+
+  -- Check per-hour limit (sliding window)
+  local hour_ok, hour_remaining = check_sliding_window(
+    red, base_key .. ":hour", limits.hour, WINDOW_SIZES.hour, now
+  )
+
+  if not hour_ok then
+    red:set_keepalive(10000, 100)
+    return kong.response.exit(429, {
+      error = {
+        code = "RATE_LIMIT_EXCEEDED",
+        message = "Too many requests per hour",
+        retry_after = 3600,
+        tier = tier,
+      },
+    }, {
+      ["Retry-After"] = "3600",
+      ["X-RateLimit-Limit-Hour"] = tostring(limits.hour),
+      ["X-RateLimit-Remaining-Hour"] = "0",
+      ["X-RateLimit-Tier"] = tier,
+    })
+  end
+
+  -- Check burst limit (token bucket)
+  if conf.enable_burst then
+    local burst_ok, burst_remaining = check_token_bucket(
+      red, base_key .. ":burst", limits.burst, limits.burst / 60, now
+    )
+
+    if not burst_ok then
+      red:set_keepalive(10000, 100)
+      return kong.response.exit(429, {
+        error = {
+          code = "BURST_LIMIT_EXCEEDED",
+          message = "Request burst limit exceeded, please slow down",
+          retry_after = 5,
+          tier = tier,
+        },
+      }, {
+        ["Retry-After"] = "5",
+        ["X-RateLimit-Tier"] = tier,
+      })
+    end
+  end
+
+  -- Return connection to pool
+  red:set_keepalive(10000, 100)
+
+  -- Set response headers
+  if not conf.hide_client_headers then
+    kong.response.set_header("X-RateLimit-Limit-Minute", tostring(limits.minute))
+    kong.response.set_header("X-RateLimit-Remaining-Minute", tostring(math.floor(minute_remaining)))
+    kong.response.set_header("X-RateLimit-Limit-Hour", tostring(limits.hour))
+    kong.response.set_header("X-RateLimit-Remaining-Hour", tostring(math.floor(hour_remaining)))
+    kong.response.set_header("X-RateLimit-Tier", tier)
+    kong.response.set_header("X-RateLimit-Reset", tostring(math.floor(now / 60 + 1) * 60))
+  end
+end
+
+-- ============================================================================
+-- LOG PHASE (Record metrics)
+-- ============================================================================
+
+function plugin:log(conf)
+  local consumer = kong.client.get_consumer()
+  local tier = get_consumer_tier(consumer)
+  local status = kong.response.get_status()
+
+  -- Log rate limit metrics for Prometheus
+  kong.log.info("rate_limit_check",
+    " tier=", tier,
+    " status=", status,
+    " consumer=", consumer and consumer.username or "anonymous",
+    " ip=", kong.client.get_ip()
+  )
+end
+
+return plugin

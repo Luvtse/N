@@ -1,0 +1,305 @@
+# ============================================================================
+# NIDUS Routes - Ride Hailing Service
+# These routes are included in the main kong.yml
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# RIDE REQUEST ROUTES
+# --------------------------------------------------------------------------
+
+- name: nidus-ride-request
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/nidus/rides
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  request_buffering: true
+  response_buffering: true
+  tags:
+    - nidus
+    - rides
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - corporate
+          - admin
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: true
+        enable_burst: true
+    - name: request-transformer
+      config:
+        add:
+          headers:
+            - "X-Service: nidus"
+            - "X-Action: create_ride"
+
+- name: nidus-ride-list
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/nidus/rides
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - rides
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - driver
+          - corporate
+          - admin
+
+- name: nidus-ride-detail
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/nidus/rides/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - rides
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - driver
+          - admin
+
+- name: nidus-ride-cancel
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/nidus/rides/[0-9a-f-]+/cancel$
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - rides
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - admin
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: true
+
+- name: nidus-ride-rate
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/nidus/rides/[0-9a-f-]+/rate$
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - rides
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - admin
+
+# --------------------------------------------------------------------------
+# FARE ESTIMATE (PUBLIC)
+# --------------------------------------------------------------------------
+
+- name: nidus-fare-estimate
+  service: nidus-service
+  protocols:
+    - https
+    - http
+  paths:
+    - /api/v1/nidus/rides/estimate
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - rides
+    - public
+  plugins:
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: false
+    - name: request-transformer
+      config:
+        add:
+          headers:
+            - "X-Service: nidus"
+            - "X-Action: estimate_fare"
+            - "X-Cache-Control: no-cache"
+
+# --------------------------------------------------------------------------
+# DRIVER ROUTES
+# --------------------------------------------------------------------------
+
+- name: nidus-drivers-nearby
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/nidus/drivers/nearby
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - drivers
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - admin
+
+- name: nidus-driver-detail
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/nidus/drivers/[0-9a-f-]+$
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - drivers
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - driver
+          - admin
+
+- name: nidus-driver-online
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/nidus/drivers/online
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - drivers
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - driver
+          - admin
+
+- name: nidus-driver-offline
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/nidus/drivers/offline
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - drivers
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - driver
+          - admin
+
+# --------------------------------------------------------------------------
+# LOCATION TRACKING
+# --------------------------------------------------------------------------
+
+- name: nidus-location-update
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - /api/v1/nidus/location/update
+  methods:
+    - POST
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - location
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - driver
+    - name: nidaw-rate-limiting
+      config:
+        enable_tier_limiting: true
+        enable_burst: true
+    - name: request-size-limiting
+      config:
+        allowed_payload_size: 1
+        size_unit: kilobytes
+
+- name: nidus-driver-location
+  service: nidus-service
+  protocols:
+    - https
+  paths:
+    - ~/api/v1/nidus/location/driver/[0-9a-f-]+$
+  methods:
+    - GET
+  strip_path: false
+  preserve_host: true
+  tags:
+    - nidus
+    - location
+    - authenticated
+  plugins:
+    - name: nidaw-jwt-auth
+      config:
+        required_roles:
+          - rider
+          - admin

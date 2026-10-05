@@ -1,0 +1,133 @@
+{
+  "schemaName": "order_realtime",
+  "enableColumnBasedNullHandling": false,
+  "dimensionFieldSpecs": [
+    {
+      "name": "order_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "user_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "restaurant_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "driver_id",
+      "dataType": "STRING"
+    },
+    {
+      "name": "delivery_address",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "status",
+      "dataType": "STRING",
+      "notNull": true,
+      "default": "pending"
+    },
+    {
+      "name": "currency",
+      "dataType": "STRING",
+      "default": "USD"
+    },
+    {
+      "name": "payment_method",
+      "dataType": "STRING"
+    },
+    {
+      "name": "items",
+      "dataType": "STRING"
+    },
+    {
+      "name": "city",
+      "dataType": "STRING"
+    },
+    {
+      "name": "country_code",
+      "dataType": "STRING"
+    }
+  ],
+  "metricFieldSpecs": [
+    {
+      "name": "subtotal",
+      "dataType": "DOUBLE",
+      "notNull": true
+    },
+    {
+      "name": "delivery_fee",
+      "dataType": "DOUBLE",
+      "notNull": true
+    },
+    {
+      "name": "total_amount",
+      "dataType": "DOUBLE",
+      "notNull": true
+    },
+    {
+      "name": "tip_amount",
+      "dataType": "DOUBLE",
+      "default": 0.0
+    },
+    {
+      "name": "discount_amount",
+      "dataType": "DOUBLE",
+      "default": 0.0
+    },
+    {
+      "name": "item_count",
+      "dataType": "INT",
+      "default": 0
+    },
+    {
+      "name": "estimated_delivery_minutes",
+      "dataType": "INT"
+    },
+    {
+      "name": "actual_delivery_minutes",
+      "dataType": "INT"
+    },
+    {
+      "name": "delivery_distance_km",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "rating",
+      "dataType": "INT"
+    },
+    {
+      "name": "driver_earnings",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "restaurant_earnings",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "platform_fee",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "delivery_lat",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "delivery_lng",
+      "dataType": "DOUBLE"
+    }
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_time",
+      "dataType": "LONG",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS"
+    }
+  ]
+}

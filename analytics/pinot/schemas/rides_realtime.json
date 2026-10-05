@@ -1,0 +1,32 @@
+{
+  "schemaName": "rides_realtime",
+  "dimensionFieldSpecs": [
+    {"name": "ride_id", "dataType": "STRING"},
+    {"name": "user_id", "dataType": "STRING"},
+    {"name": "driver_id", "dataType": "STRING"},
+    {"name": "city", "dataType": "STRING"},
+    {"name": "country", "dataType": "STRING"},
+    {"name": "ride_type", "dataType": "STRING"},
+    {"name": "status", "dataType": "STRING"},
+    {"name": "payment_method", "dataType": "STRING"},
+    {"name": "currency", "dataType": "STRING"}
+  ],
+  "metricFieldSpecs": [
+    {"name": "fare_amount", "dataType": "DOUBLE"},
+    {"name": "distance_km", "dataType": "DOUBLE"},
+    {"name": "duration_minutes", "dataType": "INT"},
+    {"name": "driver_earnings", "dataType": "DOUBLE"},
+    {"name": "platform_fee", "dataType": "DOUBLE"},
+    {"name": "surge_multiplier", "dataType": "DOUBLE"},
+    {"name": "rating", "dataType": "DOUBLE"},
+    {"name": "tip_amount", "dataType": "DOUBLE"}
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_time",
+      "dataType": "LONG",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS"
+    }
+  ]
+}

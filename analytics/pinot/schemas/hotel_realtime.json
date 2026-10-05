@@ -1,0 +1,110 @@
+{
+  "schemaName": "hotel_realtime",
+  "enableColumnBasedNullHandling": false,
+  "dimensionFieldSpecs": [
+    {
+      "name": "hotel_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "name",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "description",
+      "dataType": "STRING"
+    },
+    {
+      "name": "country_code",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "city",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "address",
+      "dataType": "STRING"
+    },
+    {
+      "name": "star_rating",
+      "dataType": "INT"
+    },
+    {
+      "name": "amenities",
+      "dataType": "STRING"
+    },
+    {
+      "name": "images",
+      "dataType": "STRING"
+    },
+    {
+      "name": "status",
+      "dataType": "STRING",
+      "notNull": true,
+      "default": "active"
+    },
+    {
+      "name": "created_at",
+      "dataType": "LONG",
+      "notNull": true
+    },
+    {
+      "name": "updated_at",
+      "dataType": "LONG"
+    }
+  ],
+  "metricFieldSpecs": [
+    {
+      "name": "price_per_night",
+      "dataType": "DOUBLE",
+      "notNull": true
+    },
+    {
+      "name": "rating",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "total_bookings",
+      "dataType": "INT",
+      "default": 0
+    },
+    {
+      "name": "total_revenue",
+      "dataType": "DOUBLE",
+      "default": 0.0
+    },
+    {
+      "name": "average_stay_duration",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "occupancy_rate",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "cancellation_rate",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "latitude",
+      "dataType": "DOUBLE"
+    },
+    {
+      "name": "longitude",
+      "dataType": "DOUBLE"
+    }
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_time",
+      "dataType": "LONG",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS"
+    }
+  ]
+}
