@@ -1,0 +1,202 @@
+# ============================================================================
+# NIDAW Analytics Stack
+# Apache Pinot, Feast, MLflow, Superset
+# Usage: docker-compose -f base.yaml -f analytics.yaml up
+# ============================================================================
+
+version: '3.9'
+
+services:
+  # ==========================================================================
+  # APACHE PINOT - Real-Time OLAP
+  # ==========================================================================
+  pinot-controller:
+    image: apachepinot/pinot:0.10.0
+    container_name: nidaw-pinot-controller
+    restart: unless-stopped
+    command: "StartController -zkAddress zookeeper:2181"
+    environment:
+      JAVA_OPTS: "-Dplugins.dir=/opt/pinot/plugins -Xms1G -Xmx1G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    ports:
+      - "${PINOT_CONTROLLER_PORT:-9000}:9000"
+    depends_on:
+      - zookeeper
+    networks:
+      - nidaw-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  pinot-broker:
+    image: apachepinot/pinot:0.10.0
+    container_name: nidaw-pinot-broker
+    restart: unless-stopped
+    command: "StartBroker -zkAddress zookeeper:2181"
+    environment:
+      JAVA_OPTS: "-Dplugins.dir=/opt/pinot/plugins -Xms1G -Xmx1G"
+    ports:
+      - "${PINOT_BROKER_PORT:-8099}:8099"
+    depends_on:
+      - pinot-controller
+    networks:
+      - nidaw-network
+
+  pinot-server:
+    image: apachepinot/pinot:0.10.0
+    container_name: nidaw-pinot-server
+    restart: unless-stopped
+    command: "StartServer -zkAddress zookeeper:2181"
+    environment:
+      JAVA_OPTS: "-Dplugins.dir=/opt/pinot/plugins -Xms2G -Xmx2G"
+    volumes:
+      - pinot_data:/opt/pinot/data
+    depends_on:
+      - pinot-broker
+    networks:
+      - nidaw-network
+
+  # ==========================================================================
+  # ZOOKEEPER - Required by Pinot & Kafka
+  # ==========================================================================
+  zookeeper:
+    image: zookeeper:3.8
+    container_name: nidaw-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_PORT: 2181
+    ports:
+      - "${ZOOKEEPER_PORT:-2181}:2181"
+    volumes:
+      - zookeeper_data:/data
+      - zookeeper_logs:/datalog
+    networks:
+      - nidaw-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================================================
+  # FEAST - Feature Store
+  # ==========================================================================
+  feast:
+    build:
+      context: ../../ml/feature_store/feast
+      dockerfile: Dockerfile
+    container_name: nidaw-feast
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      POSTGRES_URL: postgresql://nidaw:nidaw_dev@postgres:5432/nidaw
+    ports:
+      - "${FEAST_PORT:-6566}:6566"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../../ml/feature_store:/app/feature_store:ro
+    networks:
+      - nidaw-network
+
+  # ==========================================================================
+  # APACHE SUPERSET - Business Intelligence
+  # ==========================================================================
+  superset:
+    image: apache/superset:3.0.0
+    container_name: nidaw-superset
+    restart: unless-stopped
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-change-this-in-production}
+      DATABASE_URL: postgresql://nidaw:nidaw_dev@postgres:5432/superset
+      REDIS_URL: redis://redis:6379/2
+      MAPBOX_API_KEY: ${MAPBOX_API_KEY:-}
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    volumes:
+      - superset_data:/app/superset_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nidaw-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================================================
+  # METABASE - Alternative BI Tool
+  # ==========================================================================
+  metabase:
+    image: metabase/metabase:latest
+    container_name: nidaw-metabase
+    restart: unless-stopped
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 5432
+      MB_DB_USER: nidaw
+      MB_DB_PASS: nidaw_dev
+      MB_DB_HOST: postgres
+    ports:
+      - "${METABASE_PORT:-3030}:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nidaw-network
+
+  # ==========================================================================
+  # PINOT INIT - Create Tables & Schemas
+  # ==========================================================================
+  pinot-init:
+    image: apachepinot/pinot:0.10.0
+    container_name: nidaw-pinot-init
+    depends_on:
+      pinot-controller:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 30;
+      echo 'Initializing Pinot schemas and tables...';
+      /opt/pinot/bin/pinot-admin.sh AddTable -tableConfigFile /schemas/rides_realtime_table.json -schemaFile /schemas/rides_realtime.json -controllerHost pinot-controller -controllerPort 9000 -exec || true;
+      echo '✅ Pinot initialization complete';
+      "
+    volumes:
+      - ../../analytics/pinot:/schemas:ro
+    networks:
+      - nidaw-network
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  pinot_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_logs:
+    driver: local
+  superset_data:
+    driver: local
+  metabase_data:
+    driver: local
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  nidaw-network:
+    external: true
+    name: nidaw-network

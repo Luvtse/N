@@ -1,0 +1,273 @@
+# ============================================================================
+# NIDAW Dev Container - Docker Compose
+# Provides all services needed for local development
+# ============================================================================
+
+version: '3.9'
+
+services:
+  # ==========================================================================
+  # MAIN DEVELOPMENT CONTAINER
+  # ==========================================================================
+  nidaw-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nidaw-dev-container
+    volumes:
+      - ..:/workspace:cached
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ENVIRONMENT=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=nidaw
+      - DB_PASSWORD=nidaw_dev
+      - DB_NAME=nidaw
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - JWT_SECRET=dev-secret-key-change-in-production-min-32-chars
+    command: sleep infinity
+    networks:
+      - nidaw-dev-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # ==========================================================================
+  # DATABASES
+  # ==========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: nidaw-dev-postgres
+    environment:
+      POSTGRES_USER: nidaw
+      POSTGRES_PASSWORD: nidaw_dev
+      POSTGRES_DB: nidaw
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/migrations/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nidaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nidaw-dev-network
+
+  timescale:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nidaw-dev-timescale
+    environment:
+      POSTGRES_USER: nidaw
+      POSTGRES_PASSWORD: nidaw_dev
+      POSTGRES_DB: nidaw_timeseries
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nidaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nidaw-dev-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: nidaw-dev-redis
+    command: redis-server --appendonly yes --maxmemory 256mb
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nidaw-dev-network
+
+  # ==========================================================================
+  # MESSAGE BROKER
+  # ==========================================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: nidaw-dev-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - nidaw-dev-network
+
+  # ==========================================================================
+  # OBJECT STORAGE
+  # ==========================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: nidaw-dev-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nidaw-dev-network
+
+  # ==========================================================================
+  # ML PLATFORM
+  # ==========================================================================
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:2.9.2
+    container_name: nidaw-dev-mlflow
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://nidaw:nidaw_dev@postgres:5432/mlflow
+      --default-artifact-root s3://mlflow/
+      --host 0.0.0.0
+      --port 5000
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - nidaw-dev-network
+
+  # ==========================================================================
+  # MONITORING (Lightweight for Dev)
+  # ==========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: nidaw-dev-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - nidaw-dev-network
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: nidaw-dev-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - nidaw-dev-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: nidaw-dev-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - nidaw-dev-network
+
+  # ==========================================================================
+  # DEVELOPMENT TOOLS
+  # ==========================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: nidaw-dev-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: nidaw-dev
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "8083:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - nidaw-dev-network
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: nidaw-dev-redis-ui
+    environment:
+      REDIS_HOSTS: "local:redis:6379"
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - nidaw-dev-network
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  postgres_data:
+  timescale_data:
+  redis_data:
+  kafka_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  nidaw-dev-network:
+    driver: bridge
+    name: nidaw-dev-network

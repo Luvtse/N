@@ -1,0 +1,204 @@
+# ============================================================================
+# NIDAW Production Environment Override
+# Usage: docker-compose -f base.yaml -f prod.yaml up
+# ============================================================================
+
+version: '3.9'
+
+x-backend-env: &backend-prod-env
+  ENVIRONMENT: production
+  SERVER_PORT: 8080
+  SERVER_HOST: 0.0.0.0
+  LOG_LEVEL: warn
+  LOG_FORMAT: json
+  ENABLE_PROFILING: "false"
+  
+  # Database (Production)
+  DB_HOST: ${PROD_DB_HOST}
+  DB_PORT: 5432
+  DB_USER: ${PROD_DB_USER}
+  DB_PASSWORD: ${PROD_DB_PASSWORD}
+  DB_NAME: ${PROD_DB_NAME:-nidaw}
+  DB_SSLMODE: verify-full
+  DB_MAX_CONNS: 100
+  DB_LOG_LEVEL: error
+  
+  # Redis (Production)
+  REDIS_URL: ${PROD_REDIS_URL}
+  REDIS_DB: 0
+  
+  # Kafka (Production)
+  KAFKA_BROKERS: ${PROD_KAFKA_BROKERS}
+  SCHEMA_REGISTRY_URL: ${PROD_SCHEMA_REGISTRY_URL}
+  KAFKA_CONSUMER_GROUP: nidaw-backend-prod
+  
+  # Auth (Production)
+  JWT_SECRET: ${PROD_JWT_SECRET}
+  ACCESS_TOKEN_TTL: 15m
+  REFRESH_TOKEN_TTL: 168h
+  JWT_ISSUER: nidaw
+  JWT_AUDIENCE: nidaw-client
+  BCRYPT_COST: 12
+  
+  # Payments (Production)
+  STRIPE_API_KEY: ${PROD_STRIPE_API_KEY}
+  STRIPE_WEBHOOK_SECRET: ${PROD_STRIPE_WEBHOOK_SECRET}
+  
+  # ML Platform
+  MLFLOW_TRACKING_URI: ${PROD_MLFLOW_URI}
+  
+  # Feature Flags
+  FEATURE_AUTONOMOUS_VEHICLES: "true"
+  FEATURE_DRONE_DELIVERY: "true"
+  FEATURE_BLOCKCHAIN_PAYMENTS: "true"
+
+x-frontend-env: &frontend-prod-env
+  API_BASE_URL: https://api.nidaw.com
+  WS_BASE_URL: wss://api.nidaw.com/ws
+  ENVIRONMENT: production
+  ENABLE_DEBUG: "false"
+  LOG_LEVEL: error
+  CDN_URL: https://cdn.nidaw.com
+
+services:
+  # ==========================================================================
+  # BACKEND - Production (Pre-built Image)
+  # ==========================================================================
+  backend:
+    image: ${BACKEND_IMAGE:-nidaw/backend:latest}
+    container_name: nidaw-backend-prod
+    restart: always
+    environment:
+      <<: *backend-prod-env
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - nidaw-network
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '2.0'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # FRONTEND - Production (Nginx)
+  # ==========================================================================
+  frontend:
+    image: ${FRONTEND_IMAGE:-nidaw/frontend:latest}
+    container_name: nidaw-frontend-prod
+    restart: always
+    environment:
+      <<: *frontend-prod-env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ssl_certs:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+    networks:
+      - nidaw-network
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # API GATEWAY - Kong (Production)
+  # ==========================================================================
+  kong:
+    image: ${KONG_IMAGE:-nidaw/kong-gateway:latest}
+    container_name: nidaw-kong-prod
+    restart: always
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000, 0.0.0.0:8443 ssl
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      KONG_LOG_LEVEL: warn
+      KONG_NGINX_WORKER_PROCESSES: auto
+      KONG_NGINX_WORKER_CONNECTIONS: 8192
+      JWT_SECRET: ${PROD_JWT_SECRET}
+    ports:
+      - "8000:8000"
+      - "8443:8443"
+      - "8001:8001"
+      - "8100:8100"
+    volumes:
+      - ../../api-gateway/kong/kong.yml:/etc/kong/kong.yml:ro
+      - ssl_certs:/etc/kong/ssl:ro
+    depends_on:
+      - backend
+    networks:
+      - nidaw-network
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  ssl_certs:
+    driver: local
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  nidaw-network:
+    external: true
+    name: nidaw-network

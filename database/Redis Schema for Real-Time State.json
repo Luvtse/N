@@ -1,0 +1,12 @@
+# Driver availability (sorted set by location hash)
+ZADD drivers:available:na-east 40.7128:-74.0060 driver_123
+
+# Active rides (hash)
+HSET ride:active:ride_456 status "in_progress" driver_id "driver_789"
+
+# User sessions (string with TTL)
+SET user:session:user_123 "jwt-token" EX 3600
+
+# Rate limiting (counter)
+INCR rate_limit:user_123:api_calls
+EXPIRE rate_limit:user_123:api_calls 60

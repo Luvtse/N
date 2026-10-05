@@ -1,0 +1,252 @@
+# ============================================================================
+# NIDAW Development Environment Override
+# Usage: docker-compose -f base.yaml -f dev.yaml up
+# ============================================================================
+
+version: '3.9'
+
+x-backend-env: &backend-dev-env
+  ENVIRONMENT: development
+  SERVER_PORT: 8080
+  SERVER_HOST: 0.0.0.0
+  LOG_LEVEL: debug
+  LOG_FORMAT: console
+  ENABLE_PROFILING: "true"
+  
+  # Database
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_USER: nidaw
+  DB_PASSWORD: nidaw_dev
+  DB_NAME: nidaw
+  DB_SSLMODE: disable
+  DB_MAX_CONNS: 20
+  DB_LOG_LEVEL: debug
+  
+  # Redis
+  REDIS_URL: redis://redis:6379
+  REDIS_DB: 0
+  
+  # Kafka
+  KAFKA_BROKERS: kafka:9092
+  SCHEMA_REGISTRY_URL: http://schema-registry:8081
+  KAFKA_CONSUMER_GROUP: nidaw-backend-dev
+  
+  # Auth
+  JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-production-min-32-chars}
+  ACCESS_TOKEN_TTL: 15m
+  REFRESH_TOKEN_TTL: 168h
+  JWT_ISSUER: nidaw
+  JWT_AUDIENCE: nidaw-client
+  BCRYPT_COST: 10
+  
+  # Payments (Test mode)
+  STRIPE_API_KEY: ${STRIPE_API_KEY:-sk_test_placeholder}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
+  
+  # ML Platform
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  FEATURE_STORE_PATH: /app/ml/feature_store
+  
+  # Feature Flags
+  FEATURE_AUTONOMOUS_VEHICLES: "false"
+  FEATURE_DRONE_DELIVERY: "false"
+  FEATURE_BLOCKCHAIN_PAYMENTS: "false"
+  FEATURE_AR_NAVIGATION: "true"
+  FEATURE_VOICE_COMMANDS: "true"
+
+x-frontend-env: &frontend-dev-env
+  API_BASE_URL: http://localhost:8080
+  WS_BASE_URL: ws://localhost:8080/ws
+  ENVIRONMENT: development
+  ENABLE_DEBUG: "true"
+  LOG_LEVEL: debug
+
+services:
+  # ==========================================================================
+  # BACKEND - Go API Server (Development Mode)
+  # ==========================================================================
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.dev
+      target: development
+    container_name: nidaw-backend-dev
+    restart: unless-stopped
+    environment:
+      <<: *backend-dev-env
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_DEBUG_PORT:-2345}:2345" # Delve debugger
+    volumes:
+      - ../../backend:/app:cached
+      - go_mod_cache:/go/pkg/mod
+      - backend_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - nidaw-network
+    command: ["air", "-c", ".air.toml"] # Hot reload
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+  # ==========================================================================
+  # FRONTEND - Flutter Web (Development Mode)
+  # ==========================================================================
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile.dev
+      target: development
+    container_name: nidaw-frontend-dev
+    restart: unless-stopped
+    environment:
+      <<: *frontend-dev-env
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_DEBUG_PORT:-8085}:8085"
+    volumes:
+      - ../../frontend:/app:cached
+      - flutter_cache:/root/.pub-cache
+    depends_on:
+      - backend
+    networks:
+      - nidaw-network
+    command: ["flutter", "run", "-d", "web-server", "--web-port=3000", "--web-hostname=0.0.0.0"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+  # ==========================================================================
+  # API GATEWAY - Kong (Development)
+  # ==========================================================================
+  kong:
+    build:
+      context: ../../api-gateway/kong
+      dockerfile: Dockerfile
+    container_name: nidaw-kong-dev
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      KONG_LOG_LEVEL: debug
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-production-min-32-chars}
+    ports:
+      - "${KONG_PROXY_PORT:-8000}:8000"
+      - "${KONG_ADMIN_PORT:-8001}:8001"
+      - "${KONG_STATUS_PORT:-8100}:8100"
+    volumes:
+      - ../../api-gateway/kong/kong.yml:/etc/kong/kong.yml:ro
+    depends_on:
+      - backend
+    networks:
+      - nidaw-network
+
+  # ==========================================================================
+  # MLFLOW - ML Experiment Tracking
+  # ==========================================================================
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:2.9.2
+    container_name: nidaw-mlflow-dev
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://nidaw:nidaw_dev@postgres:5432/mlflow
+      --default-artifact-root s3://mlflow/
+      --host 0.0.0.0
+      --port 5000
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - nidaw-network
+
+  # ==========================================================================
+  # MINIO INIT - Create Buckets
+  # ==========================================================================
+  minio-init:
+    image: minio/mc:latest
+    container_name: nidaw-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/mlflow --ignore-existing;
+      mc mb local/events --ignore-existing;
+      mc mb local/backups --ignore-existing;
+      mc mb local/uploads --ignore-existing;
+      mc mb local/audit-logs --ignore-existing;
+      echo '✅ MinIO buckets created';
+      "
+    networks:
+      - nidaw-network
+
+  # ==========================================================================
+  # KAFKA INIT - Create Topics
+  # ==========================================================================
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: nidaw-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic nidus.rides --partitions 6 --replication-factor 1;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic nidus.locations --partitions 12 --replication-factor 1;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic haven.bookings --partitions 3 --replication-factor 1;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic vorax.orders --partitions 6 --replication-factor 1;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic payments --partitions 3 --replication-factor 1;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic notifications --partitions 3 --replication-factor 1;
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic audit-logs --partitions 3 --replication-factor 1;
+      echo '✅ Kafka topics created';
+      "
+    networks:
+      - nidaw-network
+
+# ============================================================================
+# VOLUMES (Additional for dev)
+# ============================================================================
+volumes:
+  go_mod_cache:
+    driver: local
+  flutter_cache:
+    driver: local
+  backend_logs:
+    driver: local
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  nidaw-network:
+    external: true
+    name: nidaw-network

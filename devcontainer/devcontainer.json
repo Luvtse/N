@@ -1,0 +1,209 @@
+{
+  "name": "NIDAW Development Environment",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "nidaw-dev",
+  "workspaceFolder": "/workspace",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "go.toolsManagement.autoUpdate": true,
+        "go.useLanguageServer": true,
+        "go.formatTool": "goimports",
+        "go.lintTool": "golangci-lint",
+        "go.testFlags": ["-v", "-race"],
+        "go.coverOnSave": true,
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": "explicit"
+        },
+        "[go]": {
+          "editor.defaultFormatter": "golang.go",
+          "editor.formatOnSave": true
+        },
+        "[dart]": {
+          "editor.defaultFormatter": "Dart-Code.dart-code",
+          "editor.formatOnSave": true
+        },
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.python",
+          "editor.formatOnSave": true
+        },
+        "[yaml]": {
+          "editor.defaultFormatter": "redhat.vscode-yaml",
+          "editor.formatOnSave": true
+        },
+        "[json]": {
+          "editor.defaultFormatter": "vscode.json-language-features",
+          "editor.formatOnSave": true
+        },
+        "dart.flutterSdkPath": "/opt/flutter",
+        "dart.sdkPath": "/opt/flutter/bin/cache/dart-sdk",
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.provider": "black",
+        "terraform.codelens.referenceCount": true,
+        "terraform.languageServer.enable": true,
+        "files.exclude": {
+          "**/.git": true,
+          "**/.DS_Store": true,
+          "**/node_modules": true,
+          "**/__pycache__": true,
+          "**/.venv": true
+        },
+        "search.exclude": {
+          "**/vendor": true,
+          "**/build": true,
+          "**/dist": true,
+          "**/.cache": true
+        }
+      },
+      "extensions": [
+        "golang.go",
+        "Dart-Code.dart-code",
+        "Dart-Code.flutter",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "hashicorp.terraform",
+        "redhat.vscode-yaml",
+        "redhat.vscode-xml",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "GitHub.vscode-pull-request-github",
+        "eamodio.gitlens",
+        "mhutchie.git-graph",
+        "streetsidesoftware.code-spell-checker",
+        "usernamehw.errorlens",
+        "wix.vscode-import-cost",
+        "graphql.vscode-graphql",
+        "solidity.solidity",
+        "nomicfoundation.hardhat-solidity",
+        "ms-vscode.vscode-json",
+        "redhat.vscode-commons",
+        "gruntfuggly.todo-tree",
+        "aaron-bond.better-comments",
+        "oderwat.indent-rainbow",
+        "coenraads.bracket-pair-colorizer-2",
+        "ms-vscode.live-server",
+        "42Crunch.vscode-openapi",
+        "redocly.openapi-vs-code",
+        "humao.rest-client",
+        "zxh404.vscode-proto3",
+        "bufbuild.vscode-buf",
+        "ms-vscode.makefile-tools",
+        "tamasfe.even-better-toml",
+        "timonwong.shellcheck",
+        "foxundermoon.shell-format",
+        "mads-hartmann.bash-ide-vscode",
+        "ms-vscode.vscode-typescript-next",
+        "visualstudioexptteam.vscodeintellicode",
+        "github.copilot",
+        "github.copilot-chat"
+      ]
+    }
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.21"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "latest",
+      "minikube": "none"
+    },
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "1.5"
+    },
+    "ghcr.io/devcontainers/features/aws-cli:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "version": "latest"
+    }
+  },
+
+  "forwardPorts": [
+    3000,
+    5000,
+    5432,
+    5433,
+    6379,
+    8000,
+    8001,
+    8080,
+    8081,
+    8082,
+    8083,
+    8088,
+    8089,
+    9000,
+    9001,
+    9090,
+    9091,
+    9092,
+    9093,
+    9100,
+    16686,
+    29092
+  ],
+
+  "portsAttributes": {
+    "3000": { "label": "Frontend (Flutter Web)" },
+    "5000": { "label": "MLflow" },
+    "5432": { "label": "PostgreSQL" },
+    "5433": { "label": "TimescaleDB" },
+    "6379": { "label": "Redis" },
+    "8000": { "label": "Kong Proxy" },
+    "8001": { "label": "Kong Admin" },
+    "8080": { "label": "Backend API" },
+    "8081": { "label": "Redis Commander" },
+    "8082": { "label": "Schema Registry" },
+    "8083": { "label": "Kafka UI" },
+    "8088": { "label": "Superset" },
+    "8089": { "label": "cAdvisor" },
+    "9000": { "label": "MinIO API" },
+    "9001": { "label": "MinIO Console" },
+    "9090": { "label": "Prometheus" },
+    "9092": { "label": "Kafka" },
+    "16686": { "label": "Jaeger UI" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+
+  "remoteUser": "vscode",
+
+  "mounts": [
+    "source=nidaw-go-mod,target=/go/pkg/mod,type=volume",
+    "source=nidaw-pub-cache,target=/home/vscode/.pub-cache,type=volume",
+    "source=nidaw-pip-cache,target=/home/vscode/.cache/pip,type=volume"
+  ],
+
+  "containerEnv": {
+    "ENVIRONMENT": "development",
+    "GOPATH": "/go",
+    "FLUTTER_ROOT": "/opt/flutter",
+    "PATH": "/opt/flutter/bin:/opt/venv/bin:/go/bin:${containerEnv:PATH}"
+  },
+
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt",
+    "seccomp=unconfined"
+  ],
+
+  "initializeCommand": "echo '🚀 Initializing NIDAW dev container...'"
+}

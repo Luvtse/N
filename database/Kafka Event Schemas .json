@@ -1,0 +1,58 @@
+// ride.requested event
+{
+  "type": "ride.requested",
+  "payload": {
+    "ride_id": "uuid-string",
+    "user_id": "uuid-string",
+    "pickup_lat": 40.7128,
+    "pickup_lng": -74.0060,
+    "dropoff_lat": 40.7589,
+    "dropoff_lng": -73.9851,
+    "estimated_distance_km": 5.2,
+    "currency": "USD"
+  },
+  "metadata": {
+    "timestamp": 1720512000,
+    "trace_id": "trace-uuid",
+    "region": "na-east",
+    "version": "1.0"
+  }
+}
+
+// driver.matched event
+{
+  "type": "driver.matched",
+  "payload": {
+    "ride_id": "uuid-string",
+    "driver_id": "uuid-string",
+    "eta_seconds": 420,
+    "distance_to_pickup_km": 2.1,
+    "fare_amount": 15.50,
+    "currency": "USD"
+  },
+  "metadata": {
+    "timestamp": 1720512005,
+    "trace_id": "trace-uuid",
+    "region": "na-east"
+  }
+}
+
+// ride.completed event
+{
+  "type": "ride.completed",
+  "payload": {
+    "ride_id": "uuid-string",
+    "driver_id": "uuid-string",
+    "user_id": "uuid-string",
+    "actual_distance_km": 5.3,
+    "duration_minutes": 18,
+    "fare_amount": 16.20,
+    "driver_earnings": 12.96,
+    "platform_fee": 3.24,
+    "rating": 4.8
+  },
+  "metadata": {
+    "timestamp": 1720513080,
+    "trace_id": "trace-uuid"
+  }
+}
