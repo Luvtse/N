@@ -1,0 +1,95 @@
+# ============================================================================
+# Development Environment Overlay
+# Smaller resources, cost-optimized
+# ============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nidaw-dev
+
+namePrefix: dev-
+
+labels:
+  - pairs:
+      environment: dev
+    includeSelectors: true
+
+resources:
+  - ../../base
+
+# ============================================================================
+# Patches for Development
+# ============================================================================
+
+patches:
+  # Reduce frontend replicas
+  - target:
+      kind: Deployment
+      name: nidaw-frontend
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "64Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "200m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+
+  # Update frontend service port
+  - target:
+      kind: Service
+      name: nidaw-frontend
+    patch: |
+      - op: replace
+        path: /metadata/annotations
+        value:
+          service.beta.kubernetes.io/aws-load-balancer-internal: "false"
+
+# ============================================================================
+# ConfigMap for Dev Environment
+# ============================================================================
+
+configMapGenerator:
+  - name: nidaw-frontend-config
+    literals:
+      - API_BASE_URL=http://dev-api.nidaw.local
+      - WS_BASE_URL=ws://dev-api.nidaw.local/ws
+      - ENVIRONMENT=development
+      - ENABLE_DEBUG=true
+      - LOG_LEVEL=debug
+
+  - name: nidaw-frontend-nginx
+    files:
+      - default.conf=nginx-dev.conf
+
+# ============================================================================
+# Images (Dev-specific tags)
+# ============================================================================
+
+images:
+  - name: nidaw/frontend
+    newTag: dev-latest
+  - name: nidaw/backend
+    newTag: dev-latest
+
+# ============================================================================
+# Replicas (Dev-specific)
+# ============================================================================
+
+replicas:
+  - name: nidaw-frontend
+    count: 1
+  - name: nidaw-backend
+    count: 1

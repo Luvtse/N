@@ -1,0 +1,30 @@
+# Core ML
+torch==2.1.0
+xgboost==2.0.3
+scikit-learn==1.3.2
+pandas==2.1.4
+numpy==1.26.2
+
+# Feature Store
+feast==0.34.0
+redis==5.0.1
+
+# Experiment Tracking
+mlflow==2.9.2
+
+# Monitoring
+evidently==0.4.13
+great-expectations==0.18.8
+
+# Serving
+torchserve==0.9.0
+ray[serve]==2.9.0
+
+# Data
+pyarrow==14.0.2
+psycopg2-binary==2.9.9
+
+# Utilities
+requests==2.31.0
+pyyaml==6.0.1
+joblib==1.3.2

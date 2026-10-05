@@ -1,0 +1,98 @@
+{
+  "type": "record",
+  "name": "PaymentProcessed",
+  "namespace": "com.nidaw.events",
+  "doc": "Event emitted when a payment is processed",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique event identifier (UUID)"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "enum",
+        "name": "EventType",
+        "symbols": ["PAYMENT_PROCESSED", "PAYMENT_FAILED", "PAYMENT_REFUNDED"]
+      },
+      "default": "PAYMENT_PROCESSED"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "Event timestamp in milliseconds since epoch",
+      "logicalType": "timestamp-millis"
+    },
+    {
+      "name": "payment_id",
+      "type": "string",
+      "doc": "Payment identifier (UUID)"
+    },
+    {
+      "name": "user_id",
+      "type": "string",
+      "doc": "User identifier (UUID)"
+    },
+    {
+      "name": "order_type",
+      "type": {
+        "type": "enum",
+        "name": "OrderType",
+        "symbols": ["RIDE", "HOTEL", "FOOD", "FREIGHT"]
+      }
+    },
+    {
+      "name": "order_id",
+      "type": "string",
+      "doc": "Order identifier (UUID)"
+    },
+    {
+      "name": "amount",
+      "type": {
+        "type": "record",
+        "name": "Money",
+        "fields": [
+          {"name": "amount", "type": "double"},
+          {"name": "currency", "type": "string"}
+        ]
+      }
+    },
+    {
+      "name": "payment_method",
+      "type": {
+        "type": "enum",
+        "name": "PaymentMethod",
+        "symbols": ["CREDIT_CARD", "DEBIT_CARD", "DIGITAL_WALLET", "BANK_TRANSFER", "CRYPTO"]
+      }
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "PaymentStatus",
+        "symbols": ["PENDING", "PROCESSING", "SUCCEEDED", "FAILED", "REFUNDED"]
+      }
+    },
+    {
+      "name": "transaction_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "External transaction ID (e.g., Stripe payment intent ID)"
+    },
+    {
+      "name": "processing_fee",
+      "type": ["null", "Money"],
+      "default": null,
+      "doc": "Processing fee charged by payment provider"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {}
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+# ============================================================================
+# Staging Environment Overlay
+# Production-like with medium scale
+# ============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nidaw-staging
+
+namePrefix: staging-
+
+labels:
+  - pairs:
+      environment: staging
+    includeSelectors: true
+
+resources:
+  - ../../base
+
+# ============================================================================
+# Patches for Staging
+# ============================================================================
+
+patches:
+  # Medium-sized frontend deployment
+  - target:
+      kind: Deployment
+      name: nidaw-frontend
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "200m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+
+# ============================================================================
+# ConfigMap for Staging Environment
+# ============================================================================
+
+configMapGenerator:
+  - name: nidaw-frontend-config
+    literals:
+      - API_BASE_URL=https://staging-api.nidaw.com
+      - WS_BASE_URL=wss://staging-api.nidaw.com/ws
+      - ENVIRONMENT=staging
+      - ENABLE_DEBUG=false
+      - LOG_LEVEL=info
+
+  - name: nidaw-frontend-nginx
+    files:
+      - default.conf=nginx-staging.conf
+
+# ============================================================================
+# Images (Staging-specific tags)
+# ============================================================================
+
+images:
+  - name: nidaw/frontend
+    newTag: staging-latest
+  - name: nidaw/backend
+    newTag: staging-latest
+
+# ============================================================================
+# Replicas (Staging-specific)
+# ============================================================================
+
+replicas:
+  - name: nidaw-frontend
+    count: 2
+  - name: nidaw-backend
+    count: 2
+
+# ============================================================================
+# Secrets (Reference to external secrets)
+# ============================================================================
+
+secretGenerator:
+  - name: nidaw-frontend-secrets
+    envs:
+      - .env.staging
+    type: Opaque

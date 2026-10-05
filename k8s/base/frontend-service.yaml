@@ -1,0 +1,26 @@
+# ============================================================================
+# NIDAW Frontend Service
+# ClusterIP service for frontend web app
+# ============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nidaw-frontend
+  namespace: nidaw
+  labels:
+    app.kubernetes.io/name: nidaw-frontend
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: nidaw-platform
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nidaw-frontend
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+  sessionAffinity: None

@@ -1,0 +1,104 @@
+# ============================================================================
+# Production Environment Overlay
+# High availability, maximum performance
+# ============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nidaw-production
+
+namePrefix: prod-
+
+labels:
+  - pairs:
+      environment: production
+    includeSelectors: true
+
+resources:
+  - ../../base
+  - hpa.yaml
+  - pdb.yaml
+
+# ============================================================================
+# Patches for Production
+# ============================================================================
+
+patches:
+  # High-availability frontend deployment
+  - target:
+      kind: Deployment
+      name: nidaw-frontend
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 5
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxSurge
+        value: 25%
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxUnavailable
+        value: 0
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: nidaw-frontend
+
+# ============================================================================
+# ConfigMap for Production Environment
+# ============================================================================
+
+configMapGenerator:
+  - name: nidaw-frontend-config
+    literals:
+      - API_BASE_URL=https://api.nidaw.com
+      - WS_BASE_URL=wss://api.nidaw.com/ws
+      - ENVIRONMENT=production
+      - ENABLE_DEBUG=false
+      - LOG_LEVEL=warn
+      - ENABLE_ANALYTICS=true
+      - CDN_URL=https://cdn.nidaw.com
+
+  - name: nidaw-frontend-nginx
+    files:
+      - default.conf=nginx-prod.conf
+
+# ============================================================================
+# Images (Production-specific tags)
+# ============================================================================
+
+images:
+  - name: nidaw/frontend
+    newTag: v1.0.0
+  - name: nidaw/backend
+    newTag: v1.0.0
+
+# ============================================================================
+# Replicas (Production-specific)
+# ============================================================================
+
+replicas:
+  - name: nidaw-frontend
+    count: 5
+  - name: nidaw-backend
+    count: 5

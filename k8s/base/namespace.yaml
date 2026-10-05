@@ -1,0 +1,109 @@
+# ============================================================================
+# NIDAW Namespace
+# ============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nidaw
+  labels:
+    app.kubernetes.io/name: nidaw
+    app.kubernetes.io/part-of: nidaw-platform
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "NIDAW AI-Native Mobility Super-App"
+    owner: "platform-team@nidaw.com"
+
+---
+# ============================================================================
+# Network Policies (Namespace-level security)
+# ============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: nidaw
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internal-communication
+  namespace: nidaw
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: nidaw
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: nidaw
+    - to: # Allow DNS resolution
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# ============================================================================
+# Resource Quotas
+# ============================================================================
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: nidaw-quota
+  namespace: nidaw
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "100"
+    services: "20"
+    configmaps: "30"
+    secrets: "30"
+    persistentvolumeclaims: "20"
+
+---
+# ============================================================================
+# Limit Ranges (Default resource limits per pod)
+# ============================================================================
+
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: nidaw-limit-range
+  namespace: nidaw
+spec:
+  limits:
+    - default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+      type: Container

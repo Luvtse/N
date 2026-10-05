@@ -1,0 +1,38 @@
+# ============================================================================
+# NIDAW Backend Service
+# ClusterIP service for backend API
+# ============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nidaw-backend
+  namespace: nidaw
+  labels:
+    app.kubernetes.io/name: nidaw-backend
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: nidaw-platform
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nidaw-backend
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+    - name: grpc
+      port: 9091
+      targetPort: 9091
+      protocol: TCP
+  sessionAffinity: None

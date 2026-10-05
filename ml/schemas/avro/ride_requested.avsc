@@ -1,0 +1,109 @@
+{
+  "type": "record",
+  "name": "RideRequested",
+  "namespace": "com.nidaw.events",
+  "doc": "Event emitted when a ride is requested",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique event identifier (UUID)"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "enum",
+        "name": "EventType",
+        "symbols": ["RIDE_REQUESTED", "RIDE_MATCHED", "RIDE_STARTED", "RIDE_COMPLETED", "RIDE_CANCELLED"]
+      },
+      "default": "RIDE_REQUESTED"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "Event timestamp in milliseconds since epoch",
+      "logicalType": "timestamp-millis"
+    },
+    {
+      "name": "ride_id",
+      "type": "string",
+      "doc": "Unique ride identifier (UUID)"
+    },
+    {
+      "name": "user_id",
+      "type": "string",
+      "doc": "User who requested the ride (UUID)"
+    },
+    {
+      "name": "pickup_location",
+      "type": {
+        "type": "record",
+        "name": "Location",
+        "fields": [
+          {"name": "latitude", "type": "double"},
+          {"name": "longitude", "type": "double"},
+          {"name": "address", "type": ["null", "string"], "default": null}
+        ]
+      }
+    },
+    {
+      "name": "dropoff_location",
+      "type": "Location"
+    },
+    {
+      "name": "ride_type",
+      "type": {
+        "type": "enum",
+        "name": "RideType",
+        "symbols": ["STANDARD", "PREMIUM", "ELECTRIC", "SHARED", "WHEELCHAIR"]
+      }
+    },
+    {
+      "name": "estimated_distance_km",
+      "type": "double",
+      "doc": "Estimated distance in kilometers"
+    },
+    {
+      "name": "estimated_duration_minutes",
+      "type": "int",
+      "doc": "Estimated duration in minutes"
+    },
+    {
+      "name": "fare_estimate",
+      "type": {
+        "type": "record",
+        "name": "FareEstimate",
+        "fields": [
+          {"name": "base_fare", "type": "double"},
+          {"name": "distance_fare", "type": "double"},
+          {"name": "time_fare", "type": "double"},
+          {"name": "surge_multiplier", "type": "double", "default": 1.0},
+          {"name": "total_fare", "type": "double"},
+          {"name": "currency", "type": "string", "default": "USD"}
+        ]
+      }
+    },
+    {
+      "name": "payment_method_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Payment method identifier"
+    },
+    {
+      "name": "scheduled_at",
+      "type": ["null", "long"],
+      "default": null,
+      "doc": "Scheduled pickup time (timestamp-millis)",
+      "logicalType": "timestamp-millis"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {},
+      "doc": "Additional metadata"
+    }
+  ]
+}

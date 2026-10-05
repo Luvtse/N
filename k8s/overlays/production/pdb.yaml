@@ -1,0 +1,19 @@
+# ============================================================================
+# Pod Disruption Budget - Production
+# Ensures high availability during voluntary disruptions
+# ============================================================================
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nidaw-frontend-pdb
+  namespace: nidaw-production
+  labels:
+    app.kubernetes.io/name: nidaw-frontend
+    environment: production
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nidaw-frontend
+      app.kubernetes.io/component: frontend

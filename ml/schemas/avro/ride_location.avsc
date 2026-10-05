@@ -1,0 +1,86 @@
+{
+  "type": "record",
+  "name": "RideLocationUpdate",
+  "namespace": "com.nidaw.events",
+  "doc": "Event emitted when ride location is updated",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique event identifier (UUID)"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "enum",
+        "name": "EventType",
+        "symbols": ["LOCATION_UPDATED"]
+      },
+      "default": "LOCATION_UPDATED"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "Event timestamp in milliseconds since epoch",
+      "logicalType": "timestamp-millis"
+    },
+    {
+      "name": "ride_id",
+      "type": "string",
+      "doc": "Ride identifier (UUID)"
+    },
+    {
+      "name": "driver_id",
+      "type": "string",
+      "doc": "Driver identifier (UUID)"
+    },
+    {
+      "name": "location",
+      "type": {
+        "type": "record",
+        "name": "Location",
+        "fields": [
+          {"name": "latitude", "type": "double"},
+          {"name": "longitude", "type": "double"},
+          {"name": "altitude", "type": ["null", "double"], "default": null}
+        ]
+      }
+    },
+    {
+      "name": "heading",
+      "type": "double",
+      "doc": "Heading in degrees (0-360)"
+    },
+    {
+      "name": "speed_kmh",
+      "type": "double",
+      "doc": "Speed in km/h"
+    },
+    {
+      "name": "accuracy_meters",
+      "type": "double",
+      "doc": "GPS accuracy in meters"
+    },
+    {
+      "name": "distance_traveled_km",
+      "type": "double",
+      "doc": "Distance traveled since last update"
+    },
+    {
+      "name": "ride_status",
+      "type": {
+        "type": "enum",
+        "name": "RideStatus",
+        "symbols": ["DRIVER_EN_ROUTE", "IN_PROGRESS", "COMPLETED"]
+      }
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {}
+    }
+  ]
+}
