@@ -1,0 +1,317 @@
+# ============================================================================
+# NIDAW .gitignore
+# Comprehensive ignore rules for multi-language monorepo
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# OPERATING SYSTEM FILES
+# ----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ----------------------------------------------------------------------------
+# IDE & EDITOR FILES
+# ----------------------------------------------------------------------------
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-workspace
+
+# IntelliJ / GoLand / Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim/Neovim
+*.swp
+*.swo
+*~
+.tags
+.cache/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# ----------------------------------------------------------------------------
+# ENVIRONMENT & SECRETS (CRITICAL)
+# ----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+*secret*
+*password*
+*credential*
+auth.json
+credentials.json
+service-account*.json
+firebase-adminsdk*.json
+
+# ----------------------------------------------------------------------------
+# GO (Backend)
+# ----------------------------------------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+go.work
+go.work.sum
+vendor/
+!backend/vendor/
+backend/tmp/
+backend/logs/
+backend/coverage/
+backend/bin/
+backend/.air.toml.bak
+
+# ----------------------------------------------------------------------------
+# FLUTTER / DART (Frontend)
+# ----------------------------------------------------------------------------
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+*.jks
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+.dart_tool/
+.packages
+doc/api/
+*.g.dart
+*.freezed.dart
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/ios/Pods/
+frontend/ios/.symlinks/
+frontend/ios/Flutter/Generated.xcconfig
+frontend/ios/Flutter/ephemeral/
+
+# ----------------------------------------------------------------------------
+# PYTHON (ML/AI)
+# ----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.egg-info/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.pkl
+*.pickle
+ml/venv/
+ml/.venv/
+ml/__pycache__/
+ml/.pytest_cache/
+ml/htmlcov/
+ml/.coverage
+ml/mlruns/
+ml/.mlruns/
+ml/models/*.pt
+ml/models/*.onnx
+ml/models/*.h5
+ml/.cache/
+
+# ----------------------------------------------------------------------------
+# NODE.JS (Blockchain, Tools)
+# ----------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.npm
+.eslintcache
+blockchain/node_modules/
+blockchain/artifacts/
+blockchain/cache/
+blockchain/typechain-types/
+blockchain/coverage/
+blockchain/coverage.json
+
+# ----------------------------------------------------------------------------
+# TERRAFORM
+# ----------------------------------------------------------------------------
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+!*.tfvars.example
+*.tfvars.json
+!*.tfvars.json.example
+.terraformrc
+terraform.rc
+infrastructure/**/.terraform/
+infrastructure/**/*.tfstate*
+infrastructure/**/*.tfvars
+!infrastructure/**/*.tfvars.example
+
+# ----------------------------------------------------------------------------
+# KUBERNETES & HELM
+# ----------------------------------------------------------------------------
+*.tgz
+helm/**/*.tgz
+!helm/charts/*.tgz
+k8s/**/secrets.yaml
+k8s/**/secrets/*.yaml
+
+# ----------------------------------------------------------------------------
+# DOCKER
+# ----------------------------------------------------------------------------
+docker-compose.override.yml
+.docker/
+
+# ----------------------------------------------------------------------------
+# LOGS & TEMPORARY FILES
+# ----------------------------------------------------------------------------
+*.log
+logs/
+*.log.*
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+*.swp
+*.bak
+*.orig
+security-reports/
+results/
+artifacts/
+
+# ----------------------------------------------------------------------------
+# DATABASE
+# ----------------------------------------------------------------------------
+*.sql.gz
+*.dump
+*.backup
+database/backups/
+
+# ----------------------------------------------------------------------------
+# TESTING & COVERAGE
+# ----------------------------------------------------------------------------
+coverage/
+*.lcov
+.nyc_output/
+test-results/
+playwright-report/
+cypress/screenshots/
+cypress/videos/
+
+# ----------------------------------------------------------------------------
+# DOCUMENTATION (Generated)
+# ----------------------------------------------------------------------------
+docs/_build/
+docs/api/generated/
+*.html
+!index.html
+
+# ----------------------------------------------------------------------------
+# MONITORING
+# ----------------------------------------------------------------------------
+monitoring/grafana/data/
+monitoring/prometheus/data/
+monitoring/loki/data/
+
+# ----------------------------------------------------------------------------
+# BLOCKCHAIN
+# ----------------------------------------------------------------------------
+blockchain/deployments/
+blockchain/.env
+blockchain/gas-report.txt
+
+# ----------------------------------------------------------------------------
+# MISC
+# ----------------------------------------------------------------------------
+*.bak
+*.orig
+*.rej
+*~

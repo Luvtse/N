@@ -1,0 +1,109 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "api-performance",
+    "title": "NIDAW - API Performance",
+    "tags": ["nidaw", "api"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "API Requests by Endpoint",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "topk(10, sum(rate(http_requests_total[5m])) by (method, path, status))",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "styles": [
+          {
+            "pattern": "Value",
+            "type": "number",
+            "unit": "reqps"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Response Time Distribution",
+        "type": "heatmap",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(increase(http_request_duration_seconds_bucket[5m])) by (le)",
+            "format": "heatmap",
+            "legendFormat": "{{le}}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "HTTP Status Codes",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total[5m])) by (status)",
+            "legendFormat": "{{status}}"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Database Query Time",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[5m])) by (le, operation))",
+            "legendFormat": "{{operation}} P95"
+          }
+        ],
+        "yAxes": [
+          {"label": "seconds", "format": "s"},
+          {"label": ""}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Kafka Consumer Lag",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "kafka_consumer_group_lag",
+            "legendFormat": "{{group}} - {{topic}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "messages"},
+          {"label": ""}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Active WebSocket Connections",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "sum(websocket_connections_active) by (service)",
+            "legendFormat": "{{service}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "connections"},
+          {"label": ""}
+        ]
+      }
+    ]
+  }
+}

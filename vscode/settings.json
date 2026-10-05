@@ -1,0 +1,217 @@
+{
+  // ==========================================================================
+  // EDITOR
+  // ==========================================================================
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit",
+    "source.fixAll.eslint": "explicit"
+  },
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false,
+  "editor.rulers": [120],
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": true,
+  "editor.smoothScrolling": true,
+  "editor.cursorSmoothCaretAnimation": "on",
+  "editor.minimap.enabled": false,
+  "editor.linkedEditing": true,
+  "editor.stickyScroll.enabled": true,
+
+  // ==========================================================================
+  // FILES
+  // ==========================================================================
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  "files.eol": "\n",
+  "files.exclude": {
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/node_modules": true,
+    "**/__pycache__": true,
+    "**/.venv": true,
+    "**/vendor": true,
+    "**/.cache": true,
+    "**/build": true,
+    "**/dist": true,
+    "**/.dart_tool": true,
+    "**/.idea": true
+  },
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/vendor/**": true,
+    "**/.cache/**": true,
+    "**/build/**": true
+  },
+
+  // ==========================================================================
+  // SEARCH
+  // ==========================================================================
+  "search.exclude": {
+    "**/vendor": true,
+    "**/node_modules": true,
+    "**/build": true,
+    "**/dist": true,
+    "**/.cache": true,
+    "**/go.sum": true,
+    "**/pubspec.lock": true,
+    "**/package-lock.json": true,
+    "**/yarn.lock": true
+  },
+
+  // ==========================================================================
+  // GO
+  // ==========================================================================
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.tabSize": 4,
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "go.toolsManagement.autoUpdate": true,
+  "go.useLanguageServer": true,
+  "go.formatTool": "goimports",
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": ["--fast", "--enable=govet,errcheck,staticcheck"],
+  "go.testFlags": ["-v", "-race", "-count=1"],
+  "go.coverOnSave": true,
+  "go.coverOnTestPackage": true,
+  "go.buildTags": "",
+  "go.vetOnSave": "workspace",
+  "go.generateTestsFlags": ["-exported"],
+  "go.addTags": {
+    "tags": "json,db",
+    "options": "json=omitempty",
+    "promptForTags": false
+  },
+
+  // ==========================================================================
+  // DART / FLUTTER
+  // ==========================================================================
+  "[dart]": {
+    "editor.defaultFormatter": "Dart-Code.dart-code",
+    "editor.formatOnSave": true,
+    "editor.tabSize": 2
+  },
+  "dart.flutterSdkPath": "/opt/flutter",
+  "dart.sdkPath": "/opt/flutter/bin/cache/dart-sdk",
+  "dart.lineLength": 120,
+  "dart.previewFlutterUiGuides": true,
+  "dart.previewFlutterUiGuidesCustomTracking": true,
+  "dart.flutterSelectDeviceWhenConnected": true,
+  "dart.openDevTools": "flutter",
+
+  // ==========================================================================
+  // PYTHON
+  // ==========================================================================
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.python",
+    "editor.tabSize": 4,
+    "editor.formatOnSave": true
+  },
+  "python.defaultInterpreterPath": "/opt/venv/bin/python",
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": true,
+  "python.formatting.provider": "black",
+  "python.analysis.typeCheckingMode": "basic",
+
+  // ==========================================================================
+  // TERRAFORM
+  // ==========================================================================
+  "[terraform]": {
+    "editor.defaultFormatter": "hashicorp.terraform",
+    "editor.formatOnSave": true
+  },
+  "terraform.codelens.referenceCount": true,
+  "terraform.languageServer.enable": true,
+
+  // ==========================================================================
+  // YAML / JSON
+  // ==========================================================================
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml",
+    "editor.tabSize": 2
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features",
+    "editor.tabSize": 2
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "yaml.schemas": {
+    "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml",
+    "https://json.schemastore.org/github-action.json": ".github/action.yml"
+  },
+
+  // ==========================================================================
+  // SOLIDITY (Blockchain)
+  // ==========================================================================
+  "[solidity]": {
+    "editor.defaultFormatter": "NomicFoundation.hardhat-solidity",
+    "editor.tabSize": 4
+  },
+
+  // ==========================================================================
+  // SHELL
+  // ==========================================================================
+  "[shellscript]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format",
+    "editor.tabSize": 4
+  },
+
+  // ==========================================================================
+  // DOCKER
+  // ==========================================================================
+  "docker.explorerRefreshInterval": 5000,
+
+  // ==========================================================================
+  // KUBERNETES
+  // ==========================================================================
+  "vs-kubernetes": {
+    "vs-kubernetes.minikube-path": "",
+    "vs-kubernetes.kubectl-path": "/usr/local/bin/kubectl",
+    "vs-kubernetes.helm-path": "/usr/local/bin/helm"
+  },
+
+  // ==========================================================================
+  // GIT
+  // ==========================================================================
+  "git.autofetch": true,
+  "git.confirmSync": false,
+  "git.enableSmartCommit": true,
+  "git.fetchOnPull": true,
+  "git.pruneOnFetch": true,
+
+  // ==========================================================================
+  // TERMINAL
+  // ==========================================================================
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "terminal.integrated.env.linux": {
+    "ENVIRONMENT": "development",
+    "GOPATH": "/go",
+    "FLUTTER_ROOT": "/opt/flutter"
+  },
+
+  // ==========================================================================
+  // TESTING
+  // ==========================================================================
+  "testing.autoRun": {
+    "mode": "onSave"
+  },
+
+  // ==========================================================================
+  // WORKSPACE
+  // ==========================================================================
+  "workbench.colorTheme": "One Dark Pro",
+  "workbench.iconTheme": "material-icon-theme",
+  "workbench.startupEditor": "readme"
+}

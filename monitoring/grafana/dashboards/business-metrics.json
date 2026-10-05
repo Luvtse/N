@@ -1,0 +1,191 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "business-metrics",
+    "title": "NIDAW - Business Metrics",
+    "tags": ["nidaw", "business"],
+    "timezone": "browser",
+    "refresh": "1m",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "GMV (Gross Merchandise Value)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(nidaw_gmv_total)",
+            "legendFormat": "GMV"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Platform Revenue",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(nidaw_platform_revenue_total)",
+            "legendFormat": "Revenue"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Active Drivers",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(nidaw_active_drivers)",
+            "legendFormat": "Drivers"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Rides by Service Type",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [
+          {
+            "expr": "sum(nidaw_rides_total) by (ride_type)",
+            "legendFormat": "{{ride_type}}"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Average Ride Fare",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "targets": [
+          {
+            "expr": "avg(nidaw_ride_fare_amount)",
+            "legendFormat": "Avg Fare"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Hotel Bookings",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "sum(increase(nidaw_hotel_bookings_total[1h]))",
+            "legendFormat": "Bookings"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Food Orders",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "targets": [
+          {
+            "expr": "sum(increase(nidaw_food_orders_total[1h]))",
+            "legendFormat": "Orders"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Driver Acceptance Rate",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 20},
+        "targets": [
+          {
+            "expr": "nidaw_driver_acceptance_rate",
+            "legendFormat": "Acceptance Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "green", "value": 85}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Average ETA",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 20},
+        "targets": [
+          {
+            "expr": "avg(nidaw_ride_eta_minutes)",
+            "legendFormat": "Avg ETA"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "m",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 10},
+                {"color": "red", "value": 20}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Customer Satisfaction",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 20},
+        "targets": [
+          {
+            "expr": "avg(nidaw_customer_rating)",
+            "legendFormat": "Avg Rating"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none",
+            "min": 0,
+            "max": 5,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 4.0},
+                {"color": "green", "value": 4.5}
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}

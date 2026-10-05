@@ -1,0 +1,72 @@
+{
+  "recommendations": [
+    // Go
+    "golang.go",
+
+    // Flutter / Dart
+    "Dart-Code.dart-code",
+    "Dart-Code.flutter",
+
+    // Python
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+
+    // Infrastructure
+    "hashicorp.terraform",
+    "ms-azuretools.vscode-docker",
+    "ms-kubernetes-tools.vscode-kubernetes-tools",
+
+    // Data / Config
+    "redhat.vscode-yaml",
+    "redhat.vscode-xml",
+    "tamasfe.even-better-toml",
+
+    // API
+    "42Crunch.vscode-openapi",
+    "redocly.openapi-vs-code",
+    "humao.rest-client",
+
+    // Blockchain
+    "NomicFoundation.hardhat-solidity",
+
+    // Git / GitHub
+    "GitHub.vscode-pull-request-github",
+    "eamodio.gitlens",
+    "mhutchie.git-graph",
+
+    // Code Quality
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "usernamehw.errorlens",
+    "streetsidesoftware.code-spell-checker",
+
+    // Productivity
+    "gruntfuggly.todo-tree",
+    "aaron-bond.better-comments",
+    "oderwat.indent-rainbow",
+    "wix.vscode-import-cost",
+
+    // Shell
+    "timonwong.shellcheck",
+    "foxundermoon.shell-format",
+    "mads-hartmann.bash-ide-vscode",
+
+    // Protobuf / gRPC
+    "zxh404.vscode-proto3",
+    "bufbuild.vscode-buf",
+
+    // AI Assistance
+    "GitHub.copilot",
+    "GitHub.copilot-chat",
+    "visualstudioexptteam.vscodeintellicode",
+
+    // Theme
+    "zhuangtongfa.material-theme",
+    "pkief.material-icon-theme"
+  ],
+
+  "unwantedRecommendations": [
+    "hookyqr.beautify",
+    "dbaeumer.jshint"
+  ]
+}

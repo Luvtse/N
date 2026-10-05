@@ -1,0 +1,376 @@
+# ============================================================================
+# NIDAW OWASP ZAP Configuration
+# Dynamic Application Security Testing (DAST)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# TARGET CONFIGURATION
+# ----------------------------------------------------------------------------
+target:
+  # Base URL to scan
+  url: https://api.nidaw.com
+  
+  # Alternative URLs for different environments
+  environments:
+    development: http://localhost:8080
+    staging: https://staging-api.nidaw.com
+    production: https://api.nidaw.com
+  
+  # Context name
+  context: NIDAW API
+  
+  # Include patterns
+  include:
+    - https://api.nidaw.com/.*
+    - https://app.nidaw.com/.*
+  
+  # Exclude patterns
+  exclude:
+    - https://api.nidaw.com/health
+    - https://api.nidaw.com/ready
+    - https://api.nidaw.com/metrics
+    - https://api.nidaw.com/swagger/.*
+    - https://api.nidaw.com/docs/.*
+
+# ----------------------------------------------------------------------------
+# AUTHENTICATION
+# ----------------------------------------------------------------------------
+authentication:
+  # Authentication type
+  type: json
+  
+  # Login URL
+  login_url: https://api.nidaw.com/api/v1/auth/login
+  
+  # Login request data
+  login_request_data: |
+    {
+      "email": "security-test@nidaw.com",
+      "password": "SecureTestPass123!"
+    }
+  
+  # Authentication verification
+  verification:
+    # URL to verify authentication
+    url: https://api.nidaw.com/api/v1/auth/me
+    
+    # Expected response (regex)
+    regex: '"user_id":'
+  
+  # Session management
+  session:
+    # Session type
+    type: header
+    
+    # Header name
+    name: Authorization
+    
+    # Header value template
+    value: "Bearer {%token%}"
+  
+  # Token extraction
+  token:
+    # JSON path to token
+    json_path: $.access_token
+    
+    # Regex alternative
+    # regex: '"access_token":"([^"]+)"'
+
+# ----------------------------------------------------------------------------
+# SCAN POLICY
+# ----------------------------------------------------------------------------
+scan:
+  # Scan type
+  type: full  # full, api, ajax-spider
+  
+  # Active scan
+  active:
+    enabled: true
+    
+    # Scan policy
+    policy: Default Policy
+    
+    # Strength
+    strength: MEDIUM  # LOW, MEDIUM, HIGH
+    
+    # Threshold
+    threshold: MEDIUM  # LOW, MEDIUM, HIGH
+    
+    # Max duration (minutes)
+    max_duration: 60
+    
+    # Max rules
+    max_rules: 100
+  
+  # Passive scan
+  passive:
+    enabled: true
+    
+    # Scan only in scope
+    in_scope_only: true
+  
+  # Spider
+  spider:
+    enabled: true
+    
+    # Max depth
+    max_depth: 5
+    
+    # Max children
+    max_children: 10
+    
+    # Max duration (minutes)
+    max_duration: 30
+  
+  # AJAX Spider
+  ajax_spider:
+    enabled: true
+    
+    # Browser
+    browser: Chrome
+    
+    # Max duration (minutes)
+    max_duration: 30
+    
+    # Max states
+    max_states: 10
+
+# ----------------------------------------------------------------------------
+# ALERT THRESHOLDS
+# ----------------------------------------------------------------------------
+alerts:
+  # Alert thresholds by risk level
+  thresholds:
+    high:
+      # Fail build if any high-risk alerts
+      fail_build: true
+      
+      # Maximum allowed
+      max_allowed: 0
+    
+    medium:
+      # Fail build if medium-risk alerts exceed threshold
+      fail_build: true
+      
+      # Maximum allowed
+      max_allowed: 5
+    
+    low:
+      # Don't fail build for low-risk alerts
+      fail_build: false
+      
+      # Maximum allowed
+      max_allowed: 20
+    
+    informational:
+      # Don't fail build for informational alerts
+      fail_build: false
+      
+      # Maximum allowed
+      max_allowed: 100
+
+# ----------------------------------------------------------------------------
+# REPORT CONFIGURATION
+# ----------------------------------------------------------------------------
+report:
+  # Report formats
+  formats:
+    - html
+    - json
+    - xml
+    - sarif
+    - md
+  
+  # Output directory
+  output_dir: security-reports/zap
+  
+  # Report title
+  title: "NIDAW Security Scan Report"
+  
+  # Report description
+  description: "OWASP ZAP security scan report for NIDAW platform"
+  
+  # Include request/response
+  include_request_response: false
+  
+  # Generate summary
+  generate_summary: true
+
+# ----------------------------------------------------------------------------
+# API SCANNING
+# ----------------------------------------------------------------------------
+api:
+  # OpenAPI/Swagger
+  openapi:
+    enabled: true
+    
+    # OpenAPI file URL or path
+    file: https://api.nidaw.com/api/openapi.yaml
+    
+    # Alternative: local file
+    # file: backend/api/openapi.yaml
+  
+  # GraphQL
+  graphql:
+    enabled: false
+    
+    # GraphQL endpoint
+    # endpoint: https://api.nidaw.com/graphql
+  
+  # SOAP
+  soap:
+    enabled: false
+    
+    # WSDL URL
+    # wsdl: https://api.nidaw.com/wsdl
+
+# ----------------------------------------------------------------------------
+# CUSTOM RULES
+# ----------------------------------------------------------------------------
+custom_rules:
+  # Custom scripts
+  scripts:
+    - type: active
+      name: nidaw-custom-checks
+      engine: Oracle Nashorn
+      file: scripts/zap/nidaw-custom-checks.js
+      enabled: true
+
+# ----------------------------------------------------------------------------
+# ADVANCED CONFIGURATION
+# ----------------------------------------------------------------------------
+advanced:
+  # Connection timeout (seconds)
+  connection_timeout: 30
+  
+  # Read timeout (seconds)
+  read_timeout: 60
+  
+  # Max retries
+  max_retries: 3
+  
+  # User agent
+  user_agent: "NIDAW-Security-Scanner/1.0"
+  
+  # Proxy
+  proxy:
+    enabled: false
+    
+    # Proxy host
+    # host: localhost
+    
+    # Proxy port
+    # port: 8080
+  
+  # SSL/TLS
+  tls:
+    # Allow unsafe renegotiation
+    allow_unsafe_renegotiation: false
+    
+    # Enable SSLv3
+    enable_sslv3: false
+    
+    # Enable TLSv1.0
+    enable_tlsv1: false
+    
+    # Enable TLSv1.1
+    enable_tlsv1_1: false
+
+# ----------------------------------------------------------------------------
+# INTEGRATION
+# ----------------------------------------------------------------------------
+integration:
+  # CI/CD
+  ci_cd:
+    # GitHub Actions
+    github:
+      enabled: true
+      
+      # Upload SARIF
+      upload_sarif: true
+      
+      # SARIF file
+      sarif_file: security-reports/zap/zap-results.sarif
+    
+    # GitLab
+    gitlab:
+      enabled: false
+      
+      # DAST report
+      # dast_report: security-reports/zap/gl-dast-report.json
+  
+  # Issue tracking
+  issue_tracking:
+    # Jira
+    jira:
+      enabled: false
+      
+      # Jira project
+      # project: SEC
+      
+      # Issue type
+      # issue_type: Bug
+    
+    # GitHub Issues
+    github_issues:
+      enabled: false
+      
+      # Repository
+      # repo: nidaw/nidaw
+
+# ----------------------------------------------------------------------------
+# NOTIFICATION
+# ----------------------------------------------------------------------------
+notification:
+  # Slack
+  slack:
+    enabled: true
+    
+    # Webhook URL (from environment variable)
+    webhook_url: ${SLACK_WEBHOOK_URL}
+    
+    # Channel
+    channel: "#security-alerts"
+    
+    # Alert on high-risk findings
+    high_risk_only: true
+  
+  # Email
+  email:
+    enabled: false
+    
+    # Recipients
+    # recipients:
+    #   - security@nidaw.com
+    
+    # Alert on high-risk findings
+    # high_risk_only: true
+
+# ----------------------------------------------------------------------------
+# SCHEDULE
+# ----------------------------------------------------------------------------
+schedule:
+  # Cron expression (daily at 2 AM)
+  cron: "0 2 * * *"
+  
+  # Timezone
+  timezone: UTC
+  
+  # Enabled
+  enabled: true
+
+# ----------------------------------------------------------------------------
+# EXIT CODES
+# ----------------------------------------------------------------------------
+exit_codes:
+  # Success (no alerts)
+  success: 0
+  
+  # Alerts found
+  alerts_found: 1
+  
+  # Error
+  error: 2
+  
+  # Threshold exceeded
+  threshold_exceeded: 3

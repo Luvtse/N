@@ -1,0 +1,239 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ========================================================================
+    // GO - Backend
+    // ========================================================================
+    {
+      "name": "🐹 Backend: Run Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/backend/cmd/server/main.go",
+      "env": {
+        "ENVIRONMENT": "development",
+        "DB_HOST": "localhost",
+        "DB_PORT": "5432",
+        "DB_USER": "nidaw",
+        "DB_PASSWORD": "nidaw_dev",
+        "DB_NAME": "nidaw",
+        "REDIS_URL": "redis://localhost:6379",
+        "KAFKA_BROKERS": "localhost:29092",
+        "JWT_SECRET": "dev-secret-key-change-in-production-min-32-chars",
+        "LOG_LEVEL": "debug"
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/backend"
+    },
+    {
+      "name": "🐹 Backend: Debug Current File",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${file}",
+      "env": {
+        "ENVIRONMENT": "development"
+      }
+    },
+    {
+      "name": "🐹 Backend: Run Tests",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "args": ["-v", "-race", "-count=1"],
+      "env": {
+        "ENVIRONMENT": "test",
+        "DB_HOST": "localhost",
+        "DB_NAME": "nidaw_test"
+      }
+    },
+    {
+      "name": "🐹 Backend: Attach to Process",
+      "type": "go",
+      "request": "attach",
+      "mode": "local",
+      "processId": "${command:pickGoProcess}"
+    },
+
+    // ========================================================================
+    // FLUTTER - Frontend
+    // ========================================================================
+    {
+      "name": "📱 Flutter: Run (Chrome)",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/frontend/lib/main.dart",
+      "args": ["-d", "chrome"],
+      "cwd": "${workspaceFolder}/frontend"
+    },
+    {
+      "name": "📱 Flutter: Run (Android)",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/frontend/lib/main.dart",
+      "args": ["-d", "android"],
+      "cwd": "${workspaceFolder}/frontend"
+    },
+    {
+      "name": "📱 Flutter: Run (iOS)",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/frontend/lib/main.dart",
+      "args": ["-d", "ios"],
+      "cwd": "${workspaceFolder}/frontend"
+    },
+    {
+      "name": "📱 Flutter: Debug (Chrome)",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/frontend/lib/main.dart",
+      "args": ["-d", "chrome", "--debug"],
+      "cwd": "${workspaceFolder}/frontend",
+      "flutterMode": "debug"
+    },
+    {
+      "name": "📱 Flutter: Profile (Chrome)",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/frontend/lib/main.dart",
+      "args": ["-d", "chrome", "--profile"],
+      "cwd": "${workspaceFolder}/frontend",
+      "flutterMode": "profile"
+    },
+    {
+      "name": "📱 Flutter: Run Tests",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/frontend/test",
+      "cwd": "${workspaceFolder}/frontend",
+      "args": ["--coverage"]
+    },
+
+    // ========================================================================
+    // FLUTTER - Driver App
+    // ========================================================================
+    {
+      "name": "🚗 Driver App: Run (Chrome)",
+      "type": "dart",
+      "request": "launch",
+      "program": "${workspaceFolder}/driver-app/lib/main.dart",
+      "args": ["-d", "chrome"],
+      "cwd": "${workspaceFolder}/driver-app"
+    },
+
+    // ========================================================================
+    // PYTHON - ML/AI
+    // ========================================================================
+    {
+      "name": "🤖 ML: Train ETA Model",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml/training/eta_prediction/train.py",
+      "python": "/opt/venv/bin/python",
+      "cwd": "${workspaceFolder}/ml",
+      "env": {
+        "MLFLOW_TRACKING_URI": "http://localhost:5000",
+        "REDIS_URL": "redis://localhost:6379"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🤖 ML: Train Demand Model",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml/training/demand_forecasting/train.py",
+      "python": "/opt/venv/bin/python",
+      "cwd": "${workspaceFolder}/ml",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🤖 ML: Run Feature Pipeline",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml/pipelines/feature_pipeline.py",
+      "python": "/opt/venv/bin/python",
+      "cwd": "${workspaceFolder}/ml",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🤖 ML: Deploy Model",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml/pipelines/deployment_pipeline.py",
+      "python": "/opt/venv/bin/python",
+      "cwd": "${workspaceFolder}/ml",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🤖 ML: Debug Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "python": "/opt/venv/bin/python",
+      "console": "integratedTerminal"
+    },
+
+    // ========================================================================
+    // BLOCKCHAIN
+    // ========================================================================
+    {
+      "name": "⛓️ Blockchain: Deploy Contract",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/blockchain/node_modules/.bin/hardhat",
+      "args": ["run", "scripts/deploy.js", "--network", "localhost"],
+      "cwd": "${workspaceFolder}/blockchain",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⛓️ Blockchain: Run Tests",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/blockchain/node_modules/.bin/hardhat",
+      "args": ["test"],
+      "cwd": "${workspaceFolder}/blockchain",
+      "console": "integratedTerminal"
+    },
+
+    // ========================================================================
+    // DOCKER / K8S
+    // ========================================================================
+    {
+      "name": "🐳 Docker: Compose Up",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "docker-compose -f docker/compose/base.yaml -f docker/compose/dev.yaml up -d",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "☸️ K8s: Deploy to Dev",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "kubectl apply -k k8s/overlays/dev/",
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+
+  // ========================================================================
+  // COMPOUND CONFIGURATIONS
+  // ========================================================================
+  "compounds": [
+    {
+      "name": "🚀 Full Stack: Backend + Frontend",
+      "configurations": [
+        "🐹 Backend: Run Server",
+        "📱 Flutter: Run (Chrome)"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "🔬 Debug: Backend + ML",
+      "configurations": [
+        "🐹 Backend: Run Server",
+        "🤖 ML: Run Feature Pipeline"
+      ],
+      "stopAll": true
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+
+# ============================================================================
+# NIDAW Root Docker Compose
+# This is a symlink reference to docker/compose/base.yaml
+# ============================================================================
+# For local development, use:
+#   docker-compose -f docker/compose/base.yaml -f docker/compose/dev.yaml up
+#
+# For production-like environment:
+#   docker-compose -f docker/compose/base.yaml -f docker/compose/prod.yaml up
+# ============================================================================
+
+version: '3.9'
+
+# This file intentionally left minimal.
+# All compose configurations are in docker/compose/ directory.
+# 
+# Available compose files:
+# - docker/compose/base.yaml       (Core infrastructure)
+# - docker/compose/dev.yaml        (Development overrides)
+# - docker/compose/prod.yaml       (Production overrides)
+# - docker/compose/analytics.yaml  (Analytics stack)
+# - docker/compose/monitoring.yaml (Monitoring stack)
+#
+# Quick start:
+#   make dev
+#
+# Or manually:
+#   docker-compose -f docker/compose/base.yaml -f docker/compose/dev.yaml up -d

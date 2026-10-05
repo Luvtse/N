@@ -1,0 +1,796 @@
+nidaw/                                    ← Your project root
+│
+├── 📱 frontend/                          ← Flutter Super-App
+│   ├── lib/
+│   │   ├── main.dart                     ← App entry point
+│   │   ├── core/                         ← Shared utilities
+│   │   │   ├── constants/
+│   │   │   │   └── app_constants.dart    ← App-wide constants
+│   │   │   ├── di/
+│   │   │   │   └── injection.dart        ← Dependency injection (GetIt)
+│   │   │   ├── network/
+│   │   │   │   ├── api_client.dart       ← HTTP client (Dio)
+│   │   │   │   ├── websocket_client.dart ← Real-time updates
+│   │   │   │   └── event_bus.dart        ← Cross-feature events
+│   │   │   ├── offline/
+│   │   │   │   └── offline_service.dart  ← Offline mode
+│   │   │   ├── router/
+│   │   │   │   └── app_router.dart       ← Navigation (GoRouter)
+│   │   │   ├── theme/
+│   │   │   │   ├── app_theme.dart        ← Theme configuration
+│   │   │   │   └── app_colors.dart       ← Brand colors
+│   │   │   ├── voice/
+│   │   │   │   └── voice_command_service.dart ← Voice commands
+│   │   │   └── utils/
+│   │   │       ├── validators.dart       ← Form validation
+│   │   │       └── formatters.dart       ← Date/currency formatting
+│   │   │
+│   │   └── features/                     ← Feature modules
+│   │       ├── auth/                     ← Authentication
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── auth_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   ├── entities/
+│   │       │   │   │   └── user.dart
+│   │       │   │   └── usecases/
+│   │       │   │       ├── login_usecase.dart
+│   │       │   │       └── register_usecase.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   ├── auth_bloc.dart
+│   │       │       │   └── legal_consent_bloc.dart
+│   │       │       └── pages/
+│   │       │           ├── login_page.dart
+│   │       │           ├── register_page.dart
+│   │       │           └── onboarding_consent_page.dart
+│   │       │
+│   │       ├── nidus/                    ← Rides & Movement
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── ride_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   └── usecases/
+│   │       │   │       ├── request_ride_usecase.dart
+│   │       │   │       └── get_ride_status_usecase.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   └── ride_bloc.dart
+│   │       │       ├── pages/
+│   │       │       │   ├── ride_request_page.dart
+│   │       │       │   ├── ride_tracking_page.dart
+│   │       │       │   ├── ride_history_page.dart
+│   │       │       │   └── ar_navigation_page.dart
+│   │       │       └── widgets/
+│   │       │           ├── ride_type_selector.dart
+│   │       │           └── location_input.dart
+│   │       │
+│   │       ├── haven/                    ← Hotels & Stays
+│   │       │   └── presentation/
+│   │       │       ├── pages/
+│   │       │       │   ├── hotel_search_page.dart
+│   │       │       │   ├── hotel_detail_page.dart
+│   │       │       │   └── booking_page.dart
+│   │       │       └── widgets/
+│   │       │           └── hotel_card.dart
+│   │       │
+│   │       ├── vorax/                    ← Food Delivery
+│   │       │   └── presentation/
+│   │       │       ├── pages/
+│   │       │       │   ├── restaurant_list_page.dart
+│   │       │       │   ├── menu_page.dart
+│   │       │       │   └── order_tracking_page.dart
+│   │       │       └── widgets/
+│   │       │           └── restaurant_card.dart
+│   │       │
+│   │       ├── corpus/                   ← Corporate Travel
+│   │       │   └── presentation/
+│   │       │       └── pages/
+│   │       │           └── corporate_dashboard_page.dart
+│   │       │
+│   │       ├── logix/                    ← Freight & Logistics
+│   │       │   └── presentation/
+│   │       │       └── pages/
+│   │       │           └── shipment_tracking_page.dart
+│   │       │
+│   │       ├── home/                     ← Home Screen
+│   │       │   └── presentation/
+│   │       │       ├── pages/
+│   │       │       │   └── home_page.dart
+│   │       │       └── widgets/
+│   │       │           ├── service_card.dart
+│   │       │           ├── promo_banner.dart
+│   │       │           └── quick_stats.dart
+│   │       │
+│   │       └── profile/                  ← User Profile
+│   │           └── presentation/
+│   │               ├── bloc/
+│   │               │   └── profile_bloc.dart
+│   │               └── pages/
+│   │                   ├── profile_page.dart
+│   │                   ├── settings_page.dart
+│   │                   └── consent_management_page.dart
+│   │
+│   ├── android/                          ← Android Platform
+│   │   ├── app/
+│   │   │   ├── src/main/
+│   │   │   │   ├── AndroidManifest.xml   ← Permissions & config
+│   │   │   │   └── kotlin/...
+│   │   │   └── build.gradle              ← Build config
+│   │   └── ...
+│   │
+│   ├── ios/                              ← iOS Platform
+│   │   ├── Runner/
+│   │   │   ├── Info.plist                ← Permissions & config
+│   │   │   └── AppDelegate.swift         ← iOS lifecycle
+│   │   └── ...
+│   │
+│   ├── web/                              ← Web Platform
+│   │   ├── index.html                    ← Web entry point
+│   │   ├── manifest.json                 ← PWA manifest
+│   │   └── icons/                        ← App icons
+│   │
+│   ├── assets/                           ← Static assets
+│   │   ├── images/
+│   │   ├── icons/
+│   │   ├── animations/
+│   │   └── fonts/
+│   │
+│   ├── pubspec.yaml                      ← Flutter dependencies
+│   ├── pubspec.lock                      ← Locked dependencies
+│   └── Dockerfile                        ← Container build
+│
+├── 🚗 driver-app/                        ← 🆕 Driver Mobile App
+│   ├── lib/
+│   │   ├── main.dart                     ← App entry point
+│   │   ├── core/
+│   │   │   ├── constants/
+│   │   │   │   └── app_constants.dart
+│   │   │   ├── di/
+│   │   │   │   └── injection.dart
+│   │   │   ├── network/
+│   │   │   │   ├── api_client.dart
+│   │   │   │   ├── websocket_client.dart
+│   │   │   │   └── event_bus.dart
+│   │   │   ├── offline/
+│   │   │   │   └── offline_service.dart
+│   │   │   ├── router/
+│   │   │   │   └── app_router.dart
+│   │   │   ├── theme/
+│   │   │   │   ├── app_theme.dart
+│   │   │   │   └── app_colors.dart
+│   │   │   └── utils/
+│   │   │       ├── validators.dart
+│   │   │       └── formatters.dart
+│   │   │
+│   │   └── features/
+│   │       ├── auth/
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── auth_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   ├── entities/
+│   │       │   │   │   └── driver.dart
+│   │       │   │   └── usecases/
+│   │       │   │       ├── login_usecase.dart
+│   │       │   │       └── register_usecase.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   └── auth_bloc.dart
+│   │       │       └── pages/
+│   │       │           ├── login_page.dart
+│   │       │           ├── register_page.dart
+│   │       │           └── onboarding_page.dart
+│   │       │
+│   │       ├── home/
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── driver_home_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   ├── entities/
+│   │       │   │   │   └── driver_stats.dart
+│   │       │   │   └── usecases/
+│   │       │   │       ├── get_driver_stats_usecase.dart
+│   │       │   │       └── toggle_availability_usecase.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   └── driver_home_bloc.dart
+│   │       │       ├── pages/
+│   │       │       │   └── driver_home_page.dart
+│   │       │       └── widgets/
+│   │       │           ├── availability_toggle.dart
+│   │       │           ├── ride_request_card.dart
+│   │       │           ├── earnings_summary.dart
+│   │       │           └── driver_map.dart
+│   │       │
+│   │       ├── ride/
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── ride_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   ├── entities/
+│   │       │   │   │   └── active_ride.dart
+│   │       │   │   └── usecases/
+│   │       │   │       ├── accept_ride_usecase.dart
+│   │       │   │       ├── start_ride_usecase.dart
+│   │       │   │       └── complete_ride_usecase.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   └── active_ride_bloc.dart
+│   │       │       ├── pages/
+│   │       │       │   ├── ride_acceptance_page.dart
+│   │       │       │   ├── ride_navigation_page.dart
+│   │       │       │   └── ride_completion_page.dart
+│   │       │       └── widgets/
+│   │       │           ├── rider_info_card.dart
+│   │       │           ├── navigation_controls.dart
+│   │       │           └── ride_timer.dart
+│   │       │
+│   │       ├── earnings/
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── earnings_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   ├── entities/
+│   │       │   │   │   └── earnings_report.dart
+│   │       │   │   └── usecases/
+│   │       │   │       ├── get_daily_earnings_usecase.dart
+│   │       │   │       └── get_weekly_earnings_usecase.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   └── earnings_bloc.dart
+│   │       │       └── pages/
+│   │       │           ├── earnings_overview_page.dart
+│   │       │           └── earnings_detail_page.dart
+│   │       │
+│   │       ├── documents/
+│   │       │   ├── data/
+│   │       │   │   └── repositories/
+│   │       │   │       └── document_repository.dart
+│   │       │   ├── domain/
+│   │       │   │   └── entities/
+│   │       │   │       └── driver_document.dart
+│   │       │   └── presentation/
+│   │       │       ├── bloc/
+│   │       │       │   └── documents_bloc.dart
+│   │       │       └── pages/
+│   │       │           └── documents_page.dart
+│   │       │
+│   │       └── profile/
+│   │           ├── data/
+│   │           │   └── repositories/
+│   │           │       └── driver_profile_repository.dart
+│   │           ├── domain/
+│   │           │   └── entities/
+│   │           │       └── driver_profile.dart
+│   │           └── presentation/
+│   │               ├── bloc/
+│   │               │   └── driver_profile_bloc.dart
+│   │               └── pages/
+│   │                   ├── driver_profile_page.dart
+│   │                   ├── vehicle_info_page.dart
+│   │                   └── settings_page.dart
+│   │
+│   ├── android/
+│   │   ├── app/
+│   │   │   ├── src/
+│   │   │   │   └── main/
+│   │   │   │       ├── AndroidManifest.xml
+│   │   │   │       └── kotlin/...
+│   │   │   └── build.gradle
+│   │   └── ...
+│   │
+│   ├── ios/
+│   │   ├── Runner/
+│   │   │   ├── Info.plist
+│   │   │   └── AppDelegate.swift
+│   │   └── ...
+│   │
+│   ├── assets/
+│   │   ├── images/
+│   │   ├── icons/
+│   │   └── fonts/
+│   │
+│   ├── pubspec.yaml
+│   ├── pubspec.lock
+│   └── Dockerfile
+│
+├── ⚙️ backend/                           ← Go Backend Server
+│   ├── cmd/
+│   │   └── server/
+│   │       └── main.go                   ← Application entry point
+│   │
+│   ├── internal/
+│   │   ├── modules/                      ← Feature modules
+│   │   │   ├── auth/                     ← Authentication
+│   │   │   │   └── interfaces/
+│   │   │   │       └── http/
+│   │   │   │           ├── router.go
+│   │   │   │           └── handlers.go
+│   │   │   │
+│   │   │   ├── nidus/                    ← Rides & Movement
+│   │   │   │   ├── domain/
+│   │   │   │   │   ├── entities/
+│   │   │   │   │   │   ├── ride.go
+│   │   │   │   │   │   └── driver.go
+│   │   │   │   │   └── events/
+│   │   │   │   │       └── events.go
+│   │   │   │   ├── application/
+│   │   │   │   │   ├── commands/
+│   │   │   │   │   │   └── request_ride.go
+│   │   │   │   │   ├── queries/
+│   │   │   │   │   │   ├── get_ride_query.go
+│   │   │   │   │   │   └── list_rides_query.go
+│   │   │   │   │   └── services/
+│   │   │   │   │       ├── matching_engine.go
+│   │   │   │   │       ├── eta_service.go
+│   │   │   │   │       └── pricing_service.go
+│   │   │   │   └── interfaces/
+│   │   │   │       └── http/
+│   │   │   │           ├── router.go
+│   │   │   │           └── handlers/
+│   │   │   │               ├── ride_handler.go
+│   │   │   │               ├── driver_handler.go
+│   │   │   │               ├── location_handler.go
+│   │   │   │               ├── estimate_handler.go
+│   │   │   │               └── websocket_handler.go
+│   │   │   │
+│   │   │   ├── haven/                    ← Hotels (placeholder)
+│   │   │   ├── vorax/                    ← Food (placeholder)
+│   │   │   ├── logix/                    ← Freight (placeholder)
+│   │   │   ├── corpus/                   ← Corporate (placeholder)
+│   │   │   │
+│   │   │   ├── legal/                    ← Legal & Consent
+│   │   │   │   ├── domain/
+│   │   │   │   │   └── entities/
+│   │   │   │   │       └── consent.go
+│   │   │   │   ├── application/
+│   │   │   │   │   └── services/
+│   │   │   │   │       └── consent_service.go
+│   │   │   │   └── interfaces/
+│   │   │   │       └── http/
+│   │   │   │           ├── router.go
+│   │   │   │           └── handlers.go
+│   │   │   │
+│   │   │   ├── autonomous/               ← Self-Driving & Drones
+│   │   │   │   └── application/
+│   │   │   │       ├── av_orchestrator.go
+│   │   │   │       └── drone_controller.go
+│   │   │   │
+│   │   │   └── identity/                 ← Decentralized Identity
+│   │   │       └── did_service.go
+│   │   │
+│   │   ├── shared/                       ← Shared services
+│   │   │   ├── auth/
+│   │   │   │   ├── jwt_middleware.go
+│   │   │   │   └── token_service.go
+│   │   │   ├── database/
+│   │   │   │   └── postgres.go
+│   │   │   ├── eventbus/
+│   │   │   │   ├── kafka_bus.go
+│   │   │   │   └── consumer.go
+│   │   │   ├── middleware/
+│   │   │   │   └── middleware.go
+│   │   │   ├── config/
+│   │   │   │   └── config.go
+│   │   │   ├── cache/
+│   │   │   │   ├── redis_cache.go
+│   │   │   │   └── strategies.go
+│   │   │   ├── security/
+│   │   │   │   ├── encryption_service.go
+│   │   │   │   └── audit_logger.go
+│   │   │   └── integrations/
+│   │   │       ├── payments/
+│   │   │       │   ├── gateway.go
+│   │   │       │   └── stripe_gateway.go
+│   │   │       └── notifications/
+│   │   │           └── service.go
+│   │   │
+│   │   └── pkg/                          ← Utilities
+│   │       ├── logger/
+│   │       │   └── logger.go
+│   │       └── errors/
+│   │           └── errors.go
+│   │
+│   ├── migrations/                       ← Database migrations
+│   │   └── postgres/
+│   │       ├── 001_initial_schema.sql
+│   │       ├── 002_add_indexes.sql
+│   │       └── 003_seed_data.sql
+│   │
+│   ├── api/                              ← API documentation
+│   │   └── openapi.yaml
+│   │
+│   ├── go.mod                            ← Go dependencies
+│   ├── go.sum                            ← Locked dependencies
+│   ├── .env.example                      ← Environment template
+│   └── Dockerfile                        ← Container build
+│
+├── 🗄️ database/                          ← 📍 SINGLE SOURCE OF TRUTH for DB
+│   ├── migrations/
+│   │   ├── postgres/
+│   │   │   ├── 001_initial_schema.sql    ← [Already created]
+│   │   │   ├── 002_add_indexes.sql       ← 🆕 New file to create
+│   │   │   │   └── Content: Add composite indexes for performance
+│   │   │   └── 003_seed_data.sql         ← 🆕 New file to create
+│   │   │       └── Content: Sample users, drivers, hotels for dev
+│   │   │
+│   │   └── timescale/
+│   │       └── 001_hypertables.sql       ← 🆕 New file to create
+│   │           └── Content: Create hypertables for GPS tracking
+│   │
+│   └── seeds/
+│       └── sample-data.sql               ← 🆕 New file to create
+│           └── Content: Comprehensive test data
+│
+├── 🌐 infrastructure/                    ← 📍 RENAMED from terraform/
+│   ├── modules/
+│   │   ├── k8s-cluster/                  ← [Already created]
+│   │   ├── database/                     ← [Already created]
+│   │   ├── kafka/                        ← [Already created]
+│   │   ├── security/                     ← [Already created]
+│   │   │
+│   │   ├── multi_region/                 ← 🆕 Enhanced with failover
+│   │   │   ├── main.tf                   ← 🆕 New file to create
+│   │   │   │   └── Content: Active-passive failover, Route53 health checks
+│   │   │   ├── variables.tf              ← 🆕 New file to create
+│   │   │   │   └── Content: Region configs, failover settings
+│   │   │   ├── outputs.tf                ← 🆕 New file to create
+│   │   │   │   └── Content: Endpoint URLs, health check ARNs
+│   │   │   ├── route53_failover.tf       ← 🆕 New file to create
+│   │   │   │   └── Content: DNS failover routing
+│   │   │   └── kafka_replication.tf      ← 🆕 New file to create
+│   │   │       └── Content: Cross-region Kafka MirrorMaker
+│   │   │
+│   │   └── secrets_manager/              ← 🆕 NEW MODULE
+│   │       ├── main.tf                   ← 🆕 New file to create
+│   │       │   └── Content: AWS Secrets Manager setup
+│   │       ├── variables.tf              ← 🆕 New file to create
+│   │       │   └── Content: Secret names, rotation policies
+│   │       └── rotation_lambda.py        ← 🆕 New file to create
+│   │           └── Content: Auto-rotate database passwords
+│   │
+│   ├── environments/
+│   │   ├── dev/                          ← [Already created]
+│   │   ├── staging/                      ← [Already created]
+│   │   └── production/                   ← [Already created]
+│   │
+│   └── global/                           ← [Already created]
+│
+├── 🚪 api-gateway/                       ← 🆕 NEW - API Gateway Layer
+│   ├── kong/
+│   │   ├── kong.yml                      ← 🆕 New file to create
+│   │   │   └── Content: Kong configuration (routes, plugins)
+│   │   ├── plugins/
+│   │   │   ├── rate-limiting.lua         ← 🆕 New file to create
+│   │   │   │   └── Content: Per-tenant rate limiting
+│   │   │   └── auth-jwt.lua              ← 🆕 New file to create
+│   │   │       └── Content: JWT validation at edge
+│   │   └── Dockerfile                    ← 🆕 New file to create
+│   │       └── Content: Kong custom build
+│   │
+│   ├── routes/
+│   │   ├── nidus.yaml                    ← 🆕 New file to create
+│   │   │   └── Content: Ride service routes
+│   │   ├── haven.yaml                    ← 🆕 New file to create
+│   │   │   └── Content: Hotel service routes
+│   │   └── vorax.yaml                    ← 🆕 New file to create
+│   │       └── Content: Food service routes
+│   │
+│   └── README.md                         ← 🆕 New file to create
+│       └── Content: Gateway architecture, plugin docs
+│
+├── ☸️ k8s/                               ← Kubernetes Manifests
+│   ├── base/                             ← [Already created]
+│   ├── overlays/                         ← [Already created]
+│   └── secrets/                          ← [Already created]
+│
+├── 🎯 helm/                              ← Helm Charts
+│   └── nidaw/                            ← [Already created]
+│
+├── 🐳 docker/                            ← 📍 CONSOLIDATED Docker configs
+│   ├── compose/
+│   │   ├── base.yml                      ← 🆕 New file to create
+│   │   │   └── Content: Base services (postgres, redis, kafka)
+│   │   ├── dev.yml                       ← 🆕 New file to create
+│   │   │   └── Content: Dev overrides (backend, frontend)
+│   │   ├── prod.yml                      ← 🆕 New file to create
+│   │   │   └── Content: Production overrides
+│   │   ├── analytics.yml                 ← 🆕 New file to create
+│   │   │   └── Content: Pinot, MLflow, Grafana
+│   │   └── monitoring.yml                ← 🆕 New file to create
+│   │       └── Content: Prometheus, Loki, Jaeger
+│   │
+│   ├── config/
+│   │   ├── postgres/
+│   │   │   └── init.sql                  ← [Already created]
+│   │   ├── kafka/
+│   │   │   └── server.properties         ← [Already created]
+│   │   └── nginx/
+│   │       └── nginx.conf                ← [Already created]
+│   │
+│   └── README.md                         ← 🆕 New file to create
+│       └── Content: How to use compose files, environment setup
+│
+├── 📊 monitoring/                        ← Monitoring Stack
+│   ├── prometheus/
+│   │   ├── prometheus.yml                ← [Already created]
+│   │   └── alert-rules.yml               ← [Already created]
+│   │
+│   ├── grafana/
+│   │   ├── provisioning/                 ← [Already created]
+│   │   └── dashboards/
+│   │       ├── nidaw-overview.json       ← [Already created]
+│   │       ├── api-performance.json      ← [Already created]
+│   │       ├── database-metrics.json     ← [Already created]
+│   │       │
+│   │       └── business-metrics.json     ← 🆕 Enhanced
+│   │           └── Content: Add revenue per region, driver heatmap, CAC
+│   │
+│   ├── loki/
+│   │   └── loki-config.yml               ← [Already created]
+│   │
+│   └── jaeger/
+│       └── jaeger-config.yml             ← [Already created]
+│
+├── 📈 analytics/                         ← Analytics Platform
+│   ├── pinot/
+│   │   ├── schemas/                      ← [Already created]
+│   │   ├── tables/                       ← [Already created]
+│   │   │
+│   │   └── docker-compose.yml            ← ⚠️ REMOVED (moved to /docker/compose/)
+│   │       └── [DELETED - use /docker/compose/analytics.yml]
+│   │
+│   ├── dashboard/                        ← [Already created]
+│   └── warehouse/                        ← [Already created]
+│
+├── 🤖 ml/                                ← Machine Learning
+│   ├── feature_store/
+│   │   └── feast/
+│   │       └── feature_repo/             ← [Already created]
+│   │
+│   ├── training/                         ← [Already created]
+│   ├── federated/                        ← [Already created]
+│   ├── serving/                          ← [Already created]
+│   ├── monitoring/                       ← [Already created]
+│   ├── pipelines/                        ← [Already created]
+│   │
+│   ├── schemas/                          ← 🆕 NEW - Event schemas
+│   │   ├── avro/
+│   │   │   ├── ride_requested.avsc       ← 🆕 New file to create
+│   │   │   │   └── Content: Avro schema for ride events
+│   │   │   ├── driver_location.avsc      ← 🆕 New file to create
+│   │   │   │   └── Content: Avro schema for location updates
+│   │   │   └── payment_processed.avsc    ← 🆕 New file to create
+│   │   │       └── Content: Avro schema for payment events
+│   │   └── README.md                     ← 🆕 New file to create
+│   │       └── Content: Schema evolution strategy, versioning
+│   │
+│   ├── requirements.txt                  ← [Already created]
+│   └── Dockerfile                        ← [Already created]
+│
+├── ⛓️ blockchain/                        ← Web3 & Smart Contracts
+│   ├── contracts/                        ← [Already created]
+│   ├── scripts/                          ← [Already created]
+│   ├── test/                             ← [Already created]
+│   └── hardhat.config.js                 ← [Already created]
+│
+├── 📜 legal/                             ← 📍 SOURCE OF TRUTH for legal
+│   ├── terms-of-service/                 ← [Already created]
+│   ├── privacy/                          ← [Already created]
+│   ├── payments/                         ← [Already created]
+│   ├── blockchain/                       ← [Already created]
+│   ├── autonomous/                       ← [Already created]
+│   ├── policies/                         ← [Already created]
+│   ├── compliance/                       ← [Already created]
+│   └── templates/                        ← [Already created]
+│
+├── 📚 docs/                              ← 📍 DEVELOPER DOCS ONLY
+│   ├── README.md                         ← [Already created]
+│   │
+│   ├── architecture/
+│   │   ├── system-design.md              ← [Already created]
+│   │   ├── data-flow.md                  ← [Already created]
+│   │   ├── deployment.md                 ← [Already created]
+│   │   ├── diagrams/                     ← [Already created]
+│   │   │
+│   │   ├── caching-strategy.md           ← 🆕 NEW
+│   │   │   └── Content: Cache invalidation, warming, patterns
+│   │   │
+│   │   ├── database-sharding.md          ← 🆕 NEW
+│   │   │   └── Content: Sharding key, cross-shard queries, Citus setup
+│   │   │
+│   │   └── event-sourcing.md             ← 🆕 NEW
+│   │       └── Content: Event schema, DLQ handling, replay strategy
+│   │
+│   ├── development/
+│   │   ├── getting-started.md            ← [Already created]
+│   │   ├── coding-standards.md           ← [Already created]
+│   │   ├── git-workflow.md               ← [Already created]
+│   │   └── troubleshooting.md            ← [Already created]
+│   │
+│   ├── operations/
+│   │   ├── deployment-guide.md           ← [Already created]
+│   │   ├── monitoring-guide.md           ← [Already created]
+│   │   ├── disaster-recovery.md          ← [Already created]
+│   │   ├── incident-response.md          ← [Already created]
+│   │   │
+│   │   ├── slos.md                       ← 🆕 NEW
+│   │   │   └── Content: SLO/SLI definitions, error budgets
+│   │   │
+│   │   └── runbooks/
+│   │       ├── database-failure.md       ← [Already created]
+│   │       ├── kafka-failure.md          ← [Already created]
+│   │       ├── region-failure.md         ← [Already created]
+│   │       │
+│   │       ├── region-failover.md        ← 🆕 NEW
+│   │       │   └── Content: Full region failover procedure
+│   │       ├── data-corruption-recovery.md ← 🆕 NEW
+│   │       │   └── Content: Point-in-time restore, data validation
+│   │       ├── ransomware-response.md    ← 🆕 NEW
+│   │       │   └── Content: Isolation, forensic analysis, recovery
+│   │       └── critical-api-downtime.md  ← 🆕 NEW
+│   │           └── Content: Circuit breakers, degradation strategy
+│   │
+│   ├── api/
+│   │   ├── openapi.yaml                  ← ⚠️ SYMLINK to /backend/api/openapi.yaml
+│   │   │   └── Content: Symlink only, don't duplicate
+│   │   ├── postman-collection.json       ← [Already created]
+│   │   └── api-examples.md               ← [Already created]
+│   │
+│   ├── security/
+│   │   ├── SECURITY_AUDIT_REPORT.md      ← [Already created]
+│   │   ├── security-policy.md            ← [Already created]
+│   │   ├── compliance/                   ← [Already created]
+│   │   │
+│   │   └── penetration-testing.md        ← 🆕 NEW
+│   │       └── Content: Quarterly schedule, bug bounty, validation
+│   │
+│   ├── finance/                          ← [Already created]
+│   │
+│   └── legal/                            ← ⚠️ REMOVED (use /legal/ instead)
+│       └── [DELETED - symlink to /legal/ if needed]
+│
+├── 🔐 security/                          ← 🆕 NEW - Security Hub
+│   ├── policies/
+│   │   ├── access-control.md             ← 🆕 New file to create
+│   │   │   └── Content: RBAC policies, least privilege
+│   │   ├── data-classification.md        ← 🆕 New file to create
+│   │   │   └── Content: PII, PCI, public data handling
+│   │   └── incident-response.md          ← 🆕 New file to create
+│   │       └── Content: Security incident procedures
+│   │
+│   ├── scanning/
+│   │   ├── trivy-config.yaml             ← 🆕 New file to create
+│   │   │   └── Content: Container vulnerability scanning config
+│   │   ├── gitleaks-config.toml          ← 🆕 New file to create
+│   │   │   └── Content: Secret detection rules
+│   │   └── owasp-zap-config.yaml         ← 🆕 New file to create
+│   │       └── Content: DAST scanning configuration
+│   │
+│   └── README.md                         ← 🆕 New file to create
+│       └── Content: Security overview, contact info
+│
+├── 🛠️ scripts/                           ← Automation Scripts
+│   ├── setup.sh                          ← [Already created]
+│   ├── deploy.sh                         ← [Already created]
+│   ├── rollback.sh                       ← [Already created]
+│   ├── validate-production.sh            ← [Already created]
+│   │
+│   ├── backup/                           ← [Already created]
+│   ├── migrations/                       ← [Already created]
+│   ├── seed/                             ← [Already created]
+│   │
+│   └── benchmarks/                       ← [Already created]
+│
+├── 🧪 tests/                             ← Test Files
+│   ├── unit/                             ← [Already created]
+│   ├── integration/                      ← [Already created]
+│   ├── e2e/                              ← [Already created]
+│   │
+│   ├── performance/
+│   │   ├── load/
+│   │   │   └── load-test.js              ← [Already created]
+│   │   ├── stress/
+│   │   │   └── stress-test.js            ← [Already created]
+│   │   │
+│   │   ├── k6/                           ← 🆕 NEW - Distributed load testing
+│   │   │   ├── scripts/
+│   │   │   │   ├── ride-request.js       ← 🆕 New file to create
+│   │   │   │   │   └── Content: k6 script for ride API
+│   │   │   │   ├── hotel-booking.js      ← 🆕 New file to create
+│   │   │   │   │   └── Content: k6 script for hotel API
+│   │   │   │   └── mixed-workload.js     ← 🆕 New file to create
+│   │   │   │       └── Content: k6 script for mixed traffic
+│   │   │   ├── config/
+│   │   │   │   └── thresholds.json       ← 🆕 New file to create
+│   │   │   │       └── Content: Performance thresholds per endpoint
+│   │   │   └── README.md                 ← 🆕 New file to create
+│   │   │       └── Content: How to run k6 tests, interpret results
+│   │   │
+│   │   └── baselines/
+│   │       └── v1.0.0-performance.md     ← 🆕 New file to create
+│   │           └── Content: Performance baseline metrics
+│   │
+│   └── chaos/                            ← 🆕 NEW - Chaos Engineering
+│       ├── litmus/
+│       │   ├── pod-termination.yaml      ← 🆕 New file to create
+│       │   │   └── Content: Random pod kill experiment
+│       │   ├── network-latency.yaml      ← 🆕 New file to create
+│       │   │   └── Content: Network delay injection
+│       │   └── db-connection-exhaust.yaml ← 🆕 New file to create
+│       │       └── Content: Connection pool exhaustion test
+│       │
+│       ├── chaos-mesh/
+│       │   ├── network-chaos.yaml        ← 🆕 New file to create
+│       │   │   └── Content: Network partition simulation
+│       │   └── stress-chaos.yaml         ← 🆕 New file to create
+│       │       └── Content: CPU/memory stress testing
+│       │
+│       └── README.md                     ← 🆕 New file to create
+│           └── Content: Chaos engineering strategy, GameDay schedule
+│
+├── 📦 releases/                          ← Release Artifacts
+│   └── v1.0.0/                           ← [Already created]
+│
+├── 📋 config/                            ← Configuration
+│   ├── environments/
+│   │   ├── dev.env                       ← [Already created]
+│   │   ├── staging.env                   ← [Already created]
+│   │   └── production.env                ← [Already created]
+│   │
+│   ├── feature-flags/
+│   │   ├── flags.json                    ← 🆕 Enhanced
+│   │   │   └── Content: Add metadata (owner, expiry, A/B test ID)
+│   │   ├── README.md                     ← [Already created]
+│   │   │
+│   │   └── lifecycle.md                  ← 🆕 New file to create
+│   │       └── Content: Flag expiration policy, owner assignment
+│   │
+│   └── nginx/
+│       └── nginx.conf                    ← [Already created]
+│
+├── 🗑️ tmp/                               ← Temporary Files
+│   └── .gitkeep
+│
+├── .devcontainer/                        ← 🆕 NEW - Dev Container
+│   ├── devcontainer.json                 ← 🆕 New file to create
+│   │   └── Content: VS Code dev container config
+│   ├── Dockerfile                        ← 🆕 New file to create
+│   │   └── Content: Development environment image
+│   └── docker-compose.yml                ← 🆕 New file to create
+│       └── Content: Dev container services
+│
+├── .vscode/                              ← VS Code Settings
+│   ├── settings.json                     ← [Already created]
+│   ├── launch.json                       ← [Already created]
+│   └── extensions.json                   ← [Already created]
+│
+├── .github/                              ← GitHub Configs
+│   └── workflows/
+│       ├── backend-ci.yml                ← [Already created]
+│       ├── frontend-ci.yml               ← [Already created]
+│       ├── deploy-staging.yml            ← [Already created]
+│       ├── deploy-prod.yml               ← [Already created]
+│       │
+│       └── security-scan.yml             ← 🆕 Enhanced
+│           └── Content: Add Trivy, Gitleaks, OWASP ZAP steps
+│
+├── .gitignore                            ← Git ignore rules
+├── .dockerignore                         ← Docker ignore rules
+├── .env.example                          ← Environment template
+│
+├── .pre-commit-config.yaml               ← 🆕 NEW - Pre-commit hooks
+│   └── Content: gitleaks, terraform fmt, go fmt, dart format
+│
+├── QUICKSTART.md                         ← 🆕 NEW - 3-minute setup
+│   └── Content: Quick start guide for new developers
+│
+├── Makefile                              ← [Already created]
+├── README.md                             ← [Already created]
+├── CONTRIBUTING.md                       ← Contribution guide
+├── LICENSE                               ← License file
+├── CHANGELOG.md                          ← Version history
+│
+└── docker-compose.yml                    ← ⚠️ Root compose (symlink to /docker/compose/base.yml)
+    └── Content: Symlink only, don't duplicate

@@ -1,0 +1,229 @@
+# ============================================================================
+# NIDAW Jaeger Configuration
+# Distributed Tracing System
+# ============================================================================
+
+service:
+  extensions: [jaeger_storage_extension, jaeger_query_extension]
+  pipelines:
+    traces:
+      receivers: [otlp, jaeger, zipkin]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+
+jaeger_storage_extension:
+  backends:
+    some_storage:
+      memory:
+        max_traces: 100000
+
+jaeger_query_extension:
+  storage:
+    name: some_storage
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  
+  jaeger:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14250
+      thrift_http:
+        endpoint: 0.0.0.0:14268
+      thrift_compact:
+        endpoint: 0.0.0.0:6831
+      thrift_binary:
+        endpoint: 0.0.0.0:6832
+  
+  zipkin:
+    endpoint: 0.0.0.0:9411
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: some_storage
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  
+  pprof:
+    endpoint: 0.0.0.0:1777
+  
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+# ============================================================================
+# SAMPLING STRATEGIES
+# ============================================================================
+
+sampling:
+  strategies_file: /etc/jaeger/sampling.json
+
+# sampling.json content:
+# {
+#   "default_strategy": {
+#     "type": "probabilistic",
+#     "param": 0.1
+#   },
+#   "service_strategies": [
+#     {
+#       "service": "nidaw-backend",
+#       "type": "probabilistic",
+#       "param": 0.2
+#     },
+#     {
+#       "service": "nidus-service",
+#       "type": "probabilistic",
+#       "param": 0.5
+#     }
+#   ]
+# }
+
+# ============================================================================
+# STORAGE BACKENDS (Choose one)
+# ============================================================================
+
+# MEMORY (Development)
+storage:
+  type: memory
+  memory:
+    max_traces: 100000
+
+# BADGER (Local Development)
+# storage:
+#   type: badger
+#   badger:
+#     directory: /badger/data
+#     ephemeral: false
+#     span_storage_ttl: 72h
+#     maintenance_interval: 5m
+
+# ELASTICSEARCH (Production)
+# storage:
+#   type: elasticsearch
+#   elasticsearch:
+#     server_urls: ["http://elasticsearch:9200"]
+#     username: elastic
+#     password: changeme
+#     index_prefix: jaeger
+#     num_shards: 5
+#     num_replicas: 1
+#     max_span_age: 72h
+#     log_level: error
+
+# CASSANDRA (Production)
+# storage:
+#   type: cassandra
+#   cassandra:
+#     servers: ["cassandra:9042"]
+#     keyspace: jaeger_v1_dc1
+#     consistency: LOCAL_ONE
+#     timeout: 5s
+#     reconnect_interval: 60s
+
+# ============================================================================
+# QUERY SERVICE
+# ============================================================================
+
+query:
+  port: 16686
+  host: 0.0.0.0
+  static_files: /jaeger/ui
+  ui:
+    config_file: /etc/jaeger/ui-config.json
+  base_path: /
+  max_clock_skew_adjust: 0
+  clock_skew_max_duration: 0
+  log_level: info
+
+# ============================================================================
+# COLLECTOR
+# ============================================================================
+
+collector:
+  port: 14268
+  http_server:
+    host_port: 0.0.0.0:14268
+  grpc_server:
+    host_port: 0.0.0.0:14250
+  queue_size: 100000
+  num_workers: 50
+  otlp:
+    enabled: true
+    grpc_server:
+      host_port: 0.0.0.0:4317
+    http_server:
+      host_port: 0.0.0.0:4318
+
+# ============================================================================
+# AGENT (Deprecated - use OTLP Collector)
+# ============================================================================
+
+agent:
+  host_port: 0.0.0.0:6831
+  tags: []
+  processor:
+    jaeger_compact:
+      server_queue_size: 1000
+      server_max_packet_size: 65000
+      workers: 10
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+
+log_level: info
+log_format: json
+
+# ============================================================================
+# METRICS
+# ============================================================================
+
+metrics_backend: prometheus
+metrics_backend_options:
+  host_port: 0.0.0.0:8888
+  path: /metrics
+
+# ============================================================================
+# DEPENDENCIES
+# ============================================================================
+
+dependencies:
+  enabled: true
+  schedule: "0 0 * * *"  # Daily at midnight
+
+# ============================================================================
+# SPAN STORE
+# ============================================================================
+
+spanstore:
+  cache:
+    max_size: 1000000
+    ttl: 6h
+  writing:
+    num_workers: 50
+    queue_size: 100000
+
+# ============================================================================
+# ARCHIVING (Optional)
+# ============================================================================
+
+# archive:
+#   storage:
+#     type: elasticsearch
+#     elasticsearch:
+#       server_urls: ["http://elasticsearch-archive:9200"]
+#       username: elastic
+#       password: changeme
+#       index_prefix: jaeger-archive

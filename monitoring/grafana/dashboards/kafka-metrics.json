@@ -1,0 +1,102 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "kafka-metrics",
+    "title": "NIDAW - Kafka Metrics",
+    "tags": ["nidaw", "kafka"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Messages Produced per Second",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(rate(kafka_topic_messages_produced_total[5m])) by (topic)",
+            "legendFormat": "{{topic}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "messages/s"},
+          {"label": ""}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Messages Consumed per Second",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(rate(kafka_consumer_messages_consumed_total[5m])) by (topic, group)",
+            "legendFormat": "{{topic}} - {{group}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "messages/s"},
+          {"label": ""}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Consumer Lag by Group",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "kafka_consumer_group_lag",
+            "legendFormat": "{{group}} - {{topic}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "messages"},
+          {"label": ""}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Broker Disk Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "kafka_broker_disk_usage_bytes",
+            "legendFormat": "Broker {{broker_id}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "bytes", "format": "bytes"},
+          {"label": ""}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Under Replicated Partitions",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "kafka_broker_under_replicated_partitions",
+            "legendFormat": "Under Replicated"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 1}
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}
