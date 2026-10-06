@@ -1,11 +1,12 @@
-
+// Package payments defines the payment gateway abstraction and shared DTOs
+// used by all payment integrations (Stripe today; Telebirr/Chapa/M-Pesa later).
+package payments
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var (
