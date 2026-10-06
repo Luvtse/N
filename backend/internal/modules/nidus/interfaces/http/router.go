@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/commands"
@@ -34,6 +35,7 @@ type Dependencies struct {
 	MatchingEngine *services.MatchingEngine
 	ETAService     *services.ETAService
 	PricingService *services.PricingService
+	CORSOrigins    []string // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
 }
 
 // CacheService interface for driver location caching. DriverLocation is an
@@ -63,14 +65,25 @@ func NewRouter(deps *Dependencies) http.Handler {
 	r.Use(middleware.Recoverer(deps.Logger))
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(middleware.RequestIDToContext)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"}, // Configure per environment
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Request-ID", "X-RateLimit-Remaining"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	// Phase B/B4: wildcard origin is forbidden when credentials are enabled.
+	// Origins come from CORS_ORIGINS env (config.CORSOrigins). Empty list =>
+	// deny all cross-origin; explicit "*" => wildcard WITHOUT credentials.
+	corsOpts := cors.Options{
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},
+		MaxAge:         300,
+	}
+	if len(deps.CORSOrigins) == 0 {
+		corsOpts.AllowOriginFunc = func(r *http.Request, origin string) bool { return false }
+	} else if slices.Contains(deps.CORSOrigins, "*") {
+		corsOpts.AllowedOrigins = []string{"*"}
+		corsOpts.AllowCredentials = false
+	} else {
+		corsOpts.AllowedOrigins = deps.CORSOrigins
+		corsOpts.AllowCredentials = true
+	}
+	r.Use(cors.Handler(corsOpts))
 	r.Use(middleware.RateLimit(100, time.Minute)) // 100 requests per minute per IP
 
 	// ========================================================================
