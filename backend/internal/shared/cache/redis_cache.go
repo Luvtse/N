@@ -134,3 +134,9 @@ func (ca *CacheAside) GetOrLoad(ctx context.Context, loader func() (interface{},
 func (c *RedisCache) RawClient() *redis.Client {
 	return c.client
 }
+
+// Close releases the underlying Redis connection pool. Safe to call once at
+// process shutdown.
+func (c *RedisCache) Close() error {
+	return c.client.Close()
+}

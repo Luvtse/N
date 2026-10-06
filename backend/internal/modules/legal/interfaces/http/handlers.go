@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/google/uuid"
 	"nidaw-backend/internal/modules/legal/application/services"
 	"nidaw-backend/internal/modules/legal/domain/entities"
+	"nidaw-backend/internal/shared/auth"
 )
 
 type ConsentHandler struct {
@@ -43,7 +43,7 @@ func (h *ConsentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 // GiveConsent records user consent
 func (h *ConsentHandler) GiveConsent(w http.ResponseWriter, r *http.Request) {
 	// Extract user ID from context (set by auth middleware)
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := auth.GetUserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -76,7 +76,7 @@ func (h *ConsentHandler) GiveConsent(w http.ResponseWriter, r *http.Request) {
 
 // WithdrawConsent allows user to withdraw consent
 func (h *ConsentHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := auth.GetUserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -99,7 +99,7 @@ func (h *ConsentHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request)
 
 // GetUserConsents returns all consent records for user
 func (h *ConsentHandler) GetUserConsents(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := auth.GetUserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -117,7 +117,7 @@ func (h *ConsentHandler) GetUserConsents(w http.ResponseWriter, r *http.Request)
 
 // CheckConsent verifies if user has given consent
 func (h *ConsentHandler) CheckConsent(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := auth.GetUserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -137,7 +137,7 @@ func (h *ConsentHandler) CheckConsent(w http.ResponseWriter, r *http.Request) {
 
 // GetAuditLog returns consent audit trail (for compliance requests)
 func (h *ConsentHandler) GetAuditLog(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := auth.GetUserIDFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

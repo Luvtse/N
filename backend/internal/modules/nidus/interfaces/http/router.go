@@ -2,11 +2,13 @@ package http
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/commands"
 	"nidaw-backend/internal/modules/nidus/application/queries"
 	"nidaw-backend/internal/modules/nidus/application/services"
+	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidusHttp "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/database"
@@ -25,32 +27,26 @@ import (
 
 // Dependencies holds all services required by the router
 type Dependencies struct {
-	DB              *database.Postgres
-	EventBus        eventbus.EventBus
-	Logger          *zap.Logger
-	AuthService     *auth.Service
-	CacheService    CacheService
-	MatchingEngine  *services.MatchingEngine
-	ETAService      *services.ETAService
-	PricingService  *services.PricingService
+	DB             *database.Postgres
+	EventBus       eventbus.EventBus
+	Logger         *zap.Logger
+	AuthService    *auth.Service
+	CacheService   CacheService
+	MatchingEngine *services.MatchingEngine
+	ETAService     *services.ETAService
+	PricingService *services.PricingService
+	CORSOrigins    []string // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
 }
 
-// CacheService interface for driver location caching
-type CacheService interface {
-	GetNearbyDrivers(ctx context.Context, lat, lng, radiusKm float64, status string) ([]*DriverLocation, error)
-	UpdateDriverLocation(ctx context.Context, loc *DriverLocation) error
-}
+// CacheService interface for driver location caching. DriverLocation is an
+// alias to the canonical type in nidus/infrastructure/cache, so both packages
+// see identical method signatures and *DriverLocationCache satisfies this
+// interface directly.
+type CacheService = nidusHttp.CacheService
 
-// DriverLocation represents a driver's current position
-type DriverLocation struct {
-	DriverID  string  `json:"driver_id"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Timestamp int64   `json:"timestamp"`
-	Heading   float64 `json:"heading"`
-	Speed     float64 `json:"speed"`
-	Status    string  `json:"status"`
-}
+// DriverLocation represents a driver's current position (alias of the
+// canonical infrastructure type).
+type DriverLocation = niduscache.DriverLocation
 
 // ============================================================================
 // ROUTER CONSTRUCTOR
@@ -69,21 +65,32 @@ func NewRouter(deps *Dependencies) http.Handler {
 	r.Use(middleware.Recoverer(deps.Logger))
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(middleware.RequestIDToContext)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"}, // Configure per environment
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Request-ID", "X-RateLimit-Remaining"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	// Phase B/B4: wildcard origin is forbidden when credentials are enabled.
+	// Origins come from CORS_ORIGINS env (config.CORSOrigins). Empty list =>
+	// deny all cross-origin; explicit "*" => wildcard WITHOUT credentials.
+	corsOpts := cors.Options{
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},
+		MaxAge:         300,
+	}
+	if len(deps.CORSOrigins) == 0 {
+		corsOpts.AllowOriginFunc = func(r *http.Request, origin string) bool { return false }
+	} else if slices.Contains(deps.CORSOrigins, "*") {
+		corsOpts.AllowedOrigins = []string{"*"}
+		corsOpts.AllowCredentials = false
+	} else {
+		corsOpts.AllowedOrigins = deps.CORSOrigins
+		corsOpts.AllowCredentials = true
+	}
+	r.Use(cors.Handler(corsOpts))
 	r.Use(middleware.RateLimit(100, time.Minute)) // 100 requests per minute per IP
 
 	// ========================================================================
 	// INITIALIZE HANDLERS
 	// ========================================================================
 	rideHandler := nidusHttp.NewRideHandler(
-		commands.NewRequestRideHandler(deps.DB, deps.EventBus),
+		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService),
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,

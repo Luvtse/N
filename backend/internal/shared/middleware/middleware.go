@@ -371,17 +371,29 @@ func CORS(origins []string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 
+			// Phase B/B4: wildcard must never be combined with credentials.
+			wildcard := false
 			allowed := false
 			for _, o := range origins {
-				if o == "*" || o == origin {
-					allowed = true
+				if o == "*" {
+					wildcard = true
 					break
 				}
+				if o == origin {
+					allowed = true
+				}
+			}
+			if wildcard {
+				allowed = true
 			}
 
 			if allowed {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				if wildcard {
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+				} else {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Request-ID")
 				w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-RateLimit-Remaining")
