@@ -4,40 +4,42 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"nidaw-backend/internal/shared/database"
 )
 
 // Cache key patterns
 const (
 	// User-related
-	UserProfileKey     = "user:profile:%s"
-	UserSessionKey     = "user:session:%s"
-	
+	UserProfileKey = "user:profile:%s"
+	UserSessionKey = "user:session:%s"
+
 	// Driver-related
-	DriverLocationKey  = "driver:location:%s"
-	DriverProfileKey   = "driver:profile:%s"
-	DriverEarningsKey  = "driver:earnings:%s:%s"  // driver_id:date
-	
+	DriverLocationKey = "driver:location:%s"
+	DriverProfileKey  = "driver:profile:%s"
+	DriverEarningsKey = "driver:earnings:%s:%s" // driver_id:date
+
 	// Ride-related
-	RideKey            = "ride:%s"
-	RideStatusKey      = "ride:status:%s"
-	ActiveRidesByUser  = "user:active_rides:%s"
-	
+	RideKey           = "ride:%s"
+	RideStatusKey     = "ride:status:%s"
+	ActiveRidesByUser = "user:active_rides:%s"
+
 	// Hotel-related
-	HotelKey           = "hotel:%s"
-	HotelSearchKey     = "hotel:search:%s"  // hash of search params
-	HotelAvailability  = "hotel:avail:%s:%s"  // hotel_id:date
-	
+	HotelKey          = "hotel:%s"
+	HotelSearchKey    = "hotel:search:%s"   // hash of search params
+	HotelAvailability = "hotel:avail:%s:%s" // hotel_id:date
+
 	// Food-related
-	RestaurantKey      = "restaurant:%s"
-	MenuKey            = "menu:%s"
-	OrderKey           = "order:%s"
-	
+	RestaurantKey = "restaurant:%s"
+	MenuKey       = "menu:%s"
+	OrderKey      = "order:%s"
+
 	// Rate limiting
-	RateLimitKey       = "ratelimit:%s:%s"  // user_id:endpoint
-	
+	RateLimitKey = "ratelimit:%s:%s" // user_id:endpoint
+
 	// Geospatial
-	DriversGeoKey      = "drivers:geo:%s"  // status
-	NearbyDriversKey   = "nearby:%f:%f"    // lat:lng
+	DriversGeoKey    = "drivers:geo:%s" // status
+	NearbyDriversKey = "nearby:%f:%f"   // lat:lng
 )
 
 // TTLs for different data types
@@ -46,21 +48,35 @@ var (
 	DriverLocationTTL = 60 * time.Second
 	RideStatusTTL     = 5 * time.Minute
 	ActiveRideTTL     = 10 * time.Minute
-	
+
 	// Medium-lived (session data)
-	UserSessionTTL    = 24 * time.Hour
-	RateLimitTTL      = 1 * time.Minute
-	
+	UserSessionTTL = 24 * time.Hour
+	RateLimitTTL   = 1 * time.Minute
+
 	// Long-lived (reference data)
-	HotelTTL          = 1 * time.Hour
-	RestaurantTTL     = 30 * time.Minute
-	MenuTTL           = 15 * time.Minute
-	UserProfileTTL    = 7 * 24 * time.Hour
-	
+	HotelTTL       = 1 * time.Hour
+	RestaurantTTL  = 30 * time.Minute
+	MenuTTL        = 15 * time.Minute
+	UserProfileTTL = 7 * 24 * time.Hour
+
 	// Very long-lived (static data)
-	CountryListTTL    = 30 * 24 * time.Hour
-	CurrencyRatesTTL  = 1 * time.Hour
+	CountryListTTL   = 30 * 24 * time.Hour
+	CurrencyRatesTTL = 1 * time.Hour
 )
+
+// Restaurant is a denormalized projection of the restaurants table used for
+// cache warming; intentionally decoupled from any single module domain.
+type Restaurant struct {
+	ID                       string  `json:"id"`
+	Name                     string  `json:"name"`
+	CuisineType              string  `json:"cuisine_type"`
+	Rating                   float64 `json:"rating"`
+	DeliveryFee              float64 `json:"delivery_fee"`
+	MinOrderAmount           float64 `json:"min_order_amount"`
+	EstimatedDeliveryMinutes int     `json:"estimated_delivery_minutes"`
+	Latitude                 float64 `json:"latitude"`
+	Longitude                float64 `json:"longitude"`
+}
 
 // Cache warming strategies
 type CacheWarmer struct {
@@ -86,7 +102,7 @@ func (w *CacheWarmer) WarmPopularRestaurants(ctx context.Context) error {
 		return err
 	}
 	defer rows.Close()
-	
+
 	for rows.Next() {
 		var restaurant Restaurant
 		if err := rows.Scan(&restaurant.ID, &restaurant.Name, &restaurant.CuisineType,
@@ -94,13 +110,13 @@ func (w *CacheWarmer) WarmPopularRestaurants(ctx context.Context) error {
 			&restaurant.EstimatedDeliveryMinutes, &restaurant.Latitude, &restaurant.Longitude); err != nil {
 			continue
 		}
-		
+
 		key := fmt.Sprintf(RestaurantKey, restaurant.ID)
 		if err := w.cache.Set(ctx, key, restaurant, RestaurantTTL); err != nil {
 			continue
 		}
 	}
-	
+
 	return nil
 }
 
@@ -117,27 +133,27 @@ func (w *CacheWarmer) WarmHotelAvailability(ctx context.Context) error {
 		return err
 	}
 	defer rows.Close()
-	
+
 	for rows.Next() {
 		var hotelID, date string
 		var availableRooms int
 		var price float64
-		
+
 		if err := rows.Scan(&hotelID, &date, &availableRooms, &price); err != nil {
 			continue
 		}
-		
+
 		key := fmt.Sprintf(HotelAvailability, hotelID, date)
 		availability := map[string]interface{}{
 			"available_rooms": availableRooms,
 			"price_per_night": price,
 		}
-		
+
 		if err := w.cache.Set(ctx, key, availability, 1*time.Hour); err != nil {
 			continue
 		}
 	}
-	
+
 	return nil
 }
 
@@ -155,13 +171,13 @@ func (ci *CacheInvalidator) InvalidateOnRideComplete(ctx context.Context, rideID
 	// Invalidate ride cache
 	ci.cache.Delete(ctx, fmt.Sprintf(RideKey, rideID))
 	ci.cache.Delete(ctx, fmt.Sprintf(RideStatusKey, rideID))
-	
+
 	// Invalidate user's active rides list
 	ci.cache.Delete(ctx, fmt.Sprintf(ActiveRidesByUser, userID))
-	
+
 	// Invalidate driver's current status
 	ci.cache.Delete(ctx, fmt.Sprintf(DriverProfileKey, driverID))
-	
+
 	return nil
 }
 
@@ -170,6 +186,6 @@ func (ci *CacheInvalidator) InvalidateHotelSearch(ctx context.Context, city stri
 	// Use pattern matching to delete all related keys
 	// Note: Redis KEYS command is expensive, use SCAN in production
 	pattern := fmt.Sprintf("hotel:search:*%s*", city)
-	// Implementation would use SCAN + DEL
+	_ = pattern // TODO: implement SCAN + DEL via redis client when available
 	return nil
 }

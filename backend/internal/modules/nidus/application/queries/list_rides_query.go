@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ============================================================================
@@ -173,12 +174,12 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 // scanRide scans a single ride from the result set
 func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	var ride entities.Ride
-	var driverID pgx.NullString
-	var fareAmount, distanceKm pgx.NullFloat64
-	var durationMinutes, rating pgx.NullInt32
-	var matchedAt, completedAt pgx.NullString
-	var review pgx.NullString
-	var tipAmount pgx.NullFloat64
+	var driverID pgtype.Text
+	var fareAmount, distanceKm pgtype.Float8
+	var durationMinutes, rating pgtype.Int4
+	var matchedAt, completedAt pgtype.Timestamptz
+	var review pgtype.Text
+	var tipAmount pgtype.Float8
 
 	err := rows.Scan(
 		&ride.ID,
@@ -225,15 +226,13 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 		ride.DurationMinutes = int(durationMinutes.Int32)
 	}
 	if matchedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, matchedAt.String); err == nil {
-			ride.MatchedAt = &t
+		t := matchedAt.Time
+		ride.MatchedAt = &t
 		}
-	}
 	if completedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, completedAt.String); err == nil {
-			ride.CompletedAt = &t
+		t := completedAt.Time
+		ride.CompletedAt = &t
 		}
-	}
 	if rating.Valid {
 		ride.Rating = int(rating.Int32)
 	}
