@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/google/uuid"
 	"nidaw-backend/internal/modules/legal/application/services"
 	"nidaw-backend/internal/modules/legal/domain/entities"
-	"github.com/google/uuid"
 )
 
 type ConsentHandler struct {
@@ -22,20 +22,20 @@ func (h *ConsentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	docType := r.URL.Query().Get("type")
 	language := r.URL.Query().Get("lang")
 	region := r.URL.Query().Get("region")
-	
+
 	if language == "" {
 		language = "en"
 	}
 	if region == "" {
 		region = "GLOBAL"
 	}
-	
+
 	doc, err := h.consentService.GetActiveDocument(r.Context(), docType, language, region)
 	if err != nil {
 		http.Error(w, "Document not found", http.StatusNotFound)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(doc)
 }
@@ -48,18 +48,18 @@ func (h *ConsentHandler) GiveConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	
+
 	var req entities.GiveConsentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Extract metadata
 	ipAddress := r.RemoteAddr
 	userAgent := r.UserAgent()
 	deviceInfo := r.Header.Get("X-Device-Info")
-	
+
 	err := h.consentService.GiveConsent(r.Context(), userID, &req, ipAddress, userAgent, deviceInfo)
 	if err != nil {
 		if err == services.ErrConsentAlreadyGiven {
@@ -69,7 +69,7 @@ func (h *ConsentHandler) GiveConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"status": "consent_recorded"})
 }
@@ -81,18 +81,18 @@ func (h *ConsentHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	
+
 	docType := r.URL.Query().Get("type")
 	reason := r.URL.Query().Get("reason")
 	ipAddress := r.RemoteAddr
 	userAgent := r.UserAgent()
-	
+
 	err := h.consentService.WithdrawConsent(r.Context(), userID, docType, reason, ipAddress, userAgent)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "consent_withdrawn"})
 }
@@ -104,13 +104,13 @@ func (h *ConsentHandler) GetUserConsents(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	
+
 	consents, err := h.consentService.GetUserConsents(r.Context(), userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(consents)
 }
@@ -122,15 +122,15 @@ func (h *ConsentHandler) CheckConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	
+
 	docType := r.URL.Query().Get("type")
-	
+
 	hasConsent, err := h.consentService.CheckConsent(r.Context(), userID, docType)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"has_consent": hasConsent})
 }
@@ -142,13 +142,13 @@ func (h *ConsentHandler) GetAuditLog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	
+
 	logs, err := h.consentService.GetConsentAuditLog(r.Context(), userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
 }

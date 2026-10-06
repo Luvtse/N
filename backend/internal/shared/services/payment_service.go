@@ -2,142 +2,126 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
-	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
-	"github.com/google/uuid"
-	"github.com/stripe/stripe-go/v76"
-	"github.com/stripe/stripe-go/v76/paymentintent"
+	"nidaw-backend/internal/shared/integrations/payments"
 )
 
+// PaymentService is the thin application-level wrapper around the pluggable
+// payments.PaymentGateway interface. It no longer talks to any provider SDK
+// directly and never mutates global SDK state; provider selection happens in
+// the gateway factory (Stripe today, Telebirr/Chapa/M-Pesa adapters later).
 type PaymentService struct {
-	db     *database.Postgres
-	bus    eventbus.EventBus
-	stripe *stripe.Client
+	gateway payments.PaymentGateway
+	bus     eventbus.EventBus
 }
 
-func NewPaymentService(db *database.Postgres, bus eventbus.EventBus, stripeKey string) *PaymentService {
-	stripe.Key = stripeKey
+func NewPaymentService(gateway payments.PaymentGateway, bus eventbus.EventBus) *PaymentService {
 	return &PaymentService{
-		db:     db,
-		bus:    bus,
-		stripe: &stripe.Client{},
+		gateway: gateway,
+		bus:     bus,
 	}
 }
 
 type PaymentRequest struct {
-	UserID     string
-	Amount     float64
-	Currency   string
+	UserID        string
+	Amount        float64 // major units (e.g. ETB); converted to cents at the gateway boundary
+	Currency      string
 	PaymentMethod string
-	Description string
-	Metadata   map[string]string
+	Description   string
+	Metadata      map[string]string
 }
 
 type PaymentResponse struct {
-	PaymentID     string
-	Status        string
-	ClientSecret  string
+	PaymentID    string
+	Status       string
+	ClientSecret string
 }
 
+var (
+	ErrInvalidPaymentRequest = errors.New("invalid payment request")
+)
+
 func (p *PaymentService) ProcessPayment(ctx context.Context, req *PaymentRequest) (*PaymentResponse, error) {
-	paymentID := uuid.New().String()
-	
-	// Create payment intent in Stripe
-	params := &stripe.PaymentIntentParams{
-		Amount:             stripe.Int64(int64(req.Amount * 100)), // Convert to cents
-		Currency:           stripe.String(req.Currency),
-		PaymentMethod:      stripe.String(req.PaymentMethod),
-		Description:        stripe.String(req.Description),
-		Confirm:            stripe.Bool(true),
-		OffSession:         stripe.Bool(true),
+	if req == nil {
+		return nil, fmt.Errorf("%w: request is nil", ErrInvalidPaymentRequest)
 	}
-	
-	// Add metadata
-	if req.Metadata != nil {
-		params.Metadata = req.Metadata
+	if req.UserID == "" {
+		return nil, fmt.Errorf("%w: user id is required", ErrInvalidPaymentRequest)
 	}
-	
-	pi, err := paymentintent.New(params)
+	if req.Amount <= 0 {
+		return nil, fmt.Errorf("%w: amount must be positive", ErrInvalidPaymentRequest)
+	}
+	if req.Currency == "" {
+		return nil, fmt.Errorf("%w: currency is required", ErrInvalidPaymentRequest)
+	}
+	if p.gateway == nil {
+		return nil, errors.New("payment gateway not configured")
+	}
+
+	gwReq := &payments.CreatePaymentRequest{
+		Amount:          int64(req.Amount * 100), // convert to smallest currency unit
+		Currency:        req.Currency,
+		PaymentMethodID: req.PaymentMethod,
+		Description:     req.Description,
+		Metadata:        req.Metadata,
+		Confirm:         true,
+	}
+	if gwReq.Metadata == nil {
+		gwReq.Metadata = map[string]string{}
+	}
+	gwReq.Metadata["user_id"] = req.UserID
+
+	intent, err := p.gateway.CreatePaymentIntent(ctx, gwReq)
 	if err != nil {
 		return nil, err
 	}
-	
-	// Save payment record to database
-	query := `
-		INSERT INTO payments (id, user_id, amount, currency, status, payment_method, stripe_payment_intent_id, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`
-	_, err = p.db.Exec(ctx, query,
-		paymentID,
-		req.UserID,
-		req.Amount,
-		req.Currency,
-		pi.Status,
-		req.PaymentMethod,
-		pi.ID,
-		time.Now(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	
+
 	// Publish payment event
 	event := eventbus.Event{
 		Type: "payment.processed",
 		Payload: map[string]interface{}{
-			"payment_id": paymentID,
+			"payment_id": intent.ID,
 			"user_id":    req.UserID,
 			"amount":     req.Amount,
 			"currency":   req.Currency,
-			"status":     pi.Status,
+			"status":     intent.Status,
 		},
 		Timestamp: time.Now().Unix(),
 	}
-	
+
 	if err := p.bus.Publish(ctx, "payments", event); err != nil {
-		return nil, err
+		// The payment itself succeeded at the gateway; log loudly but keep the
+		// intent data flowing back to the caller so reconciliation can recover.
+		fmt.Printf("Warning: failed to publish payment.processed event: %v\n", err)
 	}
-	
+
 	return &PaymentResponse{
-		PaymentID:    paymentID,
-		Status:       string(pi.Status),
-		ClientSecret: pi.ClientSecret,
+		PaymentID:    intent.ID,
+		Status:       intent.Status,
+		ClientSecret: intent.ClientSecret,
 	}, nil
 }
 
 func (p *PaymentService) RefundPayment(ctx context.Context, paymentID string, amount float64) error {
-	// Get payment record
-	var stripeIntentID string
-	query := `SELECT stripe_payment_intent_id FROM payments WHERE id = $1`
-	err := p.db.QueryRow(ctx, query, paymentID).Scan(&stripeIntentID)
-	if err != nil {
+	if paymentID == "" {
+		return fmt.Errorf("%w: payment id is required", ErrInvalidPaymentRequest)
+	}
+	if amount < 0 {
+		return fmt.Errorf("%w: refund amount cannot be negative", ErrInvalidPaymentRequest)
+	}
+	if p.gateway == nil {
+		return errors.New("payment gateway not configured")
+	}
+
+	// amount == 0 means full refund; gateway handles the semantics.
+	if err := p.gateway.RefundPayment(ctx, paymentID, int64(amount*100)); err != nil {
 		return err
 	}
-	
-	// Create refund in Stripe
-	params := &stripe.RefundParams{
-		PaymentIntent: stripe.String(stripeIntentID),
-	}
-	
-	if amount > 0 {
-		params.Amount = stripe.Int64(int64(amount * 100))
-	}
-	
-	_, err = stripe.Refund(params)
-	if err != nil {
-		return err
-	}
-	
-	// Update payment status
-	query = `UPDATE payments SET status = 'refunded', updated_at = $1 WHERE id = $2`
-	_, err = p.db.Exec(ctx, query, time.Now(), paymentID)
-	if err != nil {
-		return err
-	}
-	
-	// Publish refund event
+
 	event := eventbus.Event{
 		Type: "payment.refunded",
 		Payload: map[string]interface{}{
@@ -146,6 +130,6 @@ func (p *PaymentService) RefundPayment(ctx context.Context, paymentID string, am
 		},
 		Timestamp: time.Now().Unix(),
 	}
-	
+
 	return p.bus.Publish(ctx, "payments", event)
 }

@@ -7,17 +7,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"nidaw-backend/internal/modules/logix/domain/entities"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
-	"github.com/google/uuid"
 )
 
 type CustomsService struct {
-	db           *database.Postgres
-	bus          eventbus.EventBus
-	customsAPI   CustomsAPI
-	tariffDB     TariffDatabase
+	db         *database.Postgres
+	bus        eventbus.EventBus
+	customsAPI CustomsAPI
+	tariffDB   TariffDatabase
 }
 
 func NewCustomsService(db *database.Postgres, bus eventbus.EventBus, api CustomsAPI, tariff TariffDatabase) *CustomsService {
@@ -40,42 +40,42 @@ type TariffDatabase interface {
 }
 
 type CustomsDeclaration struct {
-	ID                uuid.UUID           `json:"id"`
-	ShipmentID        uuid.UUID           `json:"shipment_id"`
-	ImporterID        uuid.UUID           `json:"importer_id"`
-	ExporterID        uuid.UUID           `json:"exporter_id"`
-	OriginCountry     string              `json:"origin_country"`
-	DestinationCountry string             `json:"destination_country"`
-	Items             []CustomsItem       `json:"items"`
-	TotalValue        float64             `json:"total_value"`
-	Currency          string              `json:"currency"`
-	Incoterm          string              `json:"incoterm"` // EXW, FOB, CIF, DDP, etc.
-	Documents         []CustomsDocument   `json:"documents"`
+	ID                 uuid.UUID         `json:"id"`
+	ShipmentID         uuid.UUID         `json:"shipment_id"`
+	ImporterID         uuid.UUID         `json:"importer_id"`
+	ExporterID         uuid.UUID         `json:"exporter_id"`
+	OriginCountry      string            `json:"origin_country"`
+	DestinationCountry string            `json:"destination_country"`
+	Items              []CustomsItem     `json:"items"`
+	TotalValue         float64           `json:"total_value"`
+	Currency           string            `json:"currency"`
+	Incoterm           string            `json:"incoterm"` // EXW, FOB, CIF, DDP, etc.
+	Documents          []CustomsDocument `json:"documents"`
 }
 
 type CustomsItem struct {
-	HSCode          string  `json:"hs_code"`
-	Description     string  `json:"description"`
-	Quantity        int     `json:"quantity"`
-	UnitPrice       float64 `json:"unit_price"`
-	TotalValue      float64 `json:"total_value"`
-	WeightKg        float64 `json:"weight_kg"`
-	OriginCountry   string  `json:"origin_country"`
+	HSCode        string  `json:"hs_code"`
+	Description   string  `json:"description"`
+	Quantity      int     `json:"quantity"`
+	UnitPrice     float64 `json:"unit_price"`
+	TotalValue    float64 `json:"total_value"`
+	WeightKg      float64 `json:"weight_kg"`
+	OriginCountry string  `json:"origin_country"`
 }
 
 type CustomsDocument struct {
-	Type        string `json:"type"` // commercial_invoice, packing_list, bill_of_lading, certificate_of_origin
-	URL         string `json:"url"`
-	IssueDate   time.Time `json:"issue_date"`
+	Type      string    `json:"type"` // commercial_invoice, packing_list, bill_of_lading, certificate_of_origin
+	URL       string    `json:"url"`
+	IssueDate time.Time `json:"issue_date"`
 }
 
 type CustomsStatus struct {
-	DeclarationID  string  `json:"declaration_id"`
-	Status         string  `json:"status"`
-	DutiesOwed     float64 `json:"duties_owed"`
-	TaxesOwed      float64 `json:"taxes_owed"`
-	ClearanceDate  *time.Time `json:"clearance_date"`
-	HoldReason     string  `json:"hold_reason"`
+	DeclarationID string     `json:"declaration_id"`
+	Status        string     `json:"status"`
+	DutiesOwed    float64    `json:"duties_owed"`
+	TaxesOwed     float64    `json:"taxes_owed"`
+	ClearanceDate *time.Time `json:"clearance_date"`
+	HoldReason    string     `json:"hold_reason"`
 }
 
 func (s *CustomsService) PrepareDeclaration(ctx context.Context, shipment *entities.Shipment) (*CustomsDeclaration, error) {
@@ -118,7 +118,7 @@ func (s *CustomsService) PrepareDeclaration(ctx context.Context, shipment *entit
 	}
 
 	duties := shipment.DeclaredValue * (dutyRate / 100.0)
-	
+
 	// Check for exemptions
 	exemptions, _ := s.tariffDB.GetDutyExemptions(ctx, shipment.HSCode, shipment.OriginCountry, shipment.DestinationCountry)
 	if len(exemptions) > 0 {
@@ -170,9 +170,9 @@ func (s *CustomsService) SubmitDeclaration(ctx context.Context, declaration *Cus
 	event := eventbus.Event{
 		Type: "logix.customs.submitted",
 		Payload: map[string]interface{}{
-			"shipment_id":     declaration.ShipmentID,
-			"declaration_id":  declaration.ID,
-			"external_id":     declarationID,
+			"shipment_id":    declaration.ShipmentID,
+			"declaration_id": declaration.ID,
+			"external_id":    declarationID,
 		},
 		Timestamp: time.Now().Unix(),
 	}

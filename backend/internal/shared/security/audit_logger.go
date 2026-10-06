@@ -45,8 +45,8 @@ type AuditResource struct {
 }
 
 type AuditLogger struct {
-	buffer    chan AuditEvent
-	batchSize int
+	buffer        chan AuditEvent
+	batchSize     int
 	flushInterval time.Duration
 }
 
@@ -56,7 +56,7 @@ func NewAuditLogger(bufferSize int, batchSize int, flushInterval time.Duration) 
 		batchSize:     batchSize,
 		flushInterval: flushInterval,
 	}
-	
+
 	go logger.flushLoop()
 	return logger
 }
@@ -68,7 +68,7 @@ func (l *AuditLogger) Log(ctx context.Context, event AuditEvent) {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
 	}
-	
+
 	select {
 	case l.buffer <- event:
 	default:
@@ -80,9 +80,9 @@ func (l *AuditLogger) Log(ctx context.Context, event AuditEvent) {
 func (l *AuditLogger) flushLoop() {
 	ticker := time.NewTicker(l.flushInterval)
 	defer ticker.Stop()
-	
+
 	batch := make([]AuditEvent, 0, l.batchSize)
-	
+
 	for {
 		select {
 		case event := <-l.buffer:
@@ -128,12 +128,12 @@ func (m *AuditMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		requestID := uuid.New().String()
-		
+
 		// Wrap response writer to capture status
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: 200}
-		
+
 		next.ServeHTTP(wrapped, r)
-		
+
 		// Determine result
 		result := "success"
 		if wrapped.statusCode >= 400 {
@@ -142,7 +142,7 @@ func (m *AuditMiddleware) Handler(next http.Handler) http.Handler {
 		if wrapped.statusCode == 401 || wrapped.statusCode == 403 {
 			result = "denied"
 		}
-		
+
 		// Log audit event
 		m.logger.Log(r.Context(), AuditEvent{
 			EventType: "http_request",

@@ -5,19 +5,16 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
-	"github.com/google/uuid"
 )
 
 var (
-	ErrDecryptionFailed = errors.New("decryption failed")
+	ErrDecryptionFailed  = errors.New("decryption failed")
 	ErrInvalidCiphertext = errors.New("invalid ciphertext")
 )
 
@@ -43,8 +40,8 @@ type DataKeyCache struct {
 }
 
 type CachedDataKey struct {
-	Plaintext  []byte
-	ExpiresAt  time.Time
+	Plaintext []byte
+	ExpiresAt time.Time
 }
 
 func NewEnvelopeEncryption(kmsClient *kms.Client, keyID string) *EnvelopeEncryption {
@@ -145,7 +142,7 @@ func NewFieldLevelEncryption(envelope *EnvelopeEncryption) *FieldLevelEncryption
 // EncryptPII encrypts specific PII fields in a struct
 func (f *FieldLevelEncryption) EncryptPII(ctx context.Context, data map[string]interface{}, piiFields []string) (map[string]interface{}, error) {
 	encrypted := make(map[string]interface{})
-	
+
 	for key, value := range data {
 		if contains(piiFields, key) {
 			// Convert to bytes and encrypt
@@ -159,14 +156,14 @@ func (f *FieldLevelEncryption) EncryptPII(ctx context.Context, data map[string]i
 			encrypted[key] = value
 		}
 	}
-	
+
 	return encrypted, nil
 }
 
 // DecryptPII decrypts PII fields
 func (f *FieldLevelEncryption) DecryptPII(ctx context.Context, data map[string]interface{}, piiFields []string) (map[string]interface{}, error) {
 	decrypted := make(map[string]interface{})
-	
+
 	for key, value := range data {
 		if contains(piiFields, key) {
 			if enc, ok := value.(*EncryptedData); ok {
@@ -180,7 +177,7 @@ func (f *FieldLevelEncryption) DecryptPII(ctx context.Context, data map[string]i
 			decrypted[key] = value
 		}
 	}
-	
+
 	return decrypted, nil
 }
 

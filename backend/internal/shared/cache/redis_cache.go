@@ -31,16 +31,16 @@ func NewRedisCache(redisURL string) (*RedisCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	client := redis.NewClient(opts)
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, err
 	}
-	
+
 	return &RedisCache{client: client}, nil
 }
 
@@ -52,7 +52,7 @@ func (c *RedisCache) Get(ctx context.Context, key string, dest interface{}) erro
 	if err != nil {
 		return err
 	}
-	
+
 	return json.Unmarshal([]byte(val), dest)
 }
 
@@ -61,7 +61,7 @@ func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl
 	if err != nil {
 		return err
 	}
-	
+
 	return c.client.Set(ctx, key, data, ttl).Err()
 }
 
@@ -82,7 +82,7 @@ func (c *RedisCache) SetNX(ctx context.Context, key string, value interface{}, t
 	if err != nil {
 		return false, err
 	}
-	
+
 	return c.client.SetNX(ctx, key, data, ttl).Result()
 }
 
@@ -105,7 +105,7 @@ func NewCacheAside(cache Cache, keyFunc func(...interface{}) string, ttl time.Du
 // GetOrLoad implements cache-aside pattern
 func (ca *CacheAside) GetOrLoad(ctx context.Context, loader func() (interface{}, error), args ...interface{}) (interface{}, error) {
 	key := ca.keyFunc(args...)
-	
+
 	// Try cache first
 	var result interface{}
 	err := ca.cache.Get(ctx, key, &result)
@@ -115,15 +115,22 @@ func (ca *CacheAside) GetOrLoad(ctx context.Context, loader func() (interface{},
 	if err != ErrCacheMiss {
 		return nil, err
 	}
-	
+
 	// Cache miss - load from source
 	result, err = loader()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Store in cache (ignore errors)
 	_ = ca.cache.Set(ctx, key, result, ca.ttl)
-	
+
 	return result, nil
+}
+
+// RawClient exposes the underlying go-redis client for commands that are not
+// part of the generic Cache interface (GEO, pipelines, etc.). Callers must be
+// Redis-aware infrastructure components.
+func (c *RedisCache) RawClient() *redis.Client {
+	return c.client
 }

@@ -104,8 +104,10 @@ func (g *StripeGateway) GetPaymentStatus(ctx context.Context, intentID string) (
 		ID:             pi.ID,
 		Status:         string(pi.Status),
 		Amount:         pi.Amount,
-		AmountCaptured: pi.AmountCaptured,
-		AmountRefunded: pi.AmountRefunded,
+		AmountCaptured: pi.AmountReceived,
+	}
+	if pi.LatestCharge != nil {
+		status.AmountRefunded = pi.LatestCharge.AmountRefunded
 	}
 
 	if pi.LatestCharge != nil {

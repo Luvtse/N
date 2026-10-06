@@ -14,23 +14,23 @@ import (
 
 // PricingFactors contains all factors affecting dynamic pricing
 type PricingFactors struct {
-	DemandSupplyRatio float64   // Current demand / supply ratio
-	TimeOfDay         string    // peak, off_peak, night
-	DayOfWeek         string    // weekday, weekend
-	WeatherCondition  string    // clear, rain, snow, storm
-	TrafficLevel      string    // low, moderate, heavy
-	Events            []string  // Special events in the area
-	HistoricalDemand  float64   // Historical demand for this time/location
-	Distance          float64   // Ride distance in km
+	DemandSupplyRatio float64  // Current demand / supply ratio
+	TimeOfDay         string   // peak, off_peak, night
+	DayOfWeek         string   // weekday, weekend
+	WeatherCondition  string   // clear, rain, snow, storm
+	TrafficLevel      string   // low, moderate, heavy
+	Events            []string // Special events in the area
+	HistoricalDemand  float64  // Historical demand for this time/location
+	Distance          float64  // Ride distance in km
 }
 
 // SurgeResult contains surge pricing calculation result
 type SurgeResult struct {
-	Multiplier     float64 `json:"multiplier"`
-	Reason         string  `json:"reason"`
-	DemandLevel    string  `json:"demand_level"`
-	Confidence     float64 `json:"confidence"` // 0-1
-	ExpiresAt      time.Time `json:"expires_at"`
+	Multiplier  float64   `json:"multiplier"`
+	Reason      string    `json:"reason"`
+	DemandLevel string    `json:"demand_level"`
+	Confidence  float64   `json:"confidence"` // 0-1
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // ============================================================================
@@ -64,7 +64,7 @@ func (s *DynamicPricingService) CalculateSurge(
 	if supply == 0 {
 		ratio = 5.0 // Maximum surge if no drivers
 	} else {
-		ratio = demand / supply
+		ratio = float64(demand) / float64(supply)
 	}
 
 	// 3. Apply time-based adjustments
@@ -112,7 +112,7 @@ func (s *DynamicPricingService) CalculateFare(
 	lat, lng float64,
 ) (float64, *SurgeResult, error) {
 	// 1. Calculate base fare components
-	timeRate := 0.30  // $ per minute
+	timeRate := 0.30     // $ per minute
 	distanceRate := 1.50 // $ per km
 
 	timeCharge := float64(durationMinutes) * timeRate

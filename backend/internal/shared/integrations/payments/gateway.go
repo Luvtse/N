@@ -5,7 +5,6 @@ package payments
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 )
 

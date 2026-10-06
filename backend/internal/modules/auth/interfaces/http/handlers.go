@@ -56,10 +56,10 @@ type RefreshRequest struct {
 
 // AuthResponse is the standard auth response
 type AuthResponse struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	ExpiresIn    int64     `json:"expires_in"`
-	TokenType    string    `json:"token_type"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+	ExpiresIn    int64        `json:"expires_in"`
+	TokenType    string       `json:"token_type"`
 	User         UserResponse `json:"user"`
 }
 
@@ -350,6 +350,115 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func isDuplicateKeyError(err error) bool {
-	return err != nil && (errors.Is(err, errors.New("duplicate key")) || 
-	                      err.Error() == "pq: duplicate key value violates unique constraint")
+	return err != nil && (errors.Is(err, errors.New("duplicate key")) ||
+		err.Error() == "pq: duplicate key value violates unique constraint")
+}
+
+// UpdateProfile handles PUT /api/v1/auth/profile.
+// Only the authenticated user's own row is modified (user id comes from the
+// JWT context populated by auth.Service.Middleware, never from the body).
+func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userID, ok := auth.GetUserIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "missing authenticated user")
+		return
+	}
+
+	var req struct {
+		FullName *string `json:"full_name"`
+		Phone    *string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+
+	if req.FullName == nil && req.Phone == nil {
+		writeError(w, http.StatusBadRequest, "NO_FIELDS", "at least one of full_name or phone is required")
+		return
+	}
+	if req.FullName != nil && (len(*req.FullName) == 0 || len(*req.FullName) > 200) {
+		writeError(w, http.StatusBadRequest, "INVALID_NAME", "full_name must be between 1 and 200 characters")
+		return
+	}
+	if req.Phone != nil && len(*req.Phone) > 20 {
+		writeError(w, http.StatusBadRequest, "INVALID_PHONE", "phone is too long")
+		return
+	}
+
+	tag, err := h.db.Exec(ctx, `
+UPDATE users
+SET full_name = COALESCE($1, full_name),
+    phone     = COALESCE($2, phone),
+    updated_at = $3
+WHERE id = $4
+`, req.FullName, req.Phone, time.Now(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "DATABASE_ERROR", "failed to update profile")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "USER_NOT_FOUND", "user not found")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// ChangePassword handles POST /api/v1/auth/change-password.
+// Verifies the current password before replacing the bcrypt hash.
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userID, ok := auth.GetUserIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "missing authenticated user")
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if len(req.NewPassword) < 8 || len(req.NewPassword) > 72 {
+		writeError(w, http.StatusBadRequest, "WEAK_PASSWORD", "new password must be between 8 and 72 characters")
+		return
+	}
+
+	var storedHash string
+	err := h.db.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1 AND status = 'active'`, userID).Scan(&storedHash)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "USER_NOT_FOUND", "user not found or inactive")
+		return
+	}
+
+	if bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(req.CurrentPassword)) != nil {
+		writeError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "current password is incorrect")
+		return
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "HASHING_FAILED", "failed to hash password")
+		return
+	}
+
+	_, err = h.db.Exec(ctx, `UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3`,
+		string(newHash), time.Now(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "DATABASE_ERROR", "failed to change password")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "password_changed"})
 }
