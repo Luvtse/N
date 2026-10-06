@@ -22,7 +22,7 @@ RUN apk add --no-cache \
 RUN mkdir -p /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting
 
 # Copy custom plugins
-COPY plugins/rate-limiting.lua /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting/handler.lua
+COPY plugins/rate-limiting.luat /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting/handler.lua
 # Phase B/B3: auth-jwt.lua REMOVED from build — it decoded JWT payloads without
 # signature verification. Authentication is enforced by Kong's bundled `jwt`
 # plugin (declared in kong.yml) plus backend auth.Service middleware.
