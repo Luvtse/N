@@ -165,7 +165,7 @@ services:
       - "8001:8001"
       - "8100:8100"
     volumes:
-      - ../../api-gateway/kong/kong.yml:/etc/kong/kong.yml:ro
+      - ../../api_gateway/kong/kong.yml:/etc/kong/kong.yml:ro
       - ssl_certs:/etc/kong/ssl:ro
     depends_on:
       - backend
