@@ -6,10 +6,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"nidaw-backend/internal/modules/logix/domain/entities"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
-	"github.com/google/uuid"
 )
 
 type LoadMatcher struct {
@@ -133,14 +133,14 @@ func (m *LoadMatcher) scoreCarrier(carrier entities.Carrier, load *entities.Load
 
 	onTimeScore := carrier.OnTimeRate * 100 // 0-100
 	ratingScore := carrier.Rating * 20      // 0-100
-	
+
 	// Price match: how close is carrier's typical rate to load rate
 	// (simplified - would use historical data in production)
 	priceMatch := 80.0 // Default good match
-	
+
 	// Route match: does carrier specialize in this lane?
 	routeMatch := m.calculateRouteMatch(carrier, load)
-	
+
 	// Equipment match
 	equipmentMatch := m.hasEquipment(carrier, load.EquipmentType)
 	equipmentScore := 0.0
@@ -166,7 +166,7 @@ func (m *LoadMatcher) calculateRouteMatch(carrier entities.Carrier, load *entiti
 	// In production, would query historical shipment data
 	origin := load.Origin.Country
 	dest := load.Destination.Country
-	
+
 	for _, area := range carrier.ServiceAreas {
 		if area == origin || area == dest {
 			return 85.0 // Good match

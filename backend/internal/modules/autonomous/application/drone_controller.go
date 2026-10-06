@@ -9,39 +9,40 @@ import (
 )
 
 type DroneController struct {
-	drones        map[string]*Drone
-	mu            sync.RWMutex
-	airspaceMgr   *AirspaceManager
-	weatherSvc    *WeatherService
+	drones      map[string]*Drone
+	mu          sync.RWMutex
+	airspaceMgr *AirspaceManager
+	weatherSvc  *WeatherService
 }
 
 type Drone struct {
-	ID              string       `json:"id"`
-	Model           string       `json:"model"`
-	Status          DroneStatus  `json:"status"`
+	ID              string        `json:"id"`
+	Model           string        `json:"model"`
+	Status          DroneStatus   `json:"status"`
 	Location        GeoLocation3D `json:"location"` // includes altitude
-	BatteryLevel    float64      `json:"battery_level"`
-	PayloadCapacity float64      `json:"payload_capacity_kg"`
-	CurrentPayload  *Payload     `json:"current_payload"`
-	MaxRange        float64      `json:"max_range_km"`
-	MaxAltitude     float64      `json:"max_altitude_m"`
-	MaxSpeed        float64      `json:"max_speed_kmh"`
+	BatteryLevel    float64       `json:"battery_level"`
+	PayloadCapacity float64       `json:"payload_capacity_kg"`
+	CurrentPayload  *Payload      `json:"current_payload"`
+	MaxRange        float64       `json:"max_range_km"`
+	MaxAltitude     float64       `json:"max_altitude_m"`
+	MaxSpeed        float64       `json:"max_speed_kmh"`
 	FlightTime      time.Duration `json:"flight_time"`
-	LastHeartbeat   time.Time    `json:"last_heartbeat"`
+	LastHeartbeat   time.Time     `json:"last_heartbeat"`
 }
 
 type DroneStatus string
+
 const (
-	DroneStatusIdle         DroneStatus = "idle"
-	DroneStatusPreFlight    DroneStatus = "pre_flight"
-	DroneStatusTakingOff    DroneStatus = "taking_off"
-	DroneStatusInFlight     DroneStatus = "in_flight"
-	DroneStatusDelivering   DroneStatus = "delivering"
-	DroneStatusReturning    DroneStatus = "returning"
-	DroneStatusLanding      DroneStatus = "landing"
-	DroneStatusCharging     DroneStatus = "charging"
-	DroneStatusMaintenance  DroneStatus = "maintenance"
-	DroneStatusEmergency    DroneStatus = "emergency"
+	DroneStatusIdle        DroneStatus = "idle"
+	DroneStatusPreFlight   DroneStatus = "pre_flight"
+	DroneStatusTakingOff   DroneStatus = "taking_off"
+	DroneStatusInFlight    DroneStatus = "in_flight"
+	DroneStatusDelivering  DroneStatus = "delivering"
+	DroneStatusReturning   DroneStatus = "returning"
+	DroneStatusLanding     DroneStatus = "landing"
+	DroneStatusCharging    DroneStatus = "charging"
+	DroneStatusMaintenance DroneStatus = "maintenance"
+	DroneStatusEmergency   DroneStatus = "emergency"
 )
 
 type GeoLocation3D struct {
@@ -51,10 +52,10 @@ type GeoLocation3D struct {
 }
 
 type Payload struct {
-	OrderID     string  `json:"order_id"`
-	Weight      float64 `json:"weight_kg"`
-	Description string  `json:"description"`
-	Recipient   string  `json:"recipient"`
+	OrderID     string        `json:"order_id"`
+	Weight      float64       `json:"weight_kg"`
+	Description string        `json:"description"`
+	Recipient   string        `json:"recipient"`
 	Destination GeoLocation3D `json:"destination"`
 }
 
@@ -73,50 +74,50 @@ func (c *DroneController) PlanDelivery(ctx context.Context, orderID string, pick
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if !c.isWeatherSafeForFlight(weather) {
 		return nil, errors.New("weather conditions unsafe for drone flight")
 	}
-	
+
 	// 2. Find available drone
 	drone, err := c.findAvailableDrone(payload)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// 3. Check airspace restrictions
 	if !c.airspaceMgr.IsAirspaceClear(ctx, pickup, dropoff) {
 		return nil, errors.New("airspace restricted")
 	}
-	
+
 	// 4. Calculate optimal flight path
 	waypoints, err := c.calculateFlightPath(pickup, dropoff, weather)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// 5. Estimate flight time and battery usage
 	flightTime := c.estimateFlightTime(waypoints, drone.MaxSpeed)
 	batteryUsage := c.estimateBatteryUsage(flightTime, payload.Weight)
-	
+
 	if batteryUsage > drone.BatteryLevel {
 		return nil, errors.New("insufficient battery for delivery")
 	}
-	
+
 	// 6. Create flight plan
 	plan := &FlightPlan{
-		ID:           fmt.Sprintf("flight_%s_%d", orderID, time.Now().Unix()),
-		DroneID:      drone.ID,
-		OrderID:      orderID,
-		Waypoints:    waypoints,
+		ID:            fmt.Sprintf("flight_%s_%d", orderID, time.Now().Unix()),
+		DroneID:       drone.ID,
+		OrderID:       orderID,
+		Waypoints:     waypoints,
 		EstimatedTime: flightTime,
-		Altitude:     c.calculateOptimalAltitude(waypoints),
-		Speed:        drone.MaxSpeed * 0.8, // 80% of max for safety
-		Payload:      payload,
-		Weather:      weather,
-		CreatedAt:    time.Now(),
+		Altitude:      c.calculateOptimalAltitude(waypoints),
+		Speed:         drone.MaxSpeed * 0.8, // 80% of max for safety
+		Payload:       payload,
+		Weather:       weather,
+		CreatedAt:     time.Now(),
 	}
-	
+
 	return plan, nil
 }
 
@@ -128,22 +129,22 @@ func (c *DroneController) ExecuteDelivery(ctx context.Context, plan *FlightPlan)
 		c.mu.Unlock()
 		return errors.New("drone not found")
 	}
-	
+
 	drone.Status = DroneStatusPreFlight
 	drone.CurrentPayload = plan.Payload
 	c.mu.Unlock()
-	
+
 	// Pre-flight checks
 	if err := c.performPreFlightChecks(drone); err != nil {
 		return err
 	}
-	
+
 	// Take off
 	drone.Status = DroneStatusTakingOff
 	if err := c.sendTakeoffCommand(drone, plan.Altitude); err != nil {
 		return err
 	}
-	
+
 	// Navigate waypoints
 	drone.Status = DroneStatusInFlight
 	for i, waypoint := range plan.Waypoints {
@@ -152,13 +153,13 @@ func (c *DroneController) ExecuteDelivery(ctx context.Context, plan *FlightPlan)
 			c.emergencyLanding(drone)
 			return err
 		}
-		
+
 		// Check battery
 		if drone.BatteryLevel < 20 {
 			c.returnToBase(drone)
 			return errors.New("low battery, returning to base")
 		}
-		
+
 		// Monitor weather
 		if i%3 == 0 { // Every 3 waypoints
 			weather, _ := c.weatherSvc.GetCurrentWeather(ctx, waypoint)
@@ -168,26 +169,26 @@ func (c *DroneController) ExecuteDelivery(ctx context.Context, plan *FlightPlan)
 			}
 		}
 	}
-	
+
 	// Deliver
 	drone.Status = DroneStatusDelivering
 	if err := c.deliverPayload(drone, plan.Payload); err != nil {
 		return err
 	}
-	
+
 	// Return to base
 	drone.Status = DroneStatusReturning
 	if err := c.returnToBase(drone); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
 func (c *DroneController) findAvailableDrone(payload *Payload) (*Drone, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	for _, drone := range c.drones {
 		if drone.Status != DroneStatusIdle {
 			continue
@@ -200,7 +201,7 @@ func (c *DroneController) findAvailableDrone(payload *Payload) (*Drone, error) {
 		}
 		return drone, nil
 	}
-	
+
 	return nil, errors.New("no available drones")
 }
 
@@ -239,7 +240,7 @@ func (c *DroneController) estimateFlightTime(waypoints []GeoLocation3D, speed fl
 	for i := 0; i < len(waypoints)-1; i++ {
 		totalDistance += calculateDistance3D(waypoints[i], waypoints[i+1])
 	}
-	
+
 	hours := totalDistance / speed
 	return time.Duration(hours * float64(time.Hour))
 }
@@ -290,16 +291,16 @@ func (c *DroneController) emergencyLanding(drone *Drone) {
 }
 
 type FlightPlan struct {
-	ID            string          `json:"id"`
-	DroneID       string          `json:"drone_id"`
-	OrderID       string          `json:"order_id"`
-	Waypoints     []GeoLocation3D `json:"waypoints"`
-	EstimatedTime time.Duration   `json:"estimated_time"`
-	Altitude      float64         `json:"altitude"`
-	Speed         float64         `json:"speed"`
-	Payload       *Payload        `json:"payload"`
+	ID            string             `json:"id"`
+	DroneID       string             `json:"drone_id"`
+	OrderID       string             `json:"order_id"`
+	Waypoints     []GeoLocation3D    `json:"waypoints"`
+	EstimatedTime time.Duration      `json:"estimated_time"`
+	Altitude      float64            `json:"altitude"`
+	Speed         float64            `json:"speed"`
+	Payload       *Payload           `json:"payload"`
 	Weather       *WeatherConditions `json:"weather"`
-	CreatedAt     time.Time       `json:"created_at"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 type WeatherConditions struct {
@@ -311,10 +312,14 @@ type WeatherConditions struct {
 }
 
 type AirspaceManager struct{}
+
 func NewAirspaceManager() *AirspaceManager { return &AirspaceManager{} }
-func (a *AirspaceManager) IsAirspaceClear(ctx context.Context, from, to GeoLocation3D) bool { return true }
+func (a *AirspaceManager) IsAirspaceClear(ctx context.Context, from, to GeoLocation3D) bool {
+	return true
+}
 
 type WeatherService struct{}
+
 func NewWeatherService() *WeatherService { return &WeatherService{} }
 func (w *WeatherService) GetCurrentWeather(ctx context.Context, location GeoLocation3D) (*WeatherConditions, error) {
 	return &WeatherConditions{WindSpeed: 10, Precipitation: 0, Visibility: 10000, Temperature: 20}, nil

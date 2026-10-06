@@ -290,8 +290,26 @@ func (l *ipLimiter) getLimiter(ip string) *rate.Limiter {
 	return actual.(*rate.Limiter)
 }
 
-// RateLimit creates a per-IP rate limiter
-func RateLimit(requestsPerMinute int) func(http.Handler) http.Handler {
+// adjustBudgetToMinute normalizes a budget expressed over an arbitrary window
+// into requests-per-minute so the underlying token-bucket stays consistent.
+func adjustBudgetToMinute(budget int, window time.Duration) int {
+	if window == time.Minute {
+		return budget
+	}
+	perMinute := float64(budget) * float64(time.Minute) / float64(window)
+	if perMinute < 1 {
+		return 1
+	}
+	return int(perMinute)
+}
+
+// RateLimit creates a per-IP rate limiter.
+// The first argument is the request budget; the optional second argument is
+// the window duration (defaults to one minute).
+func RateLimit(requestsPerMinute int, window ...time.Duration) func(http.Handler) http.Handler {
+	if len(window) > 0 && window[0] > 0 {
+		requestsPerMinute = adjustBudgetToMinute(requestsPerMinute, window[0])
+	}
 	limiter := newIPLimiter(requestsPerMinute)
 
 	return func(next http.Handler) http.Handler {
