@@ -85,6 +85,18 @@ type Service struct {
 	issuer        string
 	audience      string
 	logger        *zap.Logger
+	tokenStore    *TokenStore // Phase B/B5: rotation + revocation (nil-safe)
+}
+
+// SetTokenStore attaches the Redis-backed revocation/rotation store.
+// Called from main.go after Redis is initialized; nil disables the feature.
+func (s *Service) SetTokenStore(store *TokenStore) {
+	s.tokenStore = store
+}
+
+// TokenStore returns the attached revocation store (may be nil).
+func (s *Service) TokenStore() *TokenStore {
+	return s.tokenStore
 }
 
 // ServiceConfig holds auth service configuration
@@ -296,6 +308,21 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 				}
 				s.writeError(w, status, err)
 				return
+			}
+
+			// Phase B/B5: deny revoked JTIs (logout / family kill). Fail closed on
+			// store errors only when a store is configured.
+			if s.tokenStore != nil {
+				revoked, rerr := s.tokenStore.IsRevoked(r.Context(), claims.ID)
+				if rerr != nil {
+					s.logger.Warn("revocation check failed; failing closed", zap.Error(rerr))
+					s.writeError(w, http.StatusServiceUnavailable, ErrInvalidToken)
+					return
+				}
+				if revoked {
+					s.writeError(w, http.StatusUnauthorized, ErrTokenRevoked)
+					return
+				}
 			}
 
 			// Inject claims into context

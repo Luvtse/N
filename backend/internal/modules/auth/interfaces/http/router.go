@@ -37,7 +37,7 @@ func NewRouter(
 	r.Use(middleware.RateLimit(60, time.Minute)) // 60 requests per minute
 
 	// Initialize handler
-	handler := NewAuthHandler(db, authService)
+	handler := NewAuthHandler(db, authService, logger)
 
 	// ========================================================================
 	// PUBLIC ROUTES (no auth required)
