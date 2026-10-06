@@ -218,7 +218,10 @@ func (c *Config) loadDatabase() error {
 		Host:            getEnvOrDefault("DB_HOST", "localhost"),
 		Port:            getIntEnvOrDefault("DB_PORT", 5432),
 		User:            getEnvOrDefault("DB_USER", "nidaw"),
-		Password:        getEnvOrDefault("DB_PASSWORD", "nidaw_dev"),
+		// Phase B/B9: no guessable password fallback. Empty value is allowed
+		// here but rejected by Validate() for non-dev environments, and the
+		// server refuses to boot without DB_PASSWORD set.
+		Password:        getEnvOrDefault("DB_PASSWORD", ""),
 		DBName:          getEnvOrDefault("DB_NAME", "nidaw"),
 		SSLMode:         getEnvOrDefault("DB_SSLMODE", "disable"),
 		MaxConns:        int32(getIntEnvOrDefault("DB_MAX_CONNS", 50)),
