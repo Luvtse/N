@@ -38,7 +38,7 @@ func (h *AdminHandler) CreateDocument(w http.ResponseWriter, r *http.Request) {
 		doc.Language, doc.Region, doc.EffectiveDate, doc.IsActive, doc.RequiresReconsent)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *AdminHandler) DeactivateDocument(w http.ResponseWriter, r *http.Request
 	`, docID)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *AdminHandler) GetConsentStats(w http.ResponseWriter, r *http.Request) {
 	`)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 	defer rows.Close()
@@ -118,7 +118,7 @@ func (h *AdminHandler) ExportConsentAudit(w http.ResponseWriter, r *http.Request
 	`, userID)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 	defer rows.Close()
