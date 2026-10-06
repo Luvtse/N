@@ -90,8 +90,8 @@ Redis UI	http://localhost:8081	admin/admin
 Kafka	           localhost:29092	-
 Schema Registry	http://localhost:8082	-
 Kafka UI	http://localhost:8083	-
-MinIO API	http://localhost:9000	minioadmin/minioadmin
-MinIO Console	http://localhost:9001	minioadmin/minioadmin
+MinIO API	http://localhost:9000	see MINIO_USER/MINIO_PASSWORD in .env
+MinIO Console	http://localhost:9001	see MINIO_USER/MINIO_PASSWORD in .env
 
 Analytics
 

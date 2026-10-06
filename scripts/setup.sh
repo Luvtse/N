@@ -29,7 +29,7 @@ sleep 10
 
 # Initialize MinIO buckets
 echo "🪣 Initializing MinIO buckets..."
-docker-compose exec -T minio mc alias set local http://localhost:9000 minioadmin minioadmin
+docker-compose exec -T minio mc alias set local http://localhost:9000 "${MINIO_USER:?}" "${MINIO_PASSWORD:?}"
 docker-compose exec -T minio mc mb local/mlflow || true
 docker-compose exec -T minio mc mb local/events || true
 docker-compose exec -T minio mc mb local/backups || true
@@ -57,7 +57,7 @@ echo "  - Prometheus:       http://localhost:9090"
 echo "  - Jaeger:           http://localhost:16686"
 echo "  - Kafka UI:         http://localhost:8083"
 echo "  - Redis UI:         http://localhost:8081"
-echo "  - MinIO Console:    http://localhost:9001 (minioadmin/minioadmin)"
+echo "  - MinIO Console:    http://localhost:9001 (see MINIO_USER/MINIO_PASSWORD in .env)"
 echo "  - MLflow:           http://localhost:5000"
 echo ""
 echo "🔧 Useful commands:"
