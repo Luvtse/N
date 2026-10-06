@@ -109,6 +109,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 	locationHandler := nidusHttp.NewLocationHandler(
 		deps.CacheService,
 		deps.EventBus,
+		deps.DB, // Phase B/B7: active-ride association check for driver GPS
 	)
 
 	// ========================================================================

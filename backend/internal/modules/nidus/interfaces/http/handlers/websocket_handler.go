@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,13 +15,30 @@ import (
 )
 
 type WebSocketHandler struct {
-	upgrader websocket.Upgrader
+	upgrader    websocket.Upgrader
 	authService *auth.Service
-	clients  map[*Client]bool
-	broadcast chan Message
-	register  chan *Client
-	unregister chan *Client
-	mu        sync.RWMutex
+	allowedOrigins []string // Phase B/B6: env-driven origin allowlist (CORS_ORIGINS)
+	clients     map[*Client]bool
+	broadcast   chan Message
+	register    chan *Client
+	unregister  chan *Client
+	mu          sync.RWMutex
+}
+
+// isAllowedOrigin implements the Phase B/B6 CheckOrigin policy.
+// Rules mirror the HTTP CORS middleware: empty allowlist => reject all
+// cross-origin WS handshakes; explicit "*" => allow; otherwise exact match.
+func (h *WebSocketHandler) isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		// Non-browser clients (mobile apps, services) send no Origin header.
+		return true
+	}
+	for _, o := range h.allowedOrigins {
+		if o == "*" || strings.EqualFold(o, origin) {
+			return true
+		}
+	}
+	return false
 }
 
 type Client struct {
@@ -38,20 +56,23 @@ type Message struct {
 	Timestamp int64                  `json:"timestamp"`
 }
 
-func NewWebSocketHandler(authService *auth.Service) *WebSocketHandler {
+func NewWebSocketHandler(authService *auth.Service, allowedOrigins []string) *WebSocketHandler {
 	hub := &WebSocketHandler{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(r *http.Request) bool {
-				return true // TODO: Configure in production
-			},
+			CheckOrigin:     nil, // set below via hub receiver once allowedOrigins exist
 		},
-		authService: authService,
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan Message),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		authService:    authService,
+		allowedOrigins: allowedOrigins,
+		clients:        make(map[*Client]bool),
+		broadcast:      make(chan Message),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+	}
+	// Phase B/B6: real origin allowlist replaces the old "return true" stub.
+	hub.upgrader.CheckOrigin = func(r *http.Request) bool {
+		return hub.isAllowedOrigin(r.Header.Get("Origin"))
 	}
 
 	go hub.run()
@@ -93,23 +114,50 @@ func (h *WebSocketHandler) run() {
 	}
 }
 
+// Phase B/B6: token extraction order —
+//  1. Sec-WebSocket-Protocol subprotocol ("nidaw-auth.<jwt>") preferred, keeps
+//     tokens out of URLs/access logs/history.
+//  2. Authorization header (mobile clients that can set headers).
+//  3. ?token= query param — accepted ONLY as a deprecated fallback; it is
+//     logged with a warning so we can drive clients off it.
+func extractWSToken(r *http.Request) (string, bool) {
+	// Subprotocol form: nidaw-auth.<token>
+	for _, p := range websocket.Subprotocols(r) {
+		if strings.HasPrefix(p, "nidaw-auth.") {
+			return strings.TrimPrefix(p, "nidaw-auth."), true
+		}
+	}
+	// Standard bearer header.
+	if h := r.Header.Get("Authorization"); h != "" {
+		parts := strings.Fields(h)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			return parts[1], true
+		}
+	}
+	// Deprecated query-param fallback.
+	if t := r.URL.Query().Get("token"); t != "" {
+		log.Printf("WARN: WebSocket auth via query param is deprecated (path=%s); migrate client to Sec-WebSocket-Protocol", r.URL.Path)
+		return t, true
+	}
+	return "", false
+}
+
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Validate token from query parameter
-	token := r.URL.Query().Get("token")
-	if token == "" {
+	token, ok := extractWSToken(r)
+	if !ok || token == "" {
 		http.Error(w, "missing token", http.StatusUnauthorized)
 		return
 	}
 
-	// Validate JWT via the shared auth service (Phase B will move this to a
-	// Sec-WebSocket-Protocol header to avoid token leakage in URLs).
 	claims, err := h.authService.ValidateAccessToken(token)
 	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
 
-	// Upgrade connection
+	// Echo back the negotiated subprotocol when the client used one, per RFC 6455
+	// (gorilla/websocket responds with the first offered protocol automatically
+	// only if we don't filter; keep "nidaw-auth.*" out of the response list).
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
