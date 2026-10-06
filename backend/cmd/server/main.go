@@ -10,6 +10,8 @@ import (
 	"time"
 
 	authhttp "nidaw-backend/internal/modules/auth/interfaces/http"
+	legalsvc "nidaw-backend/internal/modules/legal/application/services"
+	legalhttp "nidaw-backend/internal/modules/legal/interfaces/http"
 	nidusservices "nidaw-backend/internal/modules/nidus/application/services"
 	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
@@ -100,6 +102,13 @@ func main() {
 
 	// Mount module routers
 	r.Mount("/", authhttp.NewRouter(db, authService, logger))
+
+	// Legal/consent module (Phase B/B2: admin-gated document management)
+	consentService := legalsvc.NewConsentService(db)
+	legalhttp.RegisterConsentRoutes(r,
+		legalhttp.NewConsentHandler(consentService),
+		legalhttp.NewAdminHandler(db),
+		authService)
 	r.Mount("/", nidushttp.NewRouter(&nidushttp.Dependencies{
 		DB:             db,
 		EventBus:       eventBus,
