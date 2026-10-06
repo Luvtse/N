@@ -36,9 +36,11 @@ func ExtractUserToContext(next http.Handler) http.Handler {
 			return
 		}
 		if chiCtx := chi.RouteContext(ctx); chiCtx != nil {
-			chiCtx.SetURLParam("userID", userID.String())
+			// chi v5 has no SetURLParam; append to the route-param stack so
+			// chi.URLParam(r, "userID") resolves for downstream handlers.
+			chiCtx.URLParams.Add("userID", userID.String())
 			if role, rok := auth.GetUserRoleFromContext(ctx); rok && role == "driver" {
-				chiCtx.SetURLParam("driverID", userID.String())
+				chiCtx.URLParams.Add("driverID", userID.String())
 			}
 		}
 		next.ServeHTTP(w, r)

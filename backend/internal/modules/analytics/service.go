@@ -176,6 +176,63 @@ func (p *PredictiveBI) PredictRevenue(ctx context.Context, city string, days int
 	return prediction, nil
 }
 
+// getDemandFeatures aggregates hourly ride-request history used as model input.
+func (p *PredictiveBI) getDemandFeatures(ctx context.Context, city string) (map[string]interface{}, error) {
+rows, err := p.pinotDB.QueryContext(ctx, `
+SELECT date_trunc('hour', event_time) AS hour, COUNT(*) AS requests
+FROM rides_realtime
+WHERE city = $1 AND event_time > now() - INTERVAL '30 days'
+GROUP BY 1 ORDER BY 1
+`, city)
+if err != nil {
+return nil, err
+}
+defer rows.Close()
+
+hourly := []map[string]interface{}{}
+for rows.Next() {
+var hour time.Time
+var count int
+if err := rows.Scan(&hour, &count); err != nil {
+return nil, err
+}
+hourly = append(hourly, map[string]interface{}{"hour": hour.Unix(), "requests": count})
+}
+if err := rows.Err(); err != nil {
+return nil, err
+}
+return map[string]interface{}{"city": city, "hourly_requests": hourly}, nil
+}
+
+// getRevenueFeatures aggregates completed-ride revenue history used as model input.
+func (p *PredictiveBI) getRevenueFeatures(ctx context.Context, city string, days int) (map[string]interface{}, error) {
+rows, err := p.warehouse.QueryContext(ctx, `
+SELECT date_trunc('day', completed_at) AS day, SUM(fare_amount) AS revenue, COUNT(*) AS rides
+FROM rides
+WHERE city = $1 AND status = 'completed' AND completed_at > now() - ($2 || ' days')::interval
+GROUP BY 1 ORDER BY 1
+`, city, days)
+if err != nil {
+return nil, err
+}
+defer rows.Close()
+
+daily := []map[string]interface{}{}
+for rows.Next() {
+var day time.Time
+var revenue float64
+var rides int
+if err := rows.Scan(&day, &revenue, &rides); err != nil {
+return nil, err
+}
+daily = append(daily, map[string]interface{}{"day": day.Unix(), "revenue": revenue, "rides": rides})
+}
+if err := rows.Err(); err != nil {
+return nil, err
+}
+return map[string]interface{}{"city": city, "daily_revenue": daily}, nil
+}
+
 // DetectAnomalies uses ML to find unusual patterns
 func (p *PredictiveBI) DetectAnomalies(ctx context.Context, city string) ([]Anomaly, error) {
 	anomalies := []Anomaly{}

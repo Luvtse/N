@@ -3,13 +3,13 @@ package queries
 import (
 	"context"
 	"errors"
-	"time"
 
 	"nidaw-backend/internal/modules/nidus/domain/entities"
 	"nidaw-backend/internal/shared/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ============================================================================
@@ -70,10 +70,11 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	`
 
 	var ride entities.Ride
-	var driverID, matchedAt, startedAt, completedAt, review pgx.NullString
-	var fareAmount, distanceKm pgx.NullFloat64
-	var durationMinutes, rating pgx.NullInt32
-	var tipAmount pgx.NullFloat64
+	var driverID, review pgtype.Text
+	var matchedAt, startedAt, completedAt pgtype.Timestamptz
+	var fareAmount, distanceKm pgtype.Float8
+	var durationMinutes, rating pgtype.Int4
+	var tipAmount pgtype.Float8
 
 	err := q.db.QueryRow(ctx, query, rideID).Scan(
 		&ride.ID,
@@ -122,20 +123,17 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		ride.DurationMinutes = int(durationMinutes.Int32)
 	}
 	if matchedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, matchedAt.String); err == nil {
-			ride.MatchedAt = &t
+		t := matchedAt.Time
+		ride.MatchedAt = &t
 		}
-	}
 	if startedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, startedAt.String); err == nil {
-			ride.StartedAt = &t
+		t := startedAt.Time
+		ride.StartedAt = &t
 		}
-	}
 	if completedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, completedAt.String); err == nil {
-			ride.CompletedAt = &t
+		t := completedAt.Time
+		ride.CompletedAt = &t
 		}
-	}
 	if rating.Valid {
 		ride.Rating = int(rating.Int32)
 	}
