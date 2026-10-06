@@ -9,9 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"nidaw-backend/internal/modules/auth/interfaces/http"
-	"nidaw-backend/internal/modules/nidus/interfaces/http"
+	authhttp "nidaw-backend/internal/modules/auth/interfaces/http"
+	nidusservices "nidaw-backend/internal/modules/nidus/application/services"
+	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
+	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
 	"nidaw-backend/internal/shared/auth"
+	sharedcache "nidaw-backend/internal/shared/cache"
 	"nidaw-backend/internal/shared/config"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
@@ -72,6 +75,19 @@ func main() {
 		logger.Fatal("Failed to create auth service", zap.Error(err))
 	}
 
+	// Initialize nidus domain services
+	pricingService := nidusservices.NewPricingService(db, nidusservices.DefaultPricingConfig())
+	matchingEngine := nidusservices.NewMatchingEngine(db, eventBus)
+	etaService := nidusservices.NewETAService(db)
+
+	// Initialize Redis cache + driver location cache (required by nidus router)
+	redisCache, err := sharedcache.NewRedisCache(cfg.Redis.URL)
+	if err != nil {
+		logger.Fatal("Failed to create redis cache", zap.Error(err))
+	}
+	defer redisCache.Close()
+	locationCache := nidusinfra.NewDriverLocationCache(redisCache)
+
 	// Create main router
 	r := chi.NewRouter()
 
@@ -83,12 +99,16 @@ func main() {
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 
 	// Mount module routers
-	r.Mount("/", auth.NewRouter(db, authService, logger))
-	r.Mount("/", nidus.NewRouter(&nidus.Dependencies{
-		DB:       db,
-		EventBus: eventBus,
-		Logger:   logger,
-		AuthService: authService,
+	r.Mount("/", authhttp.NewRouter(db, authService, logger))
+	r.Mount("/", nidushttp.NewRouter(&nidushttp.Dependencies{
+		DB:             db,
+		EventBus:       eventBus,
+		Logger:         logger,
+		AuthService:    authService,
+		CacheService:   locationCache,
+		MatchingEngine: matchingEngine,
+		ETAService:     etaService,
+		PricingService: pricingService,
 	}))
 
 	// Create server

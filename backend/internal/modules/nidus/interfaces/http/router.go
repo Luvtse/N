@@ -7,6 +7,7 @@ import (
 	"nidaw-backend/internal/modules/nidus/application/commands"
 	"nidaw-backend/internal/modules/nidus/application/queries"
 	"nidaw-backend/internal/modules/nidus/application/services"
+	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidusHttp "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/database"
@@ -25,32 +26,25 @@ import (
 
 // Dependencies holds all services required by the router
 type Dependencies struct {
-	DB              *database.Postgres
-	EventBus        eventbus.EventBus
-	Logger          *zap.Logger
-	AuthService     *auth.Service
-	CacheService    CacheService
-	MatchingEngine  *services.MatchingEngine
-	ETAService      *services.ETAService
-	PricingService  *services.PricingService
+	DB             *database.Postgres
+	EventBus       eventbus.EventBus
+	Logger         *zap.Logger
+	AuthService    *auth.Service
+	CacheService   CacheService
+	MatchingEngine *services.MatchingEngine
+	ETAService     *services.ETAService
+	PricingService *services.PricingService
 }
 
-// CacheService interface for driver location caching
-type CacheService interface {
-	GetNearbyDrivers(ctx context.Context, lat, lng, radiusKm float64, status string) ([]*DriverLocation, error)
-	UpdateDriverLocation(ctx context.Context, loc *DriverLocation) error
-}
+// CacheService interface for driver location caching. DriverLocation is an
+// alias to the canonical type in nidus/infrastructure/cache, so both packages
+// see identical method signatures and *DriverLocationCache satisfies this
+// interface directly.
+type CacheService = nidusHttp.CacheService
 
-// DriverLocation represents a driver's current position
-type DriverLocation struct {
-	DriverID  string  `json:"driver_id"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Timestamp int64   `json:"timestamp"`
-	Heading   float64 `json:"heading"`
-	Speed     float64 `json:"speed"`
-	Status    string  `json:"status"`
-}
+// DriverLocation represents a driver's current position (alias of the
+// canonical infrastructure type).
+type DriverLocation = niduscache.DriverLocation
 
 // ============================================================================
 // ROUTER CONSTRUCTOR
@@ -83,7 +77,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 	// INITIALIZE HANDLERS
 	// ========================================================================
 	rideHandler := nidusHttp.NewRideHandler(
-		commands.NewRequestRideHandler(deps.DB, deps.EventBus),
+		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService),
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
