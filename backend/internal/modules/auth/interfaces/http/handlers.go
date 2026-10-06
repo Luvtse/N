@@ -10,6 +10,7 @@ import (
 	"nidaw-backend/internal/shared/database"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -21,13 +22,18 @@ import (
 type AuthHandler struct {
 	db          *database.Postgres
 	authService *auth.Service
+	logger      *zap.Logger
 }
 
 // NewAuthHandler creates a new auth handler
-func NewAuthHandler(db *database.Postgres, authService *auth.Service) *AuthHandler {
+func NewAuthHandler(db *database.Postgres, authService *auth.Service, logger *zap.Logger) *AuthHandler {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &AuthHandler{
 		db:          db,
 		authService: authService,
+		logger:      logger,
 	}
 }
 
@@ -237,6 +243,24 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase B/B5: single-use refresh tokens with reuse detection.
+	store := h.authService.TokenStore()
+	if store != nil {
+		ctxReq := r.Context()
+		revoked, _ := store.IsRevoked(ctxReq, claims.ID)
+		used, _ := store.IsRefreshUsed(ctxReq, claims.ID)
+		if revoked || used {
+			// Reuse of a consumed/revoked token => suspected theft. Kill the family.
+			ttl := time.Until(claims.ExpiresAt.Time)
+			_ = store.RevokeUserFamily(ctxReq, claims.UserID.String(), ttl)
+			h.logger.Warn("refresh token reuse detected; family revoked",
+				zap.String("user_id", claims.UserID.String()),
+				zap.String("jti", claims.ID))
+			writeError(w, http.StatusUnauthorized, "REFRESH_TOKEN_REUSED", "token reuse detected; please log in again")
+			return
+		}
+	}
+
 	// Get user
 	var email, fullName, phone, role string
 	var emailVerified bool
@@ -252,11 +276,26 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate new token pair
+	// Generate new token pair (Phase B/B5: rotation — old refresh is consumed below)
 	tokenPair, err := h.authService.GenerateTokenPair(claims.UserID, email, role, "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "failed to generate tokens")
 		return
+	}
+
+	// Phase B/B5: mark presented refresh JTI used + register new family head.
+	if store != nil {
+		oldTTL := time.Until(claims.ExpiresAt.Time)
+		if err := store.MarkRefreshUsed(ctx, claims.ID, oldTTL); err != nil {
+			h.logger.Warn("failed to mark refresh jti used", zap.Error(err))
+		}
+		newClaims, verr := h.authService.ValidateRefreshToken(tokenPair.RefreshToken)
+		if verr == nil {
+			familyTTL := time.Until(newClaims.ExpiresAt.Time)
+			if err := store.SetUserFamily(ctx, claims.UserID.String(), newClaims.ID, familyTTL); err != nil {
+				h.logger.Warn("failed to set user family", zap.Error(err))
+			}
+		}
 	}
 
 	// Return response
