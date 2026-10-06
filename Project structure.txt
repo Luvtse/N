@@ -569,17 +569,11 @@ nidaw/                                    ← Your project root
 │   ├── requirements.txt                  ← [Already created]
 │   └── Dockerfile                        ← [Already created]
 │
-├── ⛓️ blockchain/                        ← Web3 & Smart Contracts
-│   ├── contracts/                        ← [Already created]
-│   ├── scripts/                          ← [Already created]
-│   ├── test/                             ← [Already created]
-│   └── hardhat.config.js                 ← [Already created]
-│
 ├── 📜 legal/                             ← 📍 SOURCE OF TRUTH for legal
 │   ├── terms-of-service/                 ← [Already created]
 │   ├── privacy/                          ← [Already created]
 │   ├── payments/                         ← [Already created]
-│   ├── blockchain/                       ← [Already created]
+│   ├── ledger/                           ← Internal ledger terms (Phase C; blockchain decommissioned)
 │   ├── autonomous/                       ← [Already created]
 │   ├── policies/                         ← [Already created]
 │   ├── compliance/                       ← [Already created]

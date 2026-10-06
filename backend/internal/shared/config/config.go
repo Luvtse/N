@@ -140,7 +140,7 @@ type LoggingConfig struct {
 type FeatureFlags struct {
 	EnableAutonomousVehicles bool
 	EnableDroneDelivery      bool
-	EnableBlockchainPayments bool
+	EnableInternalLedger     bool // Phase D: private in-app currency ledger (replaces decommissioned blockchain payments)
 	EnableFederatedLearning  bool
 	EnableARNavigation       bool
 	EnableVoiceCommands      bool
@@ -311,7 +311,7 @@ func (c *Config) loadFeatures() {
 	c.Features = FeatureFlags{
 		EnableAutonomousVehicles: getBoolEnvOrDefault("FEATURE_AUTONOMOUS_VEHICLES", false),
 		EnableDroneDelivery:      getBoolEnvOrDefault("FEATURE_DRONE_DELIVERY", false),
-		EnableBlockchainPayments: getBoolEnvOrDefault("FEATURE_BLOCKCHAIN_PAYMENTS", false),
+		EnableInternalLedger:     getBoolEnvOrDefault("FEATURE_INTERNAL_LEDGER", false),
 		EnableFederatedLearning:  getBoolEnvOrDefault("FEATURE_FEDERATED_LEARNING", false),
 		EnableARNavigation:       getBoolEnvOrDefault("FEATURE_AR_NAVIGATION", false),
 		EnableVoiceCommands:      getBoolEnvOrDefault("FEATURE_VOICE_COMMANDS", false),

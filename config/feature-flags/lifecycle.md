@@ -19,7 +19,7 @@ Establish clear guidelines for creating, managing, and retiring feature flags to
 #### Requirements
 - [ ] Flag owner assigned (team or individual)
 - [ ] Clear description and purpose documented
-- [ ] Category assigned (core, experimental, blockchain, etc.)
+- [ ] Category assigned (core, experimental, ledger, etc.)
 - [ ] Targeting rules defined
 - [ ] Rollout percentage set (default: 0% for new flags)
 - [ ] Expiration date set (for experimental features)

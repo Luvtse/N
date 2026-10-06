@@ -8,8 +8,16 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["development", "staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "nidus-team@nidaw.com",
@@ -24,8 +32,16 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["development", "staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "haven-team@nidaw.com",
@@ -40,8 +56,16 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["development", "staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "vorax-team@nidaw.com",
@@ -56,8 +80,16 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["development", "staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "logix-team@nidaw.com",
@@ -72,8 +104,16 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["development", "staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "corpus-team@nidaw.com",
@@ -90,9 +130,16 @@
         "enabled": true,
         "rolloutPercentage": 5,
         "targeting": {
-          "environments": ["production"],
-          "regions": ["US"],
-          "userSegments": ["beta_testers", "early_adopters"]
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US"
+          ],
+          "userSegments": [
+            "beta_testers",
+            "early_adopters"
+          ]
         },
         "metadata": {
           "owner": "autonomous-team@nidaw.com",
@@ -107,9 +154,15 @@
         "enabled": true,
         "rolloutPercentage": 10,
         "targeting": {
-          "environments": ["production"],
-          "regions": ["US"],
-          "userSegments": ["beta_testers"]
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US"
+          ],
+          "userSegments": [
+            "beta_testers"
+          ]
         },
         "metadata": {
           "owner": "drone-team@nidaw.com",
@@ -124,9 +177,19 @@
         "enabled": true,
         "rolloutPercentage": 50,
         "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU", "APAC"],
-          "deviceTypes": ["ios", "android"]
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ],
+          "deviceTypes": [
+            "ios",
+            "android"
+          ]
         },
         "metadata": {
           "owner": "mobile-team@nidaw.com",
@@ -141,9 +204,19 @@
         "enabled": true,
         "rolloutPercentage": 30,
         "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU"],
-          "languages": ["en", "es", "fr"]
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU"
+          ],
+          "languages": [
+            "en",
+            "es",
+            "fr"
+          ]
         },
         "metadata": {
           "owner": "mobile-team@nidaw.com",
@@ -155,63 +228,20 @@
         }
       }
     },
-    "blockchain_features": {
-      "nidaw_token_payments": {
-        "enabled": true,
-        "rolloutPercentage": 100,
-        "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU", "APAC"]
-        },
-        "metadata": {
-          "owner": "blockchain-team@nidaw.com",
-          "created": "2026-03-01T00:00:00Z",
-          "expires": null,
-          "description": "NIDAW token payment method",
-          "category": "blockchain",
-          "abTestId": null
-        }
-      },
-      "token_staking": {
-        "enabled": true,
-        "rolloutPercentage": 100,
-        "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU", "APAC"]
-        },
-        "metadata": {
-          "owner": "blockchain-team@nidaw.com",
-          "created": "2026-03-15T00:00:00Z",
-          "expires": null,
-          "description": "NIDAW token staking",
-          "category": "blockchain",
-          "abTestId": null
-        }
-      },
-      "governance_voting": {
-        "enabled": false,
-        "rolloutPercentage": 0,
-        "targeting": {
-          "environments": ["development"],
-          "regions": []
-        },
-        "metadata": {
-          "owner": "blockchain-team@nidaw.com",
-          "created": "2026-04-01T00:00:00Z",
-          "expires": "2027-01-01T00:00:00Z",
-          "description": "DAO governance voting (planned)",
-          "category": "blockchain",
-          "abTestId": null
-        }
-      }
-    },
+
     "ai_ml_features": {
       "federated_learning": {
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "ml-team@nidaw.com",
@@ -226,8 +256,15 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "ml-team@nidaw.com",
@@ -242,8 +279,15 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "ml-team@nidaw.com",
@@ -258,8 +302,15 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "ml-team@nidaw.com",
@@ -276,8 +327,16 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["development", "staging", "production"],
-          "regions": ["US", "EU", "APAC"]
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
         "metadata": {
           "owner": "design-team@nidaw.com",
@@ -292,9 +351,26 @@
         "enabled": true,
         "rolloutPercentage": 100,
         "targeting": {
-          "environments": ["production"],
-          "regions": ["US", "EU", "APAC"],
-          "languages": ["en", "es", "fr", "de", "ja", "zh", "pt", "ar", "hi", "ko"]
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ],
+          "languages": [
+            "en",
+            "es",
+            "fr",
+            "de",
+            "ja",
+            "zh",
+            "pt",
+            "ar",
+            "hi",
+            "ko"
+          ]
         },
         "metadata": {
           "owner": "i18n-team@nidaw.com",
@@ -309,9 +385,15 @@
         "enabled": true,
         "rolloutPercentage": 25,
         "targeting": {
-          "environments": ["production"],
-          "regions": ["US"],
-          "userSegments": ["group_a"]
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US"
+          ],
+          "userSegments": [
+            "group_a"
+          ]
         },
         "metadata": {
           "owner": "design-team@nidaw.com",
@@ -328,7 +410,9 @@
         "enabled": false,
         "rolloutPercentage": 0,
         "targeting": {
-          "environments": ["production"]
+          "environments": [
+            "production"
+          ]
         },
         "metadata": {
           "owner": "ops-team@nidaw.com",
@@ -343,7 +427,9 @@
         "enabled": false,
         "rolloutPercentage": 0,
         "targeting": {
-          "environments": ["production"]
+          "environments": [
+            "production"
+          ]
         },
         "metadata": {
           "owner": "ops-team@nidaw.com",
@@ -358,8 +444,13 @@
         "enabled": true,
         "rolloutPercentage": 10,
         "targeting": {
-          "environments": ["production"],
-          "userSegments": ["beta_testers", "partners"]
+          "environments": [
+            "production"
+          ],
+          "userSegments": [
+            "beta_testers",
+            "partners"
+          ]
         },
         "metadata": {
           "owner": "api-team@nidaw.com",

@@ -25,7 +25,7 @@ You may be eligible for a refund if:
 - Refunds are issued to the original payment method.
 - For credit cards: 5-10 business days (depending on your bank).
 - For digital wallets: 1-3 business days.
-- For NIDAW tokens: Immediate (on-chain).
+- For internal ledger balances: Immediate (ledger adjustment entry).
 
 ## 3. Service-Specific Policies
 

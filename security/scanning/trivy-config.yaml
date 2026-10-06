@@ -51,7 +51,6 @@ scan:
       - frontend/
       - driver-app/
       - ml/
-      - blockchain/
       - infrastructure/
     
     # Skip directories

@@ -79,8 +79,6 @@
         "usernamehw.errorlens",
         "wix.vscode-import-cost",
         "graphql.vscode-graphql",
-        "solidity.solidity",
-        "nomicfoundation.hardhat-solidity",
         "ms-vscode.vscode-json",
         "redhat.vscode-commons",
         "gruntfuggly.todo-tree",

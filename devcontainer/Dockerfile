@@ -129,7 +129,7 @@ RUN python3 -m venv $VIRTUAL_ENV \
     && chown -R vscode:vscode $VIRTUAL_ENV
 
 # ============================================================================
-# NODE.JS (Blockchain, Frontend Tools)
+# NODE.JS (Frontend Tools)
 # ============================================================================
 
 ENV NODE_VERSION=20
@@ -143,8 +143,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
         pnpm@latest \
         typescript@latest \
         ts-node@latest \
-        # Hardhat (Blockchain)
-        hardhat@latest \
         # k6 (Load testing)
         @grafana/k6@latest \
     && rm -rf /var/lib/apt/lists/*

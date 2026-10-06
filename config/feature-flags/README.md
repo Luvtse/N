@@ -25,7 +25,7 @@ feature-flags/
 |----------|-------------|----------|
 | **core** | Core platform services | nidus_rides, haven_hotels |
 | **experimental** | Experimental features | autonomous_vehicles, ar_navigation |
-| **blockchain** | Blockchain/Web3 features | token_payments, staking |
+| **ledger** | Internal settlement features | topup, escrow, disputes (Phase D) |
 | **ai_ml** | AI/ML powered features | dynamic_pricing, recommendations |
 | **ui** | UI/UX features | dark_mode, multi_language |
 | **operational** | Operational controls | maintenance_mode, read_only_mode |

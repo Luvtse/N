@@ -51,7 +51,7 @@ x-backend-env: &backend-dev-env
   # Feature Flags
   FEATURE_AUTONOMOUS_VEHICLES: "false"
   FEATURE_DRONE_DELIVERY: "false"
-  FEATURE_BLOCKCHAIN_PAYMENTS: "false"
+  FEATURE_INTERNAL_LEDGER: "false"
   FEATURE_AR_NAVIGATION: "true"
   FEATURE_VOICE_COMMANDS: "true"
 
