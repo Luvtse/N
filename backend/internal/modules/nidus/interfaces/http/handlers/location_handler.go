@@ -8,7 +8,10 @@ import (
 
 	"nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	"nidaw-backend/internal/shared/auth"
+	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+
+	"github.com/google/uuid"
 )
 
 // DriverLocation is an alias to the canonical location type defined in the
@@ -23,15 +26,18 @@ type CacheService interface {
 type LocationHandler struct {
 	cacheService CacheService
 	eventBus     eventbus.EventBus
+	db           *database.Postgres // Phase B/B7: active-ride association checks
 }
 
 func NewLocationHandler(
 	cacheService CacheService,
 	eventBus eventbus.EventBus,
+	db *database.Postgres,
 ) *LocationHandler {
 	return &LocationHandler{
 		cacheService: cacheService,
 		eventBus:     eventBus,
+		db:           db,
 	}
 }
 
@@ -60,6 +66,15 @@ func (h *LocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Phase B/B7: only drivers may publish fleet positions. Without this check,
+	// any authenticated user (e.g., a rider) could spoof arbitrary GPS points
+	// into the matching cache under their own ID.
+	role, _ := auth.GetUserRoleFromContext(ctx)
+	if role != "driver" && role != "admin" {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "only drivers may update vehicle location")
+		return
+	}
+
 	var req UpdateLocationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
@@ -69,6 +84,15 @@ func (h *LocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Request)
 	// Validate coordinates
 	if req.Lat < -90 || req.Lat > 90 || req.Lng < -180 || req.Lng > 180 {
 		writeError(w, http.StatusBadRequest, "INVALID_COORDINATES", "invalid coordinates")
+		return
+	}
+	// Phase B: sanity bounds on kinematic fields to reject junk/spoofed data.
+	if req.Speed < 0 || req.Speed > 300 { // km/h
+		writeError(w, http.StatusBadRequest, "INVALID_SPEED", "speed out of range")
+		return
+	}
+	if req.Heading < 0 || req.Heading >= 360 {
+		writeError(w, http.StatusBadRequest, "INVALID_HEADING", "heading must be in [0,360)")
 		return
 	}
 
@@ -108,12 +132,55 @@ func (h *LocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// canTrackDriver reports whether caller may view the live position of driverID.
+// Authorization rule (Phase B/B7): allowed if the caller IS the driver (own
+// record echo) or holds an ACTIVE ride assigned to that driver — statuses in
+// matched / driver_en_route / in_progress. Completed/cancelled rides do not
+// grant ongoing tracking rights.
+func (h *LocationHandler) canTrackDriver(ctx context.Context, callerID, driverID uuid.UUID) bool {
+	if callerID == driverID {
+		return true // drivers may read their own cached position
+	}
+	if h.db == nil {
+		return false // fail closed: no DB => cannot verify association
+	}
+	var exists bool
+	err := h.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM rides
+			WHERE driver_id = $1
+			  AND user_id = $2
+			  AND status IN ('matched', 'driver_en_route', 'in_progress')
+		)`, driverID, callerID).Scan(&exists)
+	if err != nil {
+		// Fail closed on any query error; details stay server-side only.
+		return false
+	}
+	return exists
+}
+
 func (h *LocationHandler) GetDriverLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	driverID := r.URL.Query().Get("driver_id")
-	if driverID == "" {
-		writeError(w, http.StatusBadRequest, "MISSING_DRIVER_ID", "driver_id is required")
+	// Phase B/B7: resolve the caller identity first — driver GPS is only
+	// disclosed to participants of an ACTIVE ride with that driver. This closes
+	// the IDOR where any authenticated user could track any driver by ID.
+	callerID, ok := auth.GetUserIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+
+	driverIDStr := r.URL.Query().Get("driver_id")
+	driverID, err := uuid.Parse(driverIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DRIVER_ID", "driver_id must be a UUID")
+		return
+	}
+
+	if !h.canTrackDriver(ctx, callerID, driverID) {
+		// 404 rather than 403: do not leak whether the driver exists/has rides.
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "driver location not found")
 		return
 	}
 
@@ -127,7 +194,7 @@ func (h *LocationHandler) GetDriverLocation(w http.ResponseWriter, r *http.Reque
 	// Find specific driver
 	var driverLoc *DriverLocation
 	for _, loc := range locations {
-		if loc.DriverID == driverID {
+		if loc.DriverID == driverID.String() {
 			driverLoc = loc
 			break
 		}

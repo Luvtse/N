@@ -53,13 +53,16 @@ type Config struct {
 	LogLevel string // silent, error, warn, info, debug, trace
 }
 
-// DefaultConfig returns sensible defaults
+// DefaultConfig returns sensible defaults.
+// Phase B/B9: no password default is embedded — callers MUST supply one via
+// configuration/env. An empty password fails fast at connect time rather than
+// silently trying a guessable credential.
 func DefaultConfig() *Config {
 	return &Config{
 		Host:            "localhost",
 		Port:            5432,
 		User:            "nidaw",
-		Password:        "nidaw_dev",
+		Password:        "", // intentionally no default (B9)
 		DBName:          "nidaw",
 		SSLMode:         "disable",
 		MaxConns:        50,
