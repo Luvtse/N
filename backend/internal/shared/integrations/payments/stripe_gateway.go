@@ -109,7 +109,7 @@ func (g *StripeGateway) GetPaymentStatus(ctx context.Context, intentID string) (
 	}
 
 	if pi.LatestCharge != nil {
-		status.PaymentMethod = pi.LatestCharge.PaymentMethodDetails.Type
+		status.PaymentMethod = string(pi.LatestCharge.PaymentMethodDetails.Type)
 		if pi.LatestCharge.PaymentMethodDetails.Card != nil {
 			status.Last4 = pi.LatestCharge.PaymentMethodDetails.Card.Last4
 			status.Brand = string(pi.LatestCharge.PaymentMethodDetails.Card.Brand)
@@ -117,8 +117,8 @@ func (g *StripeGateway) GetPaymentStatus(ctx context.Context, intentID string) (
 	}
 
 	if pi.LastPaymentError != nil {
-		status.FailureCode = pi.LastPaymentError.Code
-		status.FailureMessage = pi.LastPaymentError.Message
+		status.FailureCode = string(pi.LastPaymentError.Code)
+		status.FailureMessage = pi.LastPaymentError.Msg
 	}
 
 	return status, nil
@@ -176,7 +176,7 @@ func (h *StripeWebhookHandler) HandleWebhook(ctx context.Context, payload []byte
 
 	webhookEvent := &WebhookEvent{
 		ID:        event.ID,
-		Type:      event.Type,
+		Type:      string(event.Type),
 		CreatedAt: time.Unix(event.Created, 0),
 	}
 

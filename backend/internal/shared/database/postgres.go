@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
 	"go.uber.org/zap"
@@ -271,7 +272,7 @@ func (p *Postgres) Ping(ctx context.Context) error {
 }
 
 // Stats returns pool statistics for monitoring
-func (p *Postgres) Stats() pgxpool.Stat {
+func (p *Postgres) Stats() *pgxpool.Stat {
 	return p.pool.Stat()
 }
 
