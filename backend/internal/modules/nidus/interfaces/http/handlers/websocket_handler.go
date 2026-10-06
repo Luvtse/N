@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 
 type WebSocketHandler struct {
 	upgrader websocket.Upgrader
+	authService *auth.Service
 	clients  map[*Client]bool
 	broadcast chan Message
 	register  chan *Client
@@ -38,7 +38,7 @@ type Message struct {
 	Timestamp int64                  `json:"timestamp"`
 }
 
-func NewWebSocketHandler() *WebSocketHandler {
+func NewWebSocketHandler(authService *auth.Service) *WebSocketHandler {
 	hub := &WebSocketHandler{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -47,6 +47,7 @@ func NewWebSocketHandler() *WebSocketHandler {
 				return true // TODO: Configure in production
 			},
 		},
+		authService: authService,
 		clients:    make(map[*Client]bool),
 		broadcast:  make(chan Message),
 		register:   make(chan *Client),
@@ -100,8 +101,9 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate JWT (simplified)
-	claims, err := auth.ValidateAccessToken(token)
+	// Validate JWT via the shared auth service (Phase B will move this to a
+	// Sec-WebSocket-Protocol header to avoid token leakage in URLs).
+	claims, err := h.authService.ValidateAccessToken(token)
 	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return

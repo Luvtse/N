@@ -135,9 +135,10 @@ func (h *ProcessPaymentHandler) Execute(ctx context.Context, cmd *ProcessPayment
 		return nil, err
 	}
 
-	// 7. Call payment gateway
-	gatewayReq := &payments.ProcessPaymentRequest{
-		Amount:          cmd.Amount,
+	// 7. Call payment gateway (interface contract: cents int64, ETB whole cents)
+	amountCents := toCents(cmd.Amount)
+	intent, err := h.paymentGateway.CreatePaymentIntent(ctx, &payments.CreatePaymentRequest{
+		Amount:          amountCents,
 		Currency:        cmd.Currency,
 		PaymentMethodID: cmd.PaymentMethodID,
 		Description:     cmd.Description,
@@ -148,9 +149,8 @@ func (h *ProcessPaymentHandler) Execute(ctx context.Context, cmd *ProcessPayment
 			"user_id":        cmd.UserID.String(),
 			"idempotency_key": cmd.IdempotencyKey,
 		},
-	}
-
-	gatewayResp, err := h.paymentGateway.ProcessPayment(ctx, gatewayReq)
+		CaptureMethod: "automatic",
+	})
 	if err != nil {
 		// Mark as failed
 		transaction.Status = entities.TransactionStatusFailed
@@ -166,11 +166,24 @@ func (h *ProcessPaymentHandler) Execute(ctx context.Context, cmd *ProcessPayment
 	}
 
 	// 8. Update transaction with gateway response
-	transaction.Status = entities.TransactionStatus(gatewayResp.Status)
-	transaction.ExternalTransactionID = gatewayResp.ExternalTransactionID
-	transaction.PaymentIntentID = gatewayResp.PaymentIntentID
-	transaction.CardLast4 = gatewayResp.CardLast4
-	transaction.CardBrand = gatewayResp.CardBrand
+	status, statusErr := h.paymentGateway.GetPaymentStatus(ctx, intent.ID)
+	mappedStatus := entities.TransactionStatusProcessing
+	externalID := intent.ID
+	last4 := ""
+	brand := ""
+	if statusErr == nil && status != nil {
+		mappedStatus = mapGatewayStatus(status.Status)
+		externalID = status.ID
+		last4 = status.Last4
+		brand = status.Brand
+	} else {
+		mappedStatus = mapGatewayStatus(intent.Status)
+	}
+	transaction.Status = mappedStatus
+	transaction.ExternalTransactionID = externalID
+	transaction.PaymentIntentID = intent.ID
+	transaction.CardLast4 = last4
+	transaction.CardBrand = brand
 	transaction.UpdatedAt = time.Now().UTC()
 
 	if err := h.updateTransaction(ctx, transaction); err != nil {

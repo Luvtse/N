@@ -1,22 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/eventbus"
 )
 
-type DriverLocation struct {
-	DriverID  string  `json:"driver_id"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Timestamp int64   `json:"timestamp"`
-	Heading   float64 `json:"heading"`
-	Speed     float64 `json:"speed"`
-	Status    string  `json:"status"`
-}
+// DriverLocation is an alias to the canonical location type defined in the
+// nidus cache infrastructure package.
+type DriverLocation = cache.DriverLocation
 
 type CacheService interface {
 	GetNearbyDrivers(ctx context.Context, lat, lng, radiusKm float64, status string) ([]*DriverLocation, error)

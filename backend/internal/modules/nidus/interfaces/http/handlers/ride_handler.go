@@ -27,7 +27,6 @@ type RideHandler struct {
 	getRideQuery   *queries.GetRideQuery
 	listRidesQuery *queries.ListRidesQuery
 	matchingEngine *services.MatchingEngine
-	etaService     *services.ETAService
 	pricingService *services.PricingService
 }
 
@@ -37,7 +36,6 @@ func NewRideHandler(
 	getRideQuery *queries.GetRideQuery,
 	listRidesQuery *queries.ListRidesQuery,
 	matchingEngine *services.MatchingEngine,
-	etaService *services.ETAService,
 	pricingService *services.PricingService,
 ) *RideHandler {
 	return &RideHandler{
@@ -45,7 +43,6 @@ func NewRideHandler(
 		getRideQuery:   getRideQuery,
 		listRidesQuery: listRidesQuery,
 		matchingEngine: matchingEngine,
-		etaService:     etaService,
 		pricingService: pricingService,
 	}
 }
@@ -360,7 +357,7 @@ func validateRideRequest(req *RequestRideRequest) error {
 	// Validate ride type
 	validTypes := map[string]bool{
 		"standard": true, "premium": true, "electric": true,
-		"shared": true, "wheelchair": true, "",
+		"shared": true, "wheelchair": true, "": true,
 	}
 	if !validTypes[req.RideType] {
 		return errors.New("invalid ride type")
@@ -414,15 +411,4 @@ func mapCommandError(err error) (int, string, string) {
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"error": map[string]string{
-			"code":    code,
-			"message": message,
-		},
-	})
 }
