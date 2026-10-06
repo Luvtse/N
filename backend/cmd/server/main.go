@@ -118,7 +118,7 @@ func main() {
 		MatchingEngine: matchingEngine,
 		ETAService:     etaService,
 		PricingService: pricingService,
-		CORSOrigins:    cfg.CORSOrigins, // Phase B/B4: env-driven allowlist
+		CORSOrigins:    cfg.Server.CORSOrigins, // Phase B/B4: env-driven allowlist
 	}))
 
 	// Create server

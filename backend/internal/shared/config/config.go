@@ -206,7 +206,8 @@ func (c *Config) loadServer() error {
 		WriteTimeout:    getDurationEnvOrDefault("SERVER_WRITE_TIMEOUT", 15*time.Second),
 		IdleTimeout:     getDurationEnvOrDefault("SERVER_IDLE_TIMEOUT", 60*time.Second),
 		ShutdownTimeout: getDurationEnvOrDefault("SERVER_SHUTDOWN_TIMEOUT", 30*time.Second),
-		CORSOrigins:     getSliceEnvOrDefault("CORS_ORIGINS", []string{"*"}),
+		// Phase B/B4: no wildcard default — origins must be explicitly configured.
+		CORSOrigins:     getSliceEnvOrDefault("CORS_ORIGINS", nil),
 		EnableProfiling: getBoolEnvOrDefault("ENABLE_PROFILING", false),
 	}
 	return nil
@@ -357,6 +358,12 @@ func (c *Config) Validate() error {
 		}
 		if len(c.Auth.JWTSecret) < 32 {
 			errors = append(errors, "JWT_SECRET must be at least 32 characters in production")
+		}
+		// Phase B/B4: credentialed CORS with a wildcard origin is unsafe; require explicit allowlist.
+		for _, o := range c.Server.CORSOrigins {
+			if o == "*" {
+				errors = append(errors, "CORS_ORIGINS must not contain '*' in production; list explicit origins")
+			}
 		}
 		if c.Payments.StripeAPIKey == "" {
 			errors = append(errors, "STRIPE_API_KEY is required in production")
