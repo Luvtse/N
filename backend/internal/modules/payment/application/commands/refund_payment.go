@@ -90,20 +90,15 @@ func (h *RefundPaymentHandler) Execute(ctx context.Context, cmd *RefundPaymentCo
 		return nil, ErrRefundExceedsAmount
 	}
 
-	// 4. Process refund with gateway
-	if transaction.ExternalTransactionID != "" {
-		refundReq := &payments.RefundPaymentRequest{
-			ExternalTransactionID: transaction.ExternalTransactionID,
-			Amount:                refundAmount,
-			Currency:              transaction.Currency,
-			Reason:                cmd.Reason,
-			Metadata: map[string]string{
-				"transaction_id": transaction.ID.String(),
-				"requested_by":   cmd.RequestedBy.String(),
-			},
+	// 4. Process refund with gateway (interface contract: intent id + cents)
+	if transaction.PaymentIntentID != "" {
+		refundCents := toCents(refundAmount)
+		if err := h.paymentGateway.RefundPayment(ctx, transaction.PaymentIntentID, refundCents); err != nil {
+			return nil, fmt.Errorf("failed to process refund: %w", err)
 		}
-
-		if _, err := h.paymentGateway.RefundPayment(ctx, refundReq); err != nil {
+	} else if transaction.ExternalTransactionID != "" {
+		refundCents := toCents(refundAmount)
+		if err := h.paymentGateway.RefundPayment(ctx, transaction.ExternalTransactionID, refundCents); err != nil {
 			return nil, fmt.Errorf("failed to process refund: %w", err)
 		}
 	}

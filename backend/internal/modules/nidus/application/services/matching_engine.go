@@ -84,7 +84,7 @@ func (m *MatchingEngine) FindBestDriver(
 
 	// 4. Get best driver
 	bestDriverID := scores[0].DriverID
-	bestDriver, err := m.getDriverByID(ctx, bestDriverID)
+	bestDriver, err := m.GetDriverByID(ctx, bestDriverID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,8 +169,8 @@ func (m *MatchingEngine) getAvailableDrivers(
 	return drivers, nil
 }
 
-// getDriverByID retrieves a driver by ID
-func (m *MatchingEngine) getDriverByID(ctx context.Context, driverID uuid.UUID) (*entities.Driver, error) {
+// GetDriverByID retrieves a driver by ID. Exported for use by HTTP handlers.
+func (m *MatchingEngine) GetDriverByID(ctx context.Context, driverID uuid.UUID) (*entities.Driver, error) {
 	var driver entities.Driver
 	query := `
 		SELECT id, user_id, rating, acceptance_rate, completion_rate,

@@ -87,18 +87,15 @@ func NewRouter(deps *Dependencies) http.Handler {
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
-		deps.ETAService,
 		deps.PricingService,
 	)
 
 	driverHandler := nidusHttp.NewDriverHandler(
-		queries.NewGetDriverQuery(deps.DB),
-		queries.NewListDriversQuery(deps.DB),
 		deps.MatchingEngine,
+		deps.CacheService,
 	)
 
 	estimateHandler := nidusHttp.NewEstimateHandler(
-		deps.ETAService,
 		deps.PricingService,
 	)
 

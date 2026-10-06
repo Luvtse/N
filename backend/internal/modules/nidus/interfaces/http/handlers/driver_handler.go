@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/services"
-	"nidaw-backend/internal/modules/nidus/domain/entities"
 	"nidaw-backend/internal/shared/auth"
 
 	"github.com/go-chi/chi/v5"
@@ -214,11 +214,11 @@ func (h *DriverHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update driver location in cache
-	err := h.cacheService.UpdateDriverLocation(ctx, &entities.DriverLocation{
+	err := h.cacheService.UpdateDriverLocation(ctx, &DriverLocation{
 		DriverID:  userID.String(),
 		Latitude:  req.Lat,
 		Longitude: req.Lng,
-		Timestamp: req.Heading,
+		Timestamp: time.Now().Unix(),
 		Heading:   req.Heading,
 		Speed:     req.Speed,
 		Status:    "available",
