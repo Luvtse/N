@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ============================================================================
 # NIDAW Backup Restore Script
 # Restores NIDAW data from backup

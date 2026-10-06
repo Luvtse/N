@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ============================================================================
 # NIDAW Backup Verification Script
 # Verifies integrity of backups

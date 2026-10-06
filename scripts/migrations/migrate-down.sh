@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ============================================================================
 # NIDAW Database Migration - Down
 # Rolls back database migrations

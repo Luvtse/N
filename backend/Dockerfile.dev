@@ -1,0 +1,17 @@
+# Development image for the nidaw-backend service.
+FROM golang:1.23-bookworm
+
+WORKDIR /app
+
+# Install hot-reload tooling
+RUN go install github.com/air-verse/air@latest
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+EXPOSE 8080
+
+# Run with live reload in development
+CMD ["air", "-c", ".air.toml"]

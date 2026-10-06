@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # ============================================================================
 # NIDAW Daily Backup Script
 # Creates daily backups of PostgreSQL, Redis, and Kafka
