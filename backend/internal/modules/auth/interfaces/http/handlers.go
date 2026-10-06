@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"nidaw-backend/internal/shared/auth"
@@ -361,9 +362,55 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // Logout handles POST /api/v1/auth/logout
+// Logout revokes the presented refresh token family and blacklists the current
+// access token in Redis (Phase B/B5). Previously this was a stateless no-op,
+// meaning stolen tokens remained valid until natural expiry.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// In a stateless JWT system, logout is handled client-side by deleting tokens
-	// Optionally, you could blacklist the token in Redis
+	ctx := r.Context()
+	store := h.authService.TokenStore()
+
+	// Best-effort: revoke the user's active refresh-token family so future
+	// refresh calls fail after logout.
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req) // optional body; logout must still succeed
+	}
+
+	if store != nil {
+		if req.RefreshToken != "" {
+			if claims, err := h.authService.ValidateRefreshToken(req.RefreshToken); err == nil {
+				ttl := time.Until(claims.ExpiresAt.Time)
+				if err := store.RevokeJTI(ctx, claims.ID, ttl); err != nil {
+					h.logger.Warn("logout: failed to revoke refresh jti", zap.Error(err))
+				}
+				if err := store.RevokeUserFamily(ctx, claims.UserID.String(), ttl); err != nil {
+					h.logger.Warn("logout: failed to revoke user family", zap.Error(err))
+				}
+			}
+		} else if uid, ok := auth.GetUserIDFromContext(ctx); ok {
+			// No token supplied: kill the family keyed by the authenticated user.
+			if err := store.RevokeUserFamily(ctx, uid.String(), 30*24*time.Hour); err != nil {
+				h.logger.Warn("logout: failed to revoke user family", zap.Error(err))
+			}
+		}
+	}
+
+	// Blacklist the current access token (if present) for the remainder of its TTL.
+	if store != nil {
+		if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
+			raw := strings.TrimPrefix(hdr, "Bearer ")
+			if claims, err := h.authService.ValidateAccessToken(raw); err == nil {
+				ttl := time.Until(claims.ExpiresAt.Time)
+				if ttl > 0 {
+					if err := store.RevokeJTI(ctx, claims.ID, ttl); err != nil {
+						h.logger.Warn("logout: failed to blacklist access token", zap.Error(err))
+					}
+				}
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

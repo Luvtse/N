@@ -209,9 +209,11 @@ class AppConstants {
     defaultValue: false,
   );
 
-  static const bool enableBlockchainPayments = bool.fromEnvironment(
-    'FEATURE_BLOCKCHAIN_PAYMENTS',
-    defaultValue: true,
+  // Phase C: blockchain payments decommissioned. Replaced by the private
+  // in-app currency ledger (Phase D). Off by default until ledger ships.
+  static const bool enableInternalLedger = bool.fromEnvironment(
+    'FEATURE_INTERNAL_LEDGER',
+    defaultValue: false,
   );
 
   static const bool enableARNavigation = bool.fromEnvironment(

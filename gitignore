@@ -190,7 +190,7 @@ ml/models/*.h5
 ml/.cache/
 
 # ----------------------------------------------------------------------------
-# NODE.JS (Blockchain, Tools)
+# NODE.JS (Tools)
 # ----------------------------------------------------------------------------
 node_modules/
 npm-debug.log*
@@ -202,12 +202,6 @@ yarn.lock
 pnpm-lock.yaml
 .npm
 .eslintcache
-blockchain/node_modules/
-blockchain/artifacts/
-blockchain/cache/
-blockchain/typechain-types/
-blockchain/coverage/
-blockchain/coverage.json
 
 # ----------------------------------------------------------------------------
 # TERRAFORM
@@ -300,13 +294,6 @@ docs/api/generated/
 monitoring/grafana/data/
 monitoring/prometheus/data/
 monitoring/loki/data/
-
-# ----------------------------------------------------------------------------
-# BLOCKCHAIN
-# ----------------------------------------------------------------------------
-blockchain/deployments/
-blockchain/.env
-blockchain/gas-report.txt
 
 # ----------------------------------------------------------------------------
 # MISC

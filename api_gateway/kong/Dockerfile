@@ -19,12 +19,13 @@ RUN apk add --no-cache \
     curl
 
 # Create plugin directories
-RUN mkdir -p /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting \
-    && mkdir -p /usr/local/share/lua/5.1/kong/plugins/nidaw-jwt-auth
+RUN mkdir -p /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting
 
 # Copy custom plugins
-COPY plugins/rate-limiting.lua /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting/handler.lua
-COPY plugins/auth-jwt.lua /usr/local/share/lua/5.1/kong/plugins/nidaw-jwt-auth/handler.lua
+COPY plugins/rate-limiting.luat /usr/local/share/lua/5.1/kong/plugins/nidaw-rate-limiting/handler.lua
+# Phase B/B3: auth-jwt.lua REMOVED from build — it decoded JWT payloads without
+# signature verification. Authentication is enforced by Kong's bundled `jwt`
+# plugin (declared in kong.yml) plus backend auth.Service middleware.
 
 # Install additional Lua dependencies
 RUN luarocks install lua-resty-redis 0.30 \
@@ -74,7 +75,7 @@ ENV KONG_DATABASE=off \
     KONG_ADMIN_LISTEN=0.0.0.0:8001 \
     KONG_PROXY_LISTEN=0.0.0.0:8000,0.0.0.0:8443 ssl \
     KONG_STATUS_LISTEN=0.0.0.0:8100 \
-    KONG_PLUGINS=bundled,nidaw-rate-limiting,nidaw-jwt-auth \
+    KONG_PLUGINS=bundled,nidaw-rate-limiting \
     KONG_NGINX_WORKER_PROCESSES=auto \
     KONG_NGINX_WORKER_CONNECTIONS=4096 \
     KONG_MEM_CACHE_SIZE=512m \

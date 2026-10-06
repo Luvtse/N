@@ -26,8 +26,6 @@
     "redocly.openapi-vs-code",
     "humao.rest-client",
 
-    // Blockchain
-    "NomicFoundation.hardhat-solidity",
 
     // Git / GitHub
     "GitHub.vscode-pull-request-github",

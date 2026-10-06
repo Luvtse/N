@@ -14,4 +14,3 @@ region       = "us-east-1"
 
 enable_autonomous_vehicles = false
 enable_drone_delivery      = false
-enable_blockchain_payments = false

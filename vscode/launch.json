@@ -173,29 +173,6 @@
       "python": "/opt/venv/bin/python",
       "console": "integratedTerminal"
     },
-
-    // ========================================================================
-    // BLOCKCHAIN
-    // ========================================================================
-    {
-      "name": "⛓️ Blockchain: Deploy Contract",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/blockchain/node_modules/.bin/hardhat",
-      "args": ["run", "scripts/deploy.js", "--network", "localhost"],
-      "cwd": "${workspaceFolder}/blockchain",
-      "console": "integratedTerminal"
-    },
-    {
-      "name": "⛓️ Blockchain: Run Tests",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/blockchain/node_modules/.bin/hardhat",
-      "args": ["test"],
-      "cwd": "${workspaceFolder}/blockchain",
-      "console": "integratedTerminal"
-    },
-
     // ========================================================================
     // DOCKER / K8S
     // ========================================================================

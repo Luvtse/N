@@ -232,11 +232,6 @@ jobs:
           pip-audit -r ml/requirements.txt --format json > python-audit.json || true
         continue-on-error: true
 
-      # Node.js dependencies
-      - name: npm audit
-        working-directory: blockchain
-        run: npm audit --audit-level=high || true
-
       # Upload results
       - name: Upload audit results
         uses: actions/upload-artifact@v4

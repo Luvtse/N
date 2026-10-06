@@ -66,7 +66,7 @@ func (h *ConsentHandler) GiveConsent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Consent already given", http.StatusConflict)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
@@ -89,7 +89,7 @@ func (h *ConsentHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request)
 
 	err := h.consentService.WithdrawConsent(r.Context(), userID, docType, reason, ipAddress, userAgent)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *ConsentHandler) GetUserConsents(w http.ResponseWriter, r *http.Request)
 
 	consents, err := h.consentService.GetUserConsents(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *ConsentHandler) CheckConsent(w http.ResponseWriter, r *http.Request) {
 
 	hasConsent, err := h.consentService.CheckConsent(r.Context(), userID, docType)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
@@ -145,10 +145,18 @@ func (h *ConsentHandler) GetAuditLog(w http.ResponseWriter, r *http.Request) {
 
 	logs, err := h.consentService.GetConsentAuditLog(r.Context(), userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
+}
+
+// writeInternalError (Phase B/B8): never echo internal error strings to
+// clients; details stay server-side (logs). Clients get a stable code.
+func writeInternalError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	_, _ = w.Write([]byte(`{"error":{"code":"INTERNAL_ERROR","message":"an internal error occurred"}}`))
 }

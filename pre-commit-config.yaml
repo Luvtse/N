@@ -177,18 +177,6 @@ repos:
         files: \.sh$
 
   # ----------------------------------------------------------------------------
-  # SOLIDITY (Blockchain)
-  # ----------------------------------------------------------------------------
-  - repo: local
-    hooks:
-      - id: solhint
-        name: solhint
-        entry: bash -c 'cd blockchain && npx solhint "contracts/**/*.sol"'
-        language: system
-        files: ^blockchain/contracts/.*\.sol$
-        pass_filenames: false
-
-  # ----------------------------------------------------------------------------
   # SECURITY SCANNING
   # ----------------------------------------------------------------------------
   - repo: https://github.com/PyCQA/bandit

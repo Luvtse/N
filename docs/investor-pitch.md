@@ -15,7 +15,7 @@ NIDAW unifies **Transportation, Accommodation, Nourishment, Logistics, and Corpo
 - **Regional Modular Monoliths**: Lightning-fast deployments, zero microservice overhead
 - **Global Event Mesh (Kafka)**: Real-time cross-service intelligence sharing
 - **AI-First Infrastructure**: Federated learning, real-time inference, predictive pricing
-- **Web3 Ready**: Decentralized identity, tokenized loyalty, smart contract settlements
+- **Financial Infrastructure**: Private fiat-backed internal ledger with cryptographic audit trails and Ethiopian payment rails (Telebirr, Chapa, M-Pesa)
 - **Autonomous-Ready**: Robotaxi orchestration, drone delivery, L4 safety monitoring
 
 ## 📈 Business Model
@@ -24,7 +24,7 @@ NIDAW unifies **Transportation, Accommodation, Nourishment, Logistics, and Corpo
 | Consumer Commissions    | 15-20% | Network effects, AI routing    |
 | Corporate SaaS Subscriptions | 70%+ | Policy engine, API integrations |
 | Logistics & Freight Fees| 10-15% | Volume scaling, load matching  |
-| Token Staking & Data API| 85%+   | Web3 adoption, enterprise AI   |
+| In-App Currency Float & Data API| 85%+   | Ledger float economics, enterprise AI   |
 
 ## 🗺️ Roadmap
 - **Q1 2026:** Phase 1 Launch (1 city, rides MVP)

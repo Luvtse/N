@@ -30,4 +30,3 @@ alert_email = "ops@nidaw.com"
 
 enable_autonomous_vehicles = true
 enable_drone_delivery      = true
-enable_blockchain_payments = true

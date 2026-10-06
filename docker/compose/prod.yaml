@@ -50,7 +50,7 @@ x-backend-env: &backend-prod-env
   # Feature Flags
   FEATURE_AUTONOMOUS_VEHICLES: "true"
   FEATURE_DRONE_DELIVERY: "true"
-  FEATURE_BLOCKCHAIN_PAYMENTS: "true"
+  FEATURE_INTERNAL_LEDGER: "false"  # Phase C: blockchain decommissioned; ledger flag off until Phase D
 
 x-frontend-env: &frontend-prod-env
   API_BASE_URL: https://api.nidaw.com

@@ -90,6 +90,10 @@ func main() {
 	defer redisCache.Close()
 	locationCache := nidusinfra.NewDriverLocationCache(redisCache)
 
+	// Phase B/B5: wire Redis-backed token store (refresh rotation + revocation denylist).
+	tokenStore := auth.NewTokenStore(redisCache.RawClient())
+	authService.SetTokenStore(tokenStore)
+
 	// Create main router
 	r := chi.NewRouter()
 

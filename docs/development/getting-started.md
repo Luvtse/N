@@ -93,7 +93,6 @@ nidaw/
 ├── helm/             # Helm charts
 ├── docker/           # Docker configs
 ├── ml/               # ML pipelines
-├── blockchain/       # Smart contracts
 ├── api-gateway/      # Kong configs
 ├── monitoring/       # Observability
 ├── analytics/        # Analytics stack
@@ -257,23 +256,13 @@ feast apply
 # Materialize features
 feast materialize-incremental
 
-⛓️ Blockchain Development
-Setup Hardhat
-
-cd blockchain
-
-# Install dependencies
-npm install
-
-# Start local node
-npx hardhat node
-
-# Deploy contract
-npx hardhat run scripts/deploy.js --network localhost
-
-Run Tests
-
-npx hardhat test
+💳 Payments & Internal Ledger Development
+Blockchain/smart-contract development was decommissioned in Phase C. The
+in-app currency system is a private ledger implemented inside the Go backend
+(module: backend/internal/modules/ledger/, shipping in Phase D). To work on
+payment integrations, use the provider adapters under
+backend/internal/shared/integrations/payments/ (Telebirr, Chapa, M-Pesa
+Ethiopia) with their sandbox credentials.
 
 🧪 Testing
 Run All Tests
