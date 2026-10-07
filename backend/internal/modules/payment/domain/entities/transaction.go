@@ -81,7 +81,7 @@ type Transaction struct {
 
 	// Payment Details
 	PaymentMethod         PaymentMethod `json:"payment_method" db:"payment_method"`
-	ExternalTransactionID string        `json:"external_transaction_id" db:"external_transaction_id"` // Stripe/PayPal ID
+	ExternalTransactionID string        `json:"external_transaction_id" db:"external_transaction_id"` // Provider reference (Telebirr/Chapa/M-Pesa)
 	PaymentIntentID       string        `json:"payment_intent_id" db:"payment_intent_id"`
 	CardLast4             string        `json:"card_last4,omitempty" db:"card_last4"`
 	CardBrand             string        `json:"card_brand,omitempty" db:"card_brand"`
