@@ -10,6 +10,9 @@ import (
 	"time"
 
 	authhttp "nidaw-backend/internal/modules/auth/interfaces/http"
+	ledgermod "nidaw-backend/internal/modules/ledger"
+	ledgeradapters "nidaw-backend/internal/modules/ledger/infrastructure/adapters"
+	ledgerhttp "nidaw-backend/internal/modules/ledger/interfaces/http"
 	legalsvc "nidaw-backend/internal/modules/legal/application/services"
 	legalhttp "nidaw-backend/internal/modules/legal/interfaces/http"
 	nidusservices "nidaw-backend/internal/modules/nidus/application/services"
@@ -94,6 +97,24 @@ func main() {
 	tokenStore := auth.NewTokenStore(redisCache.RawClient())
 	authService.SetTokenStore(tokenStore)
 
+	// Phase D: private permissioned ledger (feature-flagged until rollout).
+	var ledgerComps *ledgermod.Components
+	if cfg.Features.EnableInternalLedger {
+		lc, err := ledgermod.Build(ledgermod.Config{
+			Pool:      db.Pool(),
+			Redis:     redisCache.RawClient(),
+			Logger:    logger,
+			ReportKey: os.Getenv("LEDGER_REPORT_KEY"), // B9: secret via env/secret manager, never committed
+			Events:    ledgeradapters.NewEventBusPublisher(eventBus),
+			// Verifier / Payouts / Fraud adapters arrive with Phases E/G;
+			// nil means pass-through so the ledger is fully functional now.
+		})
+		if err != nil {
+			logger.Fatal("Failed to build ledger module", zap.Error(err))
+		}
+		ledgerComps = lc
+	}
+
 	// Create main router
 	r := chi.NewRouter()
 
@@ -124,6 +145,23 @@ func main() {
 		PricingService: pricingService,
 		CORSOrigins:    cfg.Server.CORSOrigins, // Phase B/B4: env-driven allowlist
 	}))
+
+	// Phase D Step 6: ledger REST surface behind JWT auth.
+	if ledgerComps != nil {
+		r.Mount("/api/v1/ledger", ledgerhttp.NewRouter(ledgerComps.Deps, authService, logger))
+
+		// Inbound settlement: ride.completed events debit the rider and
+		// credit the driver into escrow (idempotent per ride id).
+		settlement := ledgeradapters.NewRideSettlementHandler(ledgerComps.Deps)
+		if err := eventBus.Subscribe(context.Background(), "nidaw.events", func(ev eventbus.Event) {
+			if herr := settlement.Handle(context.Background(), ev); herr != nil {
+				logger.Error("ledger settlement failed",
+					zap.String("event_type", ev.Type), zap.Error(herr))
+			}
+		}); err != nil {
+			logger.Error("Failed to subscribe ledger settlement consumer", zap.Error(err))
+		}
+	}
 
 	// Create server
 	srv := &http.Server{

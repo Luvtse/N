@@ -88,6 +88,16 @@ func NewTopupRequest(topupID, userID uuid.UUID, amount valueobjects.Money, provi
 	}, nil
 }
 
+// MarkProcessing transitions pending -> processing (Phase E Step 3: the async
+// rail job has successfully opened a checkout session with the provider).
+func (t *TopupRequest) MarkProcessing() error {
+	if t.Status != TopupStatusPending {
+		return errors.New("ledger: invalid topup transition to processing")
+	}
+	t.Status = TopupStatusProcessing
+	return nil
+}
+
 // MarkCompleted transitions pending/processing -> completed.
 func (t *TopupRequest) MarkCompleted(at time.Time) error {
 	switch t.Status {

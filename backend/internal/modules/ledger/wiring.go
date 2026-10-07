@@ -33,14 +33,14 @@ type Components struct {
 // layer treats nil as "pass-through", so the ledger is fully functional with
 // just Postgres + Redis.
 type Config struct {
-	Pool       *pgxpool.Pool
-	Redis      *redis.Client
-	Logger     *zap.Logger
-	ReportKey  string // HMAC secret for signed audit reports (env-driven)
-	Events     commands.EventPublisher
-	Verifier   commands.TopupVerifier
-	Payouts    commands.PayoutInitiator
-	Fraud      commands.FraudEvaluator
+	Pool        *pgxpool.Pool
+	Redis       *redis.Client
+	Logger      *zap.Logger
+	ReportKey   string // HMAC secret for signed audit reports (env-driven)
+	Events      commands.EventPublisher
+	Verifier    commands.TopupVerifier
+	Payouts     commands.PayoutInitiator
+	Fraud       commands.FraudEvaluator
 	DriverStats commands.DriverStatsProvider
 }
 
@@ -112,4 +112,3 @@ func Build(cfg Config) (*Components, error) {
 type systemClock struct{}
 
 func (systemClock) Now() time.Time { return time.Now().UTC() }
-
