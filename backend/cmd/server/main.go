@@ -98,16 +98,27 @@ func main() {
 	authService.SetTokenStore(tokenStore)
 
 	// Phase D: private permissioned ledger (feature-flagged until rollout).
+	// Phase E: Ethiopian payment rails (Telebirr / Chapa / M-Pesa) feed the
+	// ledger's TopupVerifier + PayoutInitiator ports through a shared gateway
+	// resolver; unconfigured rails simply leave the module in pass-through
+	// mode so boot never hard-fails on missing sandbox credentials.
 	var ledgerComps *ledgermod.Components
+	var ledgerResolver ledgeradapters.GatewayResolver
 	if cfg.Features.EnableInternalLedger {
+		resolver, err := ledgeradapters.BuildResolver(cfg, logger)
+		if err != nil {
+			logger.Fatal("Failed to build payment gateway resolver", zap.Error(err))
+		}
+		ledgerResolver = resolver
+
 		lc, err := ledgermod.Build(ledgermod.Config{
 			Pool:      db.Pool(),
 			Redis:     redisCache.RawClient(),
 			Logger:    logger,
 			ReportKey: os.Getenv("LEDGER_REPORT_KEY"), // B9: secret via env/secret manager, never committed
 			Events:    ledgeradapters.NewEventBusPublisher(eventBus),
-			// Verifier / Payouts / Fraud adapters arrive with Phases E/G;
-			// nil means pass-through so the ledger is fully functional now.
+			Resolver:  resolver, // Phase E: bridges Verifier/Payouts automatically
+			// Fraud adapter arrives with Phase G; nil means pass-through.
 		})
 		if err != nil {
 			logger.Fatal("Failed to build ledger module", zap.Error(err))
@@ -160,6 +171,31 @@ func main() {
 			}
 		}); err != nil {
 			logger.Error("Failed to subscribe ledger settlement consumer", zap.Error(err))
+		}
+
+		// Phase E: provider callbacks + async top-up/payout workers.
+		if ledgerResolver != nil {
+			// Public webhook endpoints (signature-verified inside each rail
+			// adapter; they never settle money without re-verifying via
+			// VerifyPayment — see adapters/webhooks.go).
+			webhooks := ledgeradapters.NewWebhookHandler(ledgerComps.Deps, ledgerResolver, logger)
+			r.Route("/api/v1/payments", func(pr chi.Router) {
+				webhooks.Register(pr)
+			})
+
+			ctxJobs, stopJobs := context.WithCancel(context.Background())
+			defer stopJobs()
+
+			topupJob := ledgeradapters.NewTopupJob(ledgerComps.Deps, ledgerResolver, nil, ledgeradapters.TopupJobConfig{}, logger)
+			go topupJob.Run(ctxJobs)
+
+			payoutJob := ledgeradapters.NewPayoutJob(ledgerComps.Deps, ledgerResolver, ledgeradapters.PayoutJobConfig{}, logger)
+			go payoutJob.Run(ctxJobs)
+
+			logger.Info("Phase E payment rails online",
+				zap.Bool("active_provider_configured", true))
+		} else {
+			logger.Warn("No payment rails configured — ledger running in pass-through mode (top-ups/withdrawals will not reach providers)")
 		}
 	}
 

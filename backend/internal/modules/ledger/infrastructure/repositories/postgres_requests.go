@@ -353,6 +353,48 @@ func (r *WithdrawalRepo) ListActionable(ctx context.Context, limit int) ([]*enti
 	return out, rows.Err()
 }
 
+// ListByStatus returns all withdrawals currently in the given status, oldest
+// first (used by the payout job to pick up admin-approved requests).
+func (r *WithdrawalRepo) ListByStatus(ctx context.Context, status entities.WithdrawalStatus, limit int) ([]*entities.WithdrawalRequest, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+withdrawalColumns+` FROM withdrawal_requests
+		  WHERE status = $1
+		  ORDER BY requested_at ASC LIMIT $2`, string(status), limit)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list withdrawals by status %q: %w", status, err)
+	}
+	defer rows.Close()
+	var out []*entities.WithdrawalRequest
+	for rows.Next() {
+		var (
+			wID, userID    uuid.UUID
+			amountC, feeC  int64
+			destType       string
+			st             string
+			debitID, revID string
+			provRef        string
+			destRaw        []byte
+			failure        string
+			requestedAt    time.Time
+			completedAt    *time.Time
+		)
+		if err := rows.Scan(&wID, &userID, &amountC, &feeC, &destType, &st, &debitID, &revID,
+			&provRef, &destRaw, &failure, &requestedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		w, err := scanWithdrawal(wID, userID, amountC, feeC, destType, st, debitID, revID,
+			provRef, destRaw, failure, requestedAt, completedAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 func scanWithdrawal(wID, userID uuid.UUID, amountC, feeC int64, destType, status, debitID, revID,
 	provRef string, destRaw []byte, failure string, requestedAt time.Time, completedAt *time.Time,
 ) (*entities.WithdrawalRequest, error) {
