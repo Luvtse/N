@@ -3,15 +3,15 @@
 //
 // Rule stack (roadmap order):
 //  1. Velocity      — > cfg.VelocityLimit withdrawals inside
-//                     cfg.VelocityWindow (default: 3 in 1h) using the
-//                     indexed ledger_transactions count port.
+//     cfg.VelocityWindow (default: 3 in 1h) using the
+//     indexed ledger_transactions count port.
 //  2. Device        — one device fingerprint shared by multiple distinct
-//                     accounts (Redis set membership beyond the owner).
+//     accounts (Redis set membership beyond the owner).
 //  3. IP reputation — client IP present in a Redis denylist (populated by
-//                     ops / upstream threat feeds; absent key = clean).
+//     ops / upstream threat feeds; absent key = clean).
 //  4. ML model      — optional HTTP call to ml/fraud-detection
-//                     (MLScoreProvider); any error degrades silently to the
-//                     rule-based score, never blocks the request path.
+//     (MLScoreProvider); any error degrades silently to the
+//     rule-based score, never blocks the request path.
 //
 // Scoring: each triggered check contributes a weight; the max of
 // (rule score, ml score) is reported. score >= HoldThreshold => the command
@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
 )
@@ -124,11 +125,11 @@ type MLScoreProvider interface {
 
 // FraudConfig tunes thresholds; zero values fall back to product defaults.
 type FraudConfig struct {
-	VelocityLimit    int           // withdrawals per window that trips velocity (default 3)
-	VelocityWindow   time.Duration // default 1h
-	HoldThreshold    float64       // score >= threshold => hold for admin review (default 0.7)
-	DeviceSharedPenalty float64    // default 0.5
-	IPDeniedPenalty  float64       // default 0.8
+	VelocityLimit       int           // withdrawals per window that trips velocity (default 3)
+	VelocityWindow      time.Duration // default 1h
+	HoldThreshold       float64       // score >= threshold => hold for admin review (default 0.7)
+	DeviceSharedPenalty float64       // default 0.5
+	IPDeniedPenalty     float64       // default 0.8
 }
 
 func (c FraudConfig) withDefaults() FraudConfig {
@@ -154,23 +155,23 @@ func (c FraudConfig) withDefaults() FraudConfig {
 // Evaluate API used by jobs/admin tooling. All optional ports may be nil —
 // missing signals are skipped rather than treated as risky.
 type FraudDetectionService struct {
-	txs     TxCounter      // required (velocity)
+	txs     TxCounter       // required (velocity)
 	flags   FraudRepository // may be nil (score-only mode, no persistence)
-	devices DeviceIndex    // may be nil
-	ips     IPDenylist     // may be nil
+	devices DeviceIndex     // may be nil
+	ips     IPDenylist      // may be nil
 	ml      MLScoreProvider // may be nil
 	cfg     FraudConfig
-	log     Logger
+	log     *zap.Logger
 	now     func() time.Time
 }
 
 // NewFraudDetectionService wires the evaluator. txs must not be nil.
-func NewFraudDetectionService(txs TxCounter, flags FraudRepository, devices DeviceIndex, ips IPDenylist, ml MLScoreProvider, cfg FraudConfig, log Logger) (*FraudDetectionService, error) {
+func NewFraudDetectionService(txs TxCounter, flags FraudRepository, devices DeviceIndex, ips IPDenylist, ml MLScoreProvider, cfg FraudConfig, log *zap.Logger) (*FraudDetectionService, error) {
 	if txs == nil {
 		return nil, errors.New("ledger/fraud: transaction counter is required")
 	}
 	if log == nil {
-		log = nopLogger{}
+		log = zap.NewNop()
 	}
 	return &FraudDetectionService{
 		txs: txs, flags: flags, devices: devices, ips: ips, ml: ml,
@@ -248,7 +249,7 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 		if err != nil {
 			// Infra hiccup: log and continue with remaining checks; the
 			// caller's conservative-hold path covers hard failures.
-			s.log.Warn("ledger/fraud: device index unavailable", "error", err.Error())
+			s.log.Warn("ledger/fraud: device index unavailable", zap.String("error", err.Error()))
 		} else if others > 0 {
 			score := s.cfg.DeviceSharedPenalty * float64(others+1) // escalates per extra account
 			if score > 1 {
@@ -267,7 +268,7 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 	if s.ips != nil && fc.ClientIP != "" {
 		denied, err := s.ips.IsDenied(ctx, fc.ClientIP)
 		if err != nil {
-			s.log.Warn("ledger/fraud: ip reputation unavailable", "error", err.Error())
+			s.log.Warn("ledger/fraud: ip reputation unavailable", zap.String("error", err.Error()))
 		} else if denied {
 			ev.Triggered = append(ev.Triggered, FraudCheckIPReputation)
 			ev.Contributions[string(FraudCheckIPReputation)] = s.cfg.IPDeniedPenalty
@@ -282,7 +283,7 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 	if s.ml != nil {
 		mscore, err := s.ml.ScoreWithdrawal(ctx, userID, amountCents)
 		if err != nil {
-			s.log.Warn("ledger/fraud: ml scoring unavailable, using rule fallback", "error", err.Error())
+			s.log.Warn("ledger/fraud: ml scoring unavailable, using rule fallback", zap.String("error", err.Error()))
 		} else if mscore > 0 {
 			if mscore >= s.cfg.HoldThreshold {
 				ev.Triggered = append(ev.Triggered, FraudCheckMLModel)
@@ -334,7 +335,7 @@ func (s *FraudDetectionService) flag(ctx context.Context, userID uuid.UUID, ct F
 	}
 	if _, err := s.flags.InsertFlag(ctx, nil, rec); err != nil {
 		s.log.Warn("ledger/fraud: failed to persist fraud flag",
-			"check", string(ct), "error", err.Error())
+			zap.String("check", string(ct)), zap.String("error", err.Error()))
 	}
 }
 
