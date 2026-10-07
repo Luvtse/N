@@ -4,25 +4,28 @@
 //
 // ----------------------------------------------------------------------------
 // ReconciliationJob (Step 2, daily cron)
-//   For each configured rail (Chapa / Telebirr / M-Pesa) compare our recorded
-//   totals for the reconciliation window against what the provider reports as
-//   settled via VerifyPayment (the same authoritative call webhooks are
-//   reconciled against — no provider "report CSV" API exists for the Ethiopian
-//   rails, so per-reference verification is the contract). Discrepancies
-//   > cfg.ToleranceCents (roadmap default: 1 santim = 0.01 ETB) are written to
-//   fraud_flags (check_type='reconciliation', severity by magnitude) AND
-//   audit_log ('ledger.reconciliation.discrepancy') so both the admin fraud
-//   queue and the finance trail see them. A machine-readable report is logged
-//   every run for the finance team.
+//
+//	For each configured rail (Chapa / Telebirr / M-Pesa) compare our recorded
+//	totals for the reconciliation window against what the provider reports as
+//	settled via VerifyPayment (the same authoritative call webhooks are
+//	reconciled against — no provider "report CSV" API exists for the Ethiopian
+//	rails, so per-reference verification is the contract). Discrepancies
+//	> cfg.ToleranceCents (roadmap default: 1 santim = 0.01 ETB) are written to
+//	fraud_flags (check_type='reconciliation', severity by magnitude) AND
+//	audit_log ('ledger.reconciliation.discrepancy') so both the admin fraud
+//	queue and the finance trail see them. A machine-readable report is logged
+//	every run for the finance team.
 //
 // BalanceRebuildJob (Step 3, weekly cron)
-//   Recompute every user's balance from scratch by replaying
-//   ledger_transactions (credits minus debits), verify the hash chain on the
-//   way (so corruption is caught by the same sweep), and compare with the
-//   cached user_balances row. Drift beyond tolerance => fraud flag + ERROR log
-//   ("alert if drift detected"). With ApplyCorrections=true the cached row is
-//   rewritten from the chain truth (the chain is the single source of truth;
-//   corrections themselves are audited in-process and flagged).
+//
+//	Recompute every user's balance from scratch by replaying
+//	ledger_transactions (credits minus debits), verify the hash chain on the
+//	way (so corruption is caught by the same sweep), and compare with the
+//	cached user_balances row. Drift beyond tolerance => fraud flag + ERROR log
+//	("alert if drift detected"). With ApplyCorrections=true the cached row is
+//	rewritten from the chain truth (the chain is the single source of truth;
+//	corrections themselves are audited in-process and flagged).
+//
 // ----------------------------------------------------------------------------
 package adapters
 
@@ -599,10 +602,7 @@ func (j *BalanceRebuildJob) correct(ctx context.Context, userID uuid.UUID, chain
 		// Preserve the held bucket (escrow truth lives in escrow_holds and is
 		// re-checked by the release job); absorb drift into available so the
 		// invariant available + held == chain total holds again.
-		held, err := bal.Held.Cents64()
-		if err != nil {
-			return err
-		}
+		held := bal.Held.Cents()
 		newAvail := chainTotal - held
 		if newAvail < 0 {
 			// Chain says the user owes more than held frees: park in negative
