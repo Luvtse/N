@@ -56,6 +56,19 @@ func Build(cfg Config) (*Components, error) {
 		log = zap.NewNop()
 	}
 
+	// --- payment rails (Phase E): optional ------------------------------------
+	// When a resolver is supplied and no explicit Verifier/Payouts were wired,
+	// build the bridges so top-ups settle against provider truth and payouts
+	// submit to the correct rail.
+	if cfg.Resolver != nil {
+		if cfg.Verifier == nil {
+			cfg.Verifier = adapters.NewTopupBridge(cfg.Resolver)
+		}
+		if cfg.Payouts == nil {
+			cfg.Payouts = adapters.NewPayoutBridge(cfg.Resolver)
+		}
+	}
+
 	// --- infrastructure adapters -------------------------------------------
 	uow := repositories.NewUow(cfg.Pool)
 	bals := repositories.NewBalanceRepo(cfg.Pool)
