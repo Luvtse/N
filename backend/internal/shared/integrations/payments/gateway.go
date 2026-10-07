@@ -24,6 +24,12 @@ var (
 	ErrPayoutUnavailable = errors.New("payout API not available for this rail in Ethiopia")
 )
 
+// ErrPending signals a payment/payout is still in-flight; pollers should keep
+// waiting instead of settling or failing the request.
+type ErrPending struct{ Status string }
+
+func (e *ErrPending) Error() string { return "provider reports pending status: " + e.Status }
+
 // Canonical status values every adapter must map its provider states into.
 const (
 	StatusPending    = "pending"
