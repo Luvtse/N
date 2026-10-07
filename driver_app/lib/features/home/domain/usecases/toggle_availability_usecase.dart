@@ -1,4 +1,4 @@
-import '../data/repositories/driver_home_repository.dart';
+import '../../data/repositories/driver_home_repository.dart';
 
 class ToggleAvailabilityUseCase {
   final DriverHomeRepository _repository;

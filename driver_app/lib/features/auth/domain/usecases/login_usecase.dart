@@ -1,5 +1,5 @@
-import '../data/repositories/auth_repository.dart';
-import '../entities/driver.dart';
+import '../../data/repositories/auth_repository.dart';
+import '../../entities/driver.dart';
 
 class LoginUseCase {
   final AuthRepository _authRepository;

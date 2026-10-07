@@ -1,5 +1,5 @@
-import '../data/repositories/ride_repository.dart';
-import '../entities/active_ride.dart';
+import '../../data/repositories/ride_repository.dart';
+import '../../entities/active_ride.dart';
 
 class CompleteRideUseCase {
   final RideRepository _repository;
