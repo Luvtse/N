@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS payments (
     currency CHAR(3) DEFAULT 'USD',
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     payment_method VARCHAR(50),
-    stripe_payment_intent_id VARCHAR(255),
+    external_payment_reference VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
