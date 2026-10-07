@@ -210,10 +210,13 @@ func (s *LedgerService) Debit(
 	return out, err
 }
 
-// ReleaseEscrow moves an amount from held to available for the driver and
-// records the escrow_release migration transaction (Phase F Step 2 support).
-func (s *LedgerService) ReleaseEscrow(
-	ctx context.Context, driverID uuid.UUID, amount valueobjects.Money, opts CreditOptions,
+// ReleaseEscrow moves `amount` from held to available AND stamps the balance
+// row's updated_at with `releaseTime` (Phase F: the escrow_release_job passes
+// the hold's own release_after so the audit trail matches the policy moment,
+// not the job-run wall clock). Pass time.Time{} for the default NOW().
+func (s *LedgerService) ReleaseEscrowAt(
+	ctx context.Context, driverID uuid.UUID, amount valueobjects.Money,
+	releaseTime time.Time, opts CreditOptions,
 ) (*entities.LedgerTransaction, error) {
 	if !amount.IsPositive() {
 		return nil, errors.New("ledger: release amount must be positive")
@@ -254,6 +257,13 @@ func (s *LedgerService) ReleaseEscrow(
 		if err := s.bals.Save(ctx, tx, bal); err != nil {
 			return err
 		}
+		if !releaseTime.IsZero() {
+			if _, err := tx.Exec(ctx,
+				`UPDATE user_balances SET updated_at=$2 WHERE user_id=$1`,
+				driverID, releaseTime.UTC()); err != nil {
+				return fmt.Errorf("ledger: stamp release time: %w", err)
+			}
+		}
 		out = led
 		return nil
 	})
@@ -261,6 +271,13 @@ func (s *LedgerService) ReleaseEscrow(
 		return out, nil
 	}
 	return out, err
+}
+
+// ReleaseEscrow is the wall-clock convenience wrapper around ReleaseEscrowAt.
+func (s *LedgerService) ReleaseEscrow(
+	ctx context.Context, driverID uuid.UUID, amount valueobjects.Money, opts CreditOptions,
+) (*entities.LedgerTransaction, error) {
+	return s.ReleaseEscrowAt(ctx, driverID, amount, time.Time{}, opts)
 }
 
 // ClearNegativeLock lifts negative_lock once the user has repaid (available

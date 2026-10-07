@@ -69,6 +69,7 @@ func (h *Handler) Register(r chi.Router) {
 
 	// Admin-only mutations (mount under a Group with RequireRole("admin")).
 	r.Post("/disputes/{disputeID}/resolve", h.requireAdmin(h.handleResolveDispute))
+	r.Get("/disputes", h.requireAdmin(h.handleDisputeQueue))
 	r.Post("/withdrawals/{withdrawalID}/approve", h.requireAdmin(h.handleApproveWithdrawal))
 	r.Post("/withdrawals/{withdrawalID}/reject", h.requireAdmin(h.handleRejectWithdrawal))
 	r.Post("/adjustments", h.requireAdmin(h.handleAdjustment))
@@ -533,6 +534,65 @@ func (h *Handler) handleResolveDispute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+}
+
+// handleDisputeQueue serves the Phase F Step 3 admin review queue (and the
+// Phase H console Dispute Queue): GET /disputes?all=true&limit=N. Default
+// view is pending work only (open/admin_review), oldest first.
+func (h *Handler) handleDisputeQueue(w http.ResponseWriter, r *http.Request) {
+	if _, err := userIDFromContext(r.Context()); err != nil {
+		h.fail(r.Context(), w, err)
+		return
+	}
+	pendingOnly := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("all")), "true")
+	limit := 100
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 || n > 500 {
+			h.fail(r.Context(), w, validateErr("limit must be between 1 and 500"))
+			return
+		}
+		limit = n
+	}
+	list, err := h.deps.Disputes.ListQueue(r.Context(), pendingOnly, limit)
+	if err != nil {
+		h.fail(r.Context(), w, err)
+		return
+	}
+	type disputeView struct {
+		DisputeID     string     `json:"dispute_id"`
+		RideID        string     `json:"ride_id"`
+		HoldID        string     `json:"hold_id"`
+		FiledByUserID string     `json:"filed_by_user_id"`
+		AgainstUserID string     `json:"against_user_id"`
+		Reason        string     `json:"reason_code"`
+		Description   string     `json:"description"`
+		EvidenceURLs  []string   `json:"evidence_urls,omitempty"`
+		Status        string     `json:"status"`
+		CreatedAt     time.Time  `json:"created_at"`
+		ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
+	}
+	out := make([]disputeView, 0, len(list))
+	for _, d := range list {
+		out = append(out, disputeView{
+			DisputeID:     d.DisputeID.String(),
+			RideID:        d.RideID.String(),
+			HoldID:        d.HoldID.String(),
+			FiledByUserID: d.FiledByUserID.String(),
+			AgainstUserID: d.AgainstUserID.String(),
+			Reason:        string(d.Reason),
+			Description:   d.Description,
+			EvidenceURLs:  d.EvidenceURLs,
+			Status:        string(d.Status),
+			CreatedAt:     d.CreatedAt.UTC(),
+			ResolvedAt:    d.ResolvedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pending_only": pendingOnly,
+		"count":        len(out),
+		"disputes":     out,
+	})
 }
 
 func (h *Handler) handleApproveWithdrawal(w http.ResponseWriter, r *http.Request) {

@@ -102,9 +102,10 @@ func ProcessRidePayment(ctx context.Context, d *Deps, log *zap.Logger, ev RideCo
 			return fmt.Errorf("ledger: driver held credit: %w", err)
 		}
 
-		// 3. Open the 72h escrow hold (Phase F Step 1).
+		// 3. Open the escrow hold (Phase F Step 1): release_after = now +
+		//    configured window (default 72h) from the rules service.
 		now := d.clock().Now()
-		h, err := entities.NewEscrowHold(uuid.New(), ev.RideID, ev.RiderID, ev.DriverID, driverNet, now)
+		h, err := entities.NewEscrowHold(uuid.New(), ev.RideID, ev.RiderID, ev.DriverID, driverNet, now, d.escrowPolicy().Window())
 		if err != nil {
 			return err
 		}
