@@ -234,15 +234,20 @@ type EscrowHold struct {
 // EscrowWindow is the 72-hour safety window (Phase F).
 const EscrowWindow = 72 * time.Hour
 
-// NewEscrowHold creates a held record with release_after = now + 72h.
-func NewEscrowHold(holdID, rideID, riderID, driverID uuid.UUID, amount valueobjects.Money, now time.Time) (*EscrowHold, error) {
+// NewEscrowHold creates a held record with release_after = now + window.
+// A zero/negative window falls back to the default 72h safety window.
+func NewEscrowHold(holdID, rideID, riderID, driverID uuid.UUID, amount valueobjects.Money, now time.Time, window ...time.Duration) (*EscrowHold, error) {
 	if rideID == uuid.Nil || riderID == uuid.Nil || driverID == uuid.Nil {
 		return nil, errors.New("ledger: escrow requires ride, rider and driver ids")
 	}
 	if !amount.IsPositive() {
 		return nil, errors.New("ledger: escrow amount must be positive")
 	}
-	release := now.Add(EscrowWindow)
+	w := EscrowWindow
+	if len(window) > 0 && window[0] > 0 {
+		w = window[0]
+	}
+	release := now.Add(w)
 	return &EscrowHold{
 		HoldID:       holdID,
 		RideID:       rideID,

@@ -622,6 +622,15 @@ func (r *DisputeRepo) GetByID(ctx context.Context, id uuid.UUID) (*entities.Ride
 	if err != nil {
 		return nil, err
 	}
+	return scanDisputeRow(dID, rideID, holdID, byID, againstID, reason, description,
+		evidence, status, notes, refundID, releaseID, adminID, resolvedAt, createdAt), nil
+}
+
+func scanDisputeRow(
+	dID, rideID, holdID, byID, againstID uuid.UUID, reason, description string,
+	evidence []string, status, notes, refundID, releaseID, adminID string,
+	resolvedAt *time.Time, createdAt time.Time,
+) *entities.RideDispute {
 	d := &entities.RideDispute{
 		DisputeID: dID, RideID: rideID, HoldID: holdID,
 		FiledByUserID: byID, AgainstUserID: againstID,
@@ -638,7 +647,45 @@ func (r *DisputeRepo) GetByID(ctx context.Context, id uuid.UUID) (*entities.Ride
 			*p.o = &v
 		}
 	}
-	return d, nil
+	return d
+}
+
+// ListQueue powers the Phase F Step 3 admin review queue (and the Phase H
+// console): pendingOnly restricts to open/admin_review rows; otherwise every
+// state is returned. Oldest unresolved work surfaces first.
+func (r *DisputeRepo) ListQueue(ctx context.Context, pendingOnly bool, limit int) ([]*entities.RideDispute, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := `SELECT ` + disputeColumns + ` FROM ride_disputes`
+	if pendingOnly {
+		q += ` WHERE status IN ('open','admin_review')`
+	}
+	q += ` ORDER BY created_at ASC LIMIT $1`
+	rows, err := r.pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*entities.RideDispute
+	for rows.Next() {
+		var (
+			dID, rideID, holdID, byID, againstID uuid.UUID
+			reason, description                  string
+			evidence                             []string
+			status, notes                        string
+			refundID, releaseID, adminID         string
+			resolvedAt                           *time.Time
+			createdAt                            time.Time
+		)
+		if err := rows.Scan(&dID, &rideID, &holdID, &byID, &againstID, &reason, &description,
+			&evidence, &status, &notes, &refundID, &releaseID, &adminID, &resolvedAt, &createdAt); err != nil {
+			return nil, err
+		}
+		out = append(out, scanDisputeRow(dID, rideID, holdID, byID, againstID, reason, description,
+			evidence, status, notes, refundID, releaseID, adminID, resolvedAt, createdAt))
+	}
+	return out, rows.Err()
 }
 
 // ============================================================================

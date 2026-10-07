@@ -170,7 +170,7 @@ func TestPayoutBridge_MobileDestinationMapsToMpesa(t *testing.T) {
 
 	w := &entities.WithdrawalRequest{
 		WithdrawalID: uuid.New(), Amount: mustMoney(t, 100000),
-		DestinationType: entities.DestMpesa,
+		DestinationType:    entities.DestMpesa,
 		DestinationDetails: map[string]interface{}{"phone": "251911123456"},
 	}
 	ref, err := b.InitiatePayout(context.Background(), w)
@@ -191,7 +191,7 @@ func TestPayoutBridge_BankRequiresCodeAndAccount(t *testing.T) {
 
 	w := &entities.WithdrawalRequest{
 		WithdrawalID: uuid.New(), Amount: mustMoney(t, 100000),
-		DestinationType:  entities.DestBankTransfer,
+		DestinationType:    entities.DestBankTransfer,
 		DestinationDetails: map[string]interface{}{"bank_code": "8", "account_no": "1000123", "account_name": "Abebe"},
 	}
 	if _, err := b.InitiatePayout(context.Background(), w); err != nil {

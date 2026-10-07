@@ -87,13 +87,30 @@ type Deps struct {
 	Disputes    services.DisputeRepository
 	Audit       services.AuditRepository
 
-	Events      EventPublisher      // may be nil
-	Verifier    TopupVerifier       // may be nil until Phase E lands
-	Payouts     PayoutInitiator     // may be nil until Phase E lands
-	Fraud       FraudEvaluator      // may be nil until Phase G lands
-	DriverStats DriverStatsProvider // may be nil
-	Clock       Clock               // defaults to UTC wall clock
+	Events       EventPublisher          // may be nil
+	Verifier     TopupVerifier           // may be nil until Phase E lands
+	Payouts      PayoutInitiator         // may be nil until Phase E lands
+	Fraud        FraudEvaluator          // may be nil until Phase G lands
+	DriverStats  DriverStatsProvider     // may be nil
+	EscrowPolicy *services.EscrowService // Phase F: hold window / dispute rules (defaults to 72h)
+	Clock        Clock                   // defaults to UTC wall clock
 }
+
+// escrowPolicy returns the configured Phase F escrow rules, falling back to
+// the product default (72h window, simple-reason auto-resolution).
+func (d *Deps) escrowPolicy() *services.EscrowService {
+	if d.EscrowPolicy != nil {
+		return d.EscrowPolicy
+	}
+	return services.NewEscrowService()
+}
+
+// EscrowPolicyOrNil exposes the policy getter for infrastructure jobs that
+// want to share the exact same release rules as the command layer.
+func (d *Deps) EscrowPolicyOrNil() *services.EscrowService { return d.EscrowPolicy }
+
+// ClockOrNil exposes the injected clock (nil => callers use time.Now).
+func (d *Deps) ClockOrNil() Clock { return d.Clock }
 
 func (d *Deps) clock() Clock {
 	if d.Clock != nil {

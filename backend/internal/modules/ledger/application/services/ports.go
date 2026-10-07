@@ -120,6 +120,10 @@ type DisputeRepository interface {
 	Create(ctx context.Context, tx DBTx, d *entities.RideDispute) error
 	Update(ctx context.Context, tx DBTx, d *entities.RideDispute) error
 	GetByID(ctx context.Context, id uuid.UUID) (*entities.RideDispute, error)
+	// ListQueue enumerates disputes awaiting action (open/admin_review when
+	// pendingOnly, every state otherwise), oldest first — the Phase F/H
+	// admin review queue.
+	ListQueue(ctx context.Context, pendingOnly bool, limit int) ([]*entities.RideDispute, error)
 }
 
 // AuditRepository appends admin-action audit records (append-only table).
