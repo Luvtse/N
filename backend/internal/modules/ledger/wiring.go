@@ -6,6 +6,7 @@ package ledger
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,12 +29,19 @@ type Components struct {
 	Deps     *commands.Deps
 	Handler  *ledgerhttp.Handler
 	Resolver adapters.GatewayResolver // Phase E rails (nil when unconfigured)
+
+	// Phase G integrity jobs (nil unless EnableFraud). Callers start them with
+	// go Components.Reconciliation.Run(ctx) / Components.BalanceRebuild.Run(ctx).
+	Reconciliation *adapters.ReconciliationJob
+	BalanceRebuild *adapters.BalanceRebuildJob
 }
 
 // Config controls wiring. Optional interfaces (Verifier, Payouts, Fraud,
-// DriverStats) are intentionally left nil until Phases E/G land; the command
-// layer treats nil as "pass-through", so the ledger is fully functional with
-// just Postgres + Redis.
+// DriverStats) may be nil; the command layer treats nil as "pass-through",
+// so the ledger is fully functional with just Postgres + Redis. When
+// EnableFraud is set and Fraud was not supplied explicitly, Build wires the
+// full Phase G stack itself (Postgres fraud_flags repo + Redis device/IP
+// ports + optional ML endpoint).
 type Config struct {
 	Pool         *pgxpool.Pool
 	Redis        *redis.Client
@@ -46,6 +54,16 @@ type Config struct {
 	Payouts      commands.PayoutInitiator
 	Fraud        commands.FraudEvaluator
 	DriverStats  commands.DriverStatsProvider
+
+	// Phase G: fraud detection & integrity jobs.
+	EnableFraud      bool                 // construct the rule-stack evaluator when true
+	FraudConfig      services.FraudConfig // zero values => product defaults
+	MLBaseURL        string               // ml/fraud-detection endpoint ("" => rules-only fallback)
+	MLToken          string               // optional bearer token (env-driven, never committed)
+	ReconInterval    time.Duration        // reconciliation cadence (<=0 => daily)
+	RebuildCron      string               // reserved: cron expression support (unused; ticker interval below)
+	RebuildInterval  time.Duration        // balance-rebuild cadence (<=0 => weekly)
+	ApplyCorrections bool                 // rebuild job rewrites cached balances from chain truth
 }
 
 // Build constructs the ledger module. Pool is mandatory; Redis may be nil
@@ -95,6 +113,35 @@ func Build(cfg Config) (*Components, error) {
 	// settlement, FileDispute and the hourly EscrowReleaseJob.
 	escrowSvc := services.NewEscrowServiceWithWindow(cfg.EscrowWindow)
 
+	// --- Phase G: fraud detection stack --------------------------------------
+	// EnableFraud builds the full rule stack: velocity (TxRepo), device/IP
+	// signals (Redis ports), optional ML scoring with rule-based fallback, and
+	// fraud_flags persistence (Postgres). Redis being nil degrades gracefully —
+	// FraudDetectionService skips missing signals rather than treating them as
+	// risky, so a Postgres-only deployment still gets velocity + flags.
+	var fraudSvc *services.FraudDetectionService
+	if cfg.EnableFraud && cfg.Fraud == nil {
+		fraudRepo := repositories.NewFraudRepo(cfg.Pool)
+		var devices services.DeviceIndex
+		var ips services.IPDenylist
+		if cfg.Redis != nil {
+			devices = services.NewRedisDeviceIndex(cfg.Redis)
+			ips = services.NewRedisIPDenylist(cfg.Redis)
+		}
+		ml, err := services.NewMLClient(services.MLClientConfig{BaseURL: cfg.MLBaseURL, Token: cfg.MLToken})
+		if err != nil {
+			return nil, fmt.Errorf("ledger: ml fraud client: %w", err)
+		}
+		fraudSvc, err = services.NewFraudDetectionService(txs, fraudRepo, devices, ips, ml, cfg.FraudConfig, log)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: fraud service: %w", err)
+		}
+		cfg.Fraud = fraudSvc
+		if ml == nil {
+			log.Info("ledger: fraud evaluation running rules-only (no ML endpoint configured)")
+		}
+	}
+
 	deps := &commands.Deps{
 		Uow:          uow,
 		Ledger:       ledgerSvc,
@@ -127,7 +174,26 @@ func Build(cfg Config) (*Components, error) {
 		log.Warn("ledger audit reports will be UNSIGNED: set LEDGER_REPORT_KEY")
 	}
 
-	return &Components{Deps: deps, Handler: ledgerhttp.NewHandler(deps, log, signer), Resolver: cfg.Resolver}, nil
+	comps := &Components{Deps: deps, Handler: ledgerhttp.NewHandler(deps, log, signer), Resolver: cfg.Resolver}
+
+	// --- Phase G integrity jobs (constructed here, started by the caller) ----
+	if fraudSvc != nil {
+		fraudRepo := repositories.NewFraudRepo(cfg.Pool)
+		recon, err := adapters.NewReconciliationJob(deps, cfg.Resolver, fraudRepo,
+			adapters.ReconConfig{Interval: cfg.ReconInterval}, log)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: reconciliation job: %w", err)
+		}
+		rebuild, err := adapters.NewBalanceRebuildJob(deps, fraudRepo,
+			adapters.RebuildConfig{Interval: cfg.RebuildInterval, ApplyCorrections: cfg.ApplyCorrections}, log)
+		if err != nil {
+			return nil, fmt.Errorf("ledger: balance rebuild job: %w", err)
+		}
+		comps.Reconciliation = recon
+		comps.BalanceRebuild = rebuild
+	}
+
+	return comps, nil
 }
 
 type systemClock struct{}

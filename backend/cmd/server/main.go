@@ -120,7 +120,14 @@ func main() {
 			EscrowWindow: escrowWindowFromEnv(logger),    // Phase F: 72h default, overridable for staged rollouts
 			Events:       ledgeradapters.NewEventBusPublisher(eventBus),
 			Resolver:     resolver, // Phase E: bridges Verifier/Payouts automatically
-			// Fraud adapter arrives with Phase G; nil means pass-through.
+			// Phase G: fraud rule stack (velocity + device/IP + ML-with-fallback)
+			// and the reconciliation / balance-rebuild integrity jobs.
+			EnableFraud:      true,
+			MLBaseURL:        os.Getenv("FRAUD_ML_BASE_URL"), // "" => rules-only fallback
+			MLToken:          os.Getenv("FRAUD_ML_TOKEN"),    // env-driven, never committed
+			ReconInterval:    durationFromEnv("LEDGER_RECON_INTERVAL", 24*time.Hour, logger),
+			RebuildInterval:  durationFromEnv("LEDGER_REBUILD_INTERVAL", 7*24*time.Hour, logger),
+			ApplyCorrections: os.Getenv("LEDGER_REBUILD_APPLY") == "true", // opt-in; default alert-only
 		})
 		if err != nil {
 			logger.Fatal("Failed to build ledger module", zap.Error(err))
@@ -218,6 +225,25 @@ func main() {
 		} else {
 			logger.Info("Phase F escrow release job online (default 72h window)")
 		}
+
+		// Phase G Steps 2-3: integrity jobs. Reconciliation compares completed
+		// top-ups/payouts against provider truth daily (mismatches > 0.01 ETB
+		// become fraud_flags + finance report logs); the balance rebuild walks
+		// every user's hash chain weekly and alerts on cache drift (corrections
+		// are opt-in via LEDGER_REBUILD_APPLY). Both are constructed inside
+		// ledgermod.Build only when EnableFraud, so a nil check is enough here.
+		if ledgerComps.Reconciliation != nil {
+			ctxRecon, stopRecon := context.WithCancel(context.Background())
+			defer stopRecon()
+			go ledgerComps.Reconciliation.Run(ctxRecon)
+			logger.Info("Phase G reconciliation job online (daily provider-vs-ledger diff)")
+		}
+		if ledgerComps.BalanceRebuild != nil {
+			ctxRebuild, stopRebuild := context.WithCancel(context.Background())
+			defer stopRebuild()
+			go ledgerComps.BalanceRebuild.Run(ctxRebuild)
+			logger.Info("Phase G balance rebuild job online (weekly chain-truth audit)")
+		}
 	}
 
 	// Create server
@@ -273,4 +299,21 @@ func escrowWindowFromEnv(logger *zap.Logger) time.Duration {
 		return ledgermod.EscrowWindow
 	}
 	return time.Duration(h) * time.Hour
+}
+
+// durationFromEnv parses a Go duration (e.g. "24h", "90m") from the named env
+// var, falling back to def when unset/invalid/non-positive. Used by the Phase
+// G job cadences so ops can tune them without redeploying code.
+func durationFromEnv(key string, def time.Duration, logger *zap.Logger) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		logger.Warn("invalid "+key+", using default",
+			zap.String("value", v), zap.String("default", def.String()))
+		return def
+	}
+	return d
 }
