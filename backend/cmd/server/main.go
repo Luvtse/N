@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -112,12 +113,13 @@ func main() {
 		ledgerResolver = resolver
 
 		lc, err := ledgermod.Build(ledgermod.Config{
-			Pool:      db.Pool(),
-			Redis:     redisCache.RawClient(),
-			Logger:    logger,
-			ReportKey: os.Getenv("LEDGER_REPORT_KEY"), // B9: secret via env/secret manager, never committed
-			Events:    ledgeradapters.NewEventBusPublisher(eventBus),
-			Resolver:  resolver, // Phase E: bridges Verifier/Payouts automatically
+			Pool:         db.Pool(),
+			Redis:        redisCache.RawClient(),
+			Logger:       logger,
+			ReportKey:    os.Getenv("LEDGER_REPORT_KEY"), // B9: secret via env/secret manager, never committed
+			EscrowWindow: escrowWindowFromEnv(logger),    // Phase F: 72h default, overridable for staged rollouts
+			Events:       ledgeradapters.NewEventBusPublisher(eventBus),
+			Resolver:     resolver, // Phase E: bridges Verifier/Payouts automatically
 			// Fraud adapter arrives with Phase G; nil means pass-through.
 		})
 		if err != nil {
@@ -197,6 +199,25 @@ func main() {
 		} else {
 			logger.Warn("No payment rails configured — ledger running in pass-through mode (top-ups/withdrawals will not reach providers)")
 		}
+
+		// Phase F Step 2: hourly escrow release worker (held -> available for
+		// matured, undisputed holds; idempotent per hold id). Runs regardless
+		// of payment-rail configuration — escrow maturity is a ledger-only
+		// concern. Dispute pauses are enforced by the hold status itself
+		// (FileDispute flips 'held' -> 'disputed', excluding it from the
+		// releasable query), so no extra coordination is needed here.
+		escrowReleaseJob := ledgeradapters.NewEscrowReleaseJob(
+			ledgerComps.Deps, ledgerComps.Deps.EscrowPolicyOrNil(),
+			ledgeradapters.EscrowReleaseConfig{}, logger)
+		ctxEscrow, stopEscrow := context.WithCancel(context.Background())
+		defer stopEscrow()
+		go escrowReleaseJob.Run(ctxEscrow)
+		if p := ledgerComps.Deps.EscrowPolicyOrNil(); p != nil {
+			logger.Info("Phase F escrow release job online",
+				zap.String("window", p.Window().String()))
+		} else {
+			logger.Info("Phase F escrow release job online (default 72h window)")
+		}
 	}
 
 	// Create server
@@ -234,4 +255,22 @@ func main() {
 	}
 
 	logger.Info("Server exited gracefully")
+}
+
+// escrowWindowFromEnv reads the Phase F dispute/release hold window from
+// LEDGER_ESCROW_WINDOW_HOURS (integer hours). Unset or invalid values fall
+// back to the product default of 72h; non-positive overrides are rejected so
+// a typo can never disable the safety window entirely.
+func escrowWindowFromEnv(logger *zap.Logger) time.Duration {
+	v := os.Getenv("LEDGER_ESCROW_WINDOW_HOURS")
+	if v == "" {
+		return ledgermod.EscrowWindow
+	}
+	h, err := strconv.Atoi(v)
+	if err != nil || h <= 0 {
+		logger.Warn("invalid LEDGER_ESCROW_WINDOW_HOURS, using 72h default",
+			zap.String("value", v))
+		return ledgermod.EscrowWindow
+	}
+	return time.Duration(h) * time.Hour
 }

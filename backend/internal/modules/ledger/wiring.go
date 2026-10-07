@@ -35,16 +35,17 @@ type Components struct {
 // layer treats nil as "pass-through", so the ledger is fully functional with
 // just Postgres + Redis.
 type Config struct {
-	Pool        *pgxpool.Pool
-	Redis       *redis.Client
-	Logger      *zap.Logger
-	ReportKey   string // HMAC secret for signed audit reports (env-driven)
-	Events      commands.EventPublisher
-	Resolver    adapters.GatewayResolver // Phase E: Ethiopian rails (may be nil)
-	Verifier    commands.TopupVerifier
-	Payouts     commands.PayoutInitiator
-	Fraud       commands.FraudEvaluator
-	DriverStats commands.DriverStatsProvider
+	Pool         *pgxpool.Pool
+	Redis        *redis.Client
+	Logger       *zap.Logger
+	ReportKey    string        // HMAC secret for signed audit reports (env-driven)
+	EscrowWindow time.Duration // Phase F: dispute/release hold window (<=0 => 72h default)
+	Events       commands.EventPublisher
+	Resolver     adapters.GatewayResolver // Phase E: Ethiopian rails (may be nil)
+	Verifier     commands.TopupVerifier
+	Payouts      commands.PayoutInitiator
+	Fraud        commands.FraudEvaluator
+	DriverStats  commands.DriverStatsProvider
 }
 
 // Build constructs the ledger module. Pool is mandatory; Redis may be nil
@@ -90,24 +91,28 @@ func Build(cfg Config) (*Components, error) {
 	// --- application services (Steps 3 & 4) --------------------------------
 	chain := services.NewHashChainService(txs, bals, heads, log)
 	ledgerSvc := services.NewLedgerService(uow, bals, chain, log)
+	// Phase F: single source of truth for escrow/dispute policy, shared by
+	// settlement, FileDispute and the hourly EscrowReleaseJob.
+	escrowSvc := services.NewEscrowServiceWithWindow(cfg.EscrowWindow)
 
 	deps := &commands.Deps{
-		Uow:         uow,
-		Ledger:      ledgerSvc,
-		Chain:       chain,
-		Balances:    bals,
-		Txs:         txs,
-		Topups:      topups,
-		Withdrawals: withdrawals,
-		Escrows:     escrows,
-		Disputes:    disputes,
-		Audit:       audit,
-		Events:      cfg.Events,
-		Verifier:    cfg.Verifier,
-		Payouts:     cfg.Payouts,
-		Fraud:       cfg.Fraud,
-		DriverStats: cfg.DriverStats,
-		Clock:       systemClock{},
+		Uow:          uow,
+		Ledger:       ledgerSvc,
+		Chain:        chain,
+		Balances:     bals,
+		Txs:          txs,
+		Topups:       topups,
+		Withdrawals:  withdrawals,
+		Escrows:      escrows,
+		Disputes:     disputes,
+		Audit:        audit,
+		Events:       cfg.Events,
+		Verifier:     cfg.Verifier,
+		Payouts:      cfg.Payouts,
+		Fraud:        cfg.Fraud,
+		DriverStats:  cfg.DriverStats,
+		EscrowPolicy: escrowSvc,
+		Clock:        systemClock{},
 	}
 
 	// --- HTTP interface (Step 6) --------------------------------------------
