@@ -9,9 +9,20 @@ import (
 	"fmt"
 	"io"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/service/kms"
 )
+
+// DataKeyProvider abstracts a KMS-style envelope-encryption key source.
+// The AWS SDK v2 KMS client requires Go >= 1.22 (crypto/fips140, slices, maps),
+// which is incompatible with this module's current toolchain floor (Go 1.19).
+// Production wiring should provide an adapter around aws-sdk kms.Client here;
+// Phase D ledger encryption will inject a local/Vault-backed implementation.
+type DataKeyProvider interface {
+	// GenerateDataKey returns a fresh plaintext 32-byte data key plus its
+	// ciphertext-blob (encrypted by the master key identified at construction).
+	GenerateDataKey(ctx context.Context) (plaintext, ciphertextBlob []byte, err error)
+	// DecryptDataKey recovers the plaintext data key from its ciphertext blob.
+	DecryptDataKey(ctx context.Context, ciphertextBlob []byte) (plaintext []byte, err error)
+}
 
 var (
 	ErrDecryptionFailed  = errors.New("decryption failed")
@@ -21,9 +32,9 @@ var (
 // EnvelopeEncryption implements AWS KMS envelope encryption pattern
 // Each record gets its own unique data key, encrypted by KMS master key
 type EnvelopeEncryption struct {
-	kmsClient *kms.Client
-	keyID     string
-	cache     *DataKeyCache
+	keys  DataKeyProvider
+	keyID string
+	cache *DataKeyCache
 }
 
 type EncryptedData struct {
@@ -44,27 +55,24 @@ type CachedDataKey struct {
 	ExpiresAt time.Time
 }
 
-func NewEnvelopeEncryption(kmsClient *kms.Client, keyID string) *EnvelopeEncryption {
+func NewEnvelopeEncryption(keys DataKeyProvider, keyID string) *EnvelopeEncryption {
 	return &EnvelopeEncryption{
-		kmsClient: kmsClient,
-		keyID:     keyID,
-		cache:     &DataKeyCache{keys: make(map[string]*CachedDataKey)},
+		keys:  keys,
+		keyID: keyID,
+		cache: &DataKeyCache{keys: make(map[string]*CachedDataKey)},
 	}
 }
 
 // Encrypt encrypts data using envelope encryption
 func (e *EnvelopeEncryption) Encrypt(ctx context.Context, plaintext []byte) (*EncryptedData, error) {
-	// 1. Generate data key via KMS
-	output, err := e.kmsClient.GenerateDataKey(ctx, &kms.GenerateDataKeyInput{
-		KeyId:   &e.keyID,
-		KeySpec: "AES_256",
-	})
+	// 1. Generate data key via KMS provider
+	dataKey, encDataKey, err := e.keys.GenerateDataKey(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate data key: %w", err)
 	}
 
 	// 2. Encrypt plaintext with data key using AES-256-GCM
-	block, err := aes.NewCipher(output.Plaintext)
+	block, err := aes.NewCipher(dataKey)
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +90,12 @@ func (e *EnvelopeEncryption) Encrypt(ctx context.Context, plaintext []byte) (*En
 	ciphertext := gcm.Seal(nil, iv, plaintext, nil)
 
 	// 3. Clear plaintext data key from memory
-	for i := range output.Plaintext {
-		output.Plaintext[i] = 0
+	for i := range dataKey {
+		dataKey[i] = 0
 	}
 
 	return &EncryptedData{
-		EncryptedDataKey: output.CiphertextBlob,
+		EncryptedDataKey: encDataKey,
 		Ciphertext:       ciphertext,
 		IV:               iv,
 		KeyID:            e.keyID,
@@ -98,16 +106,14 @@ func (e *EnvelopeEncryption) Encrypt(ctx context.Context, plaintext []byte) (*En
 
 // Decrypt decrypts data encrypted with envelope encryption
 func (e *EnvelopeEncryption) Decrypt(ctx context.Context, data *EncryptedData) ([]byte, error) {
-	// 1. Decrypt data key via KMS
-	output, err := e.kmsClient.Decrypt(ctx, &kms.DecryptInput{
-		CiphertextBlob: data.EncryptedDataKey,
-	})
+	// 1. Decrypt data key via KMS provider
+	dataKey, err := e.keys.DecryptDataKey(ctx, data.EncryptedDataKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data key: %w", err)
 	}
 
 	// 2. Decrypt ciphertext with data key
-	block, err := aes.NewCipher(output.Plaintext)
+	block, err := aes.NewCipher(dataKey)
 	if err != nil {
 		return nil, err
 	}
@@ -123,8 +129,8 @@ func (e *EnvelopeEncryption) Decrypt(ctx context.Context, data *EncryptedData) (
 	}
 
 	// 3. Clear plaintext data key
-	for i := range output.Plaintext {
-		output.Plaintext[i] = 0
+	for i := range dataKey {
+		dataKey[i] = 0
 	}
 
 	return plaintext, nil

@@ -2,7 +2,6 @@ package http
 
 import (
 	"net/http"
-	"slices"
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/commands"
@@ -76,7 +75,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 	}
 	if len(deps.CORSOrigins) == 0 {
 		corsOpts.AllowOriginFunc = func(r *http.Request, origin string) bool { return false }
-	} else if slices.Contains(deps.CORSOrigins, "*") {
+	} else if containsStr(deps.CORSOrigins, "*") {
 		corsOpts.AllowedOrigins = []string{"*"}
 		corsOpts.AllowCredentials = false
 	} else {
@@ -195,4 +194,15 @@ func NewRouter(deps *Dependencies) http.Handler {
 	})
 
 	return r
+}
+
+// containsStr reports whether xs contains s (Go 1.19-compatible replacement
+// for the stdlib "slices" package, which requires Go >= 1.21).
+func containsStr(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
