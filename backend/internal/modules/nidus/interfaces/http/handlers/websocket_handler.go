@@ -42,12 +42,26 @@ func (h *WebSocketHandler) isAllowedOrigin(origin string) bool {
 }
 
 type Client struct {
-	hub      *WebSocketHandler
-	conn     *websocket.Conn
-	send     chan []byte
-	userID   uuid.UUID
-	rideID   *uuid.UUID
-	topics   map[string]bool
+	hub    *WebSocketHandler
+	conn   *websocket.Conn
+	send   chan []byte
+	userID uuid.UUID
+	rideID *uuid.UUID
+	topics map[string]bool
+	// closed guards double-close of c.send. It is only ever flipped by the
+	// hub goroutine (run loop), which serializes all close operations, so
+	// plain field access is safe within that single-goroutine context.
+	closed bool
+}
+
+// safeCloseSend closes client.send exactly once. MUST only be called from the
+// hub run() goroutine so there is no race between broadcast eviction and
+// unregister handling.
+func (c *Client) safeCloseSend() {
+	if !c.closed {
+		c.closed = true
+		close(c.send)
+	}
 }
 
 type Message struct {
@@ -88,28 +102,32 @@ func (h *WebSocketHandler) run() {
 			h.mu.Unlock()
 
 		case client := <-h.unregister:
+			// Hub owns lifecycle: only this goroutine ever closes client.send.
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.send)
+				client.safeCloseSend()
 			}
 			h.mu.Unlock()
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			data := mustJSON(message)
+			topic, _ := message.Payload["topic"].(string)
+			h.mu.Lock()
 			for client := range h.clients {
-				// Check if client is subscribed to this topic
-				topic := message.Payload["topic"].(string)
-				if client.topics[topic] || client.topics["*"] {
-					select {
-					case client.send <- mustJSON(message):
-					default:
-						close(client.send)
-						delete(h.clients, client)
-					}
+				subscribed := client.topics[topic] || client.topics["*"]
+				if !subscribed {
+					continue
+				}
+				select {
+				case client.send <- data:
+				default:
+					// Slow consumer: evict + close once, from the hub only.
+					delete(h.clients, client)
+					client.safeCloseSend()
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
@@ -214,7 +232,7 @@ func (c *Client) handleMessage(msg Message) {
 	case "subscribe":
 		if topic, ok := msg.Payload["topic"].(string); ok {
 			c.topics[topic] = true
-			c.send <- mustJSON(Message{
+			c.trySend(Message{
 				Type: "subscribed",
 				Payload: map[string]interface{}{
 					"topic": topic,
@@ -226,7 +244,7 @@ func (c *Client) handleMessage(msg Message) {
 	case "unsubscribe":
 		if topic, ok := msg.Payload["topic"].(string); ok {
 			delete(c.topics, topic)
-			c.send <- mustJSON(Message{
+			c.trySend(Message{
 				Type: "unsubscribed",
 				Payload: map[string]interface{}{
 					"topic": topic,
@@ -236,11 +254,28 @@ func (c *Client) handleMessage(msg Message) {
 		}
 
 	case "ping":
-		c.send <- mustJSON(Message{
+		c.trySend(Message{
 			Type:      "pong",
 			Payload:   map[string]interface{}{},
 			Timestamp: time.Now().Unix(),
 		})
+	}
+}
+
+// trySend performs a non-blocking send on c.send. If the channel is closed
+// (hub evicted this client) or full (slow consumer), the message is dropped
+// instead of panicking or blocking readPump. This removes the race where
+// readPump wrote to a channel the hub had already closed.
+func (c *Client) trySend(msg Message) {
+	data := mustJSON(msg)
+	defer func() {
+		// Recover from "send on closed channel" if the hub raced us during
+		// eviction; dropping the reply is safe here.
+		_ = recover()
+	}()
+	select {
+	case c.send <- data:
+	default:
 	}
 }
 

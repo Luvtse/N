@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
-import '../widgets/map_widget.dart';
+import 'map_widget.dart';
 import '../widgets/driver_card.dart';
 
 class RideTrackingPage extends StatelessWidget {

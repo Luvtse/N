@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:hive/hive.dart';
 
 class WebSocketClient {
@@ -26,8 +27,13 @@ class WebSocketClient {
       }
 
       final wsUrl = baseUrl.replaceAll('http', 'ws');
-      _channel = WebSocketChannel.connect(
-        Uri.parse('$wsUrl/ws?token=$token&type=driver'),
+      // Phase B/B6: pass the JWT via the Sec-WebSocket-Protocol subprotocol
+      // ("nidaw-auth.<jwt>") instead of a ?token= query param, so access
+      // logs / proxies never see the credential. IOWebSocketChannel lets us
+      // set the handshake header directly.
+      _channel = IOWebSocketChannel.connect(
+        Uri.parse('$wsUrl/ws?type=driver'),
+        protocols: ['nidaw-auth.$token'],
       );
 
       await _channel!.ready;

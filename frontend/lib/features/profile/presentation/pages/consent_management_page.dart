@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/theme/app_colors.dart';
-import '../../auth/presentation/bloc/legal_consent_bloc.dart';
+import '../../../auth/presentation/bloc/legal_consent_bloc.dart';
 
 class ConsentManagementPage extends StatefulWidget {
   const ConsentManagementPage({super.key});

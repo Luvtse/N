@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 
-import '../../../data/repositories/driver_profile_repository.dart';
+import '../../data/repositories/driver_profile_repository.dart';
 import '../../domain/entities/driver_profile.dart';
 
 // Events

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart' if (dart.library.html) 'package:web_socket_channel/html.dart';
 
 /// WebSocket client for real-time communication
 class WebSocketClient {
@@ -50,11 +51,21 @@ class WebSocketClient {
       _emitState(WebSocketConnectionState.connecting);
 
       final token = _tokenProvider?.call();
-      final url = token != null 
-          ? '$_baseUrl?token=$token'
-          : _baseUrl;
-
-      _channel = WebSocketChannel.connect(Uri.parse(url));
+      // Phase B/B6: never put the JWT in the URL (?token= leaks into access
+      // logs/proxies). Pass it via the Sec-WebSocket-Protocol subprotocol
+      // "nidaw-auth.<jwt>", which the backend hub extracts first.
+      if (kIsWeb) {
+        // Browser WebSocket API cannot set handshake headers/subprotocols for
+        // custom auth; fall back to the deprecated query param only on web,
+        // where the server logs a migration warning.
+        final url = token != null ? '$_baseUrl?token=$token' : _baseUrl;
+        _channel = WebSocketChannel.connect(Uri.parse(url));
+      } else {
+        _channel = IOWebSocketChannel.connect(
+          Uri.parse(_baseUrl),
+          protocols: token != null ? ['nidaw-auth.$token'] : null,
+        );
+      }
 
       await _channel!.ready;
 
