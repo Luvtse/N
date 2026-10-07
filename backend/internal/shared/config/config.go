@@ -111,13 +111,46 @@ type AuthConfig struct {
 	LockoutDuration     time.Duration
 }
 
-// PaymentsConfig holds payment gateway settings
+// PaymentsConfig holds payment gateway settings.
+// Phase D decision (b): Stripe/Adyen/PayPal are FULLY PURGED — no dead-code
+// fallbacks. Ethiopian rails only: Telebirr, Chapa, M-Pesa Ethiopia.
+// All values default to empty; the user supplies sandbox/prod credentials via env.
 type PaymentsConfig struct {
-	StripeAPIKey       string
-	StripeWebhookSecret string
-	AdyenAPIKey        string
-	AdyenMerchantAccount string
-	DefaultCurrency    string
+	// ActiveProvider selects the rail used by the gateway factory: "telebirr" | "chapa" | "mpesa".
+	ActiveProvider string
+
+	// Currency convention (Phase D decision a): ETB minor unit = santim (100 santim = 1 ETB).
+	DefaultCurrency      string
+	MinorUnitScale       int // 2 decimals for ETB santim
+	WithdrawalFeePercent float64 // e.g. 0.5 (%), applied on payouts
+	WithdrawalFeeMin     int64   // santim (e.g. 5000 = 50.00 ETB)
+	WithdrawalFeeMax     int64   // santim (e.g. 50000 = 500.00 ETB)
+
+	// Telebirr (Ethio Telecom) — merchant/topup + merchant payout APIs.
+	TelebirrClientID     string
+	TelebirrClientSecret string
+	TelebirrPrivateKey   string // PEM or base64, RSA request signing
+	TelebirrPublicKey    string // PEM or base64, RSA response verification
+	TelebirrBaseURL      string // sandbox: https://ethiocharge-telemicrosite-test.1qana.net
+	TelebirrCallbackURL  string
+
+	// Chapa (https://developer.chapa.co) — checkout + transaction verify + settlement.
+	ChapaSecretKey   string // CHS... (prod) / CHSK_TEST... (sandbox)
+	ChapaPublicKey   string
+	ChapaBaseURL     string // sandbox: https://api.chapagateway.dev/api/prerotate/v1
+	ChapaWebhookHash string // X-Chapa-Signature secret for event verification
+
+	// M-Pesa Ethiopia (Safaricom Daraja: https://developer.safaricom.et) — STK Push + B2C payout.
+	MpesaConsumerKey    string
+	MpesaConsumerSecret string
+	MpesaShortcode      string // Paybill/Till number
+	MpesaPasskey        string
+	MpesaInitiatorName  string // for B2C payout API (verify availability in ET portal)
+	MpesaInitiatorPwd   string
+	MpesaSecurityCert   string // path or PEM of Daraja security certificate
+	MpesaSandboxBaseURL string // https://sandbox.safaricom.et
+	MpesaProdBaseURL    string // https://api.safaricom.et
+	MpesaUseSandbox     bool
 }
 
 // MLConfig holds ML platform settings
@@ -278,11 +311,35 @@ func (c *Config) loadAuth() error {
 
 func (c *Config) loadPayments() error {
 	c.Payments = PaymentsConfig{
-		StripeAPIKey:         getEnvOrDefault("STRIPE_API_KEY", ""),
-		StripeWebhookSecret:  getEnvOrDefault("STRIPE_WEBHOOK_SECRET", ""),
-		AdyenAPIKey:          getEnvOrDefault("ADYEN_API_KEY", ""),
-		AdyenMerchantAccount: getEnvOrDefault("ADYEN_MERCHANT_ACCOUNT", ""),
-		DefaultCurrency:      getEnvOrDefault("DEFAULT_CURRENCY", "USD"),
+		ActiveProvider:       getEnvOrDefault("PAYMENT_ACTIVE_PROVIDER", "chapa"),
+		DefaultCurrency:      getEnvOrDefault("DEFAULT_CURRENCY", "ETB"),
+		MinorUnitScale:       getIntEnvOrDefault("PAYMENT_MINOR_UNIT_SCALE", 2),
+		WithdrawalFeePercent: getFloatEnvOrDefault("WITHDRAWAL_FEE_PERCENT", 0.5),
+		WithdrawalFeeMin:     int64(getIntEnvOrDefault("WITHDRAWAL_FEE_MIN_SANTIM", 5000)),
+		WithdrawalFeeMax:     int64(getIntEnvOrDefault("WITHDRAWAL_FEE_MAX_SANTIM", 50000)),
+
+		TelebirrClientID:     getEnvOrDefault("TELEBIRR_CLIENT_ID", ""),
+		TelebirrClientSecret: getEnvOrDefault("TELEBIRR_CLIENT_SECRET", ""),
+		TelebirrPrivateKey:   getEnvOrDefault("TELEBIRR_PRIVATE_KEY", ""),
+		TelebirrPublicKey:    getEnvOrDefault("TELEBIRR_PUBLIC_KEY", ""),
+		TelebirrBaseURL:      getEnvOrDefault("TELEBIRR_BASE_URL", "https://ethiocharge-telemicrosite-test.1qana.net/telebirr-merchant-maas/v2"),
+		TelebirrCallbackURL:  getEnvOrDefault("TELEBIRR_CALLBACK_URL", ""),
+
+		ChapaSecretKey:   getEnvOrDefault("CHAPA_SECRET_KEY", ""),
+		ChapaPublicKey:   getEnvOrDefault("CHAPA_PUBLIC_KEY", ""),
+		ChapaBaseURL:     getEnvOrDefault("CHAPA_BASE_URL", "https://api.chapagateway.dev/api/prerotate/v1"),
+		ChapaWebhookHash: getEnvOrDefault("CHAPA_WEBHOOK_HASH", ""),
+
+		MpesaConsumerKey:    getEnvOrDefault("MPESA_CONSUMER_KEY", ""),
+		MpesaConsumerSecret: getEnvOrDefault("MPESA_CONSUMER_SECRET", ""),
+		MpesaShortcode:      getEnvOrDefault("MPESA_SHORTCODE", ""),
+		MpesaPasskey:        getEnvOrDefault("MPESA_PASSKEY", ""),
+		MpesaInitiatorName:  getEnvOrDefault("MPESA_INITIATOR_NAME", ""),
+		MpesaInitiatorPwd:   getEnvOrDefault("MPESA_INITIATOR_PASSWORD", ""),
+		MpesaSecurityCert:   getEnvOrDefault("MPESA_SECURITY_CERT", ""),
+		MpesaSandboxBaseURL: getEnvOrDefault("MPESA_SANDBOX_BASE_URL", "https://sandbox.safaricom.et"),
+		MpesaProdBaseURL:    getEnvOrDefault("MPESA_PROD_BASE_URL", "https://api.safaricom.et"),
+		MpesaUseSandbox:     getBoolEnvOrDefault("MPESA_USE_SANDBOX", true),
 	}
 	return nil
 }
@@ -368,8 +425,27 @@ func (c *Config) Validate() error {
 				errors = append(errors, "CORS_ORIGINS must not contain '*' in production; list explicit origins")
 			}
 		}
-		if c.Payments.StripeAPIKey == "" {
-			errors = append(errors, "STRIPE_API_KEY is required in production")
+		if c.Payments.DefaultCurrency != "ETB" {
+			errors = append(errors, "DEFAULT_CURRENCY must be ETB in production (Ethiopian rails only)")
+		}
+		switch c.Payments.ActiveProvider {
+		case "chapa":
+			if c.Payments.ChapaSecretKey == "" {
+				errors = append(errors, "CHAPA_SECRET_KEY is required in production")
+			}
+		case "telebirr":
+			if c.Payments.TelebirrClientID == "" || c.Payments.TelebirrClientSecret == "" {
+				errors = append(errors, "TELEBIRR_CLIENT_ID/TELEBIRR_CLIENT_SECRET are required in production")
+			}
+		case "mpesa":
+			if c.Payments.MpesaConsumerKey == "" || c.Payments.MpesaConsumerSecret == "" {
+				errors = append(errors, "MPESA_CONSUMER_KEY/MPESA_CONSUMER_SECRET are required in production")
+			}
+			if c.Payments.MpesaUseSandbox {
+				errors = append(errors, "MPESA_USE_SANDBOX must be false in production")
+			}
+		default:
+			errors = append(errors, "PAYMENT_ACTIVE_PROVIDER must be one of telebirr|chapa|mpesa")
 		}
 	}
 
@@ -431,6 +507,18 @@ func getBoolEnvOrDefault(key string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return boolValue
+}
+
+func getFloatEnvOrDefault(key string, defaultValue float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	floatValue, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return floatValue
 }
 
 func getDurationEnvOrDefault(key string, defaultValue time.Duration) time.Duration {

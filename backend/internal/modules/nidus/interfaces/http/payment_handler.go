@@ -29,7 +29,8 @@ return &PaymentHandler{paymentService: paymentService, log: log}
 type CreatePaymentRequest struct {
 Amount        float64 `json:"amount"`
 Currency      string  `json:"currency"`
-PaymentMethod string  `json:"payment_method"`
+PaymentMethod string  `json:"payment_method"` // rail hint: telebirr|chapa|mpesa
+Phone         string  `json:"phone"`          // payer MSISDN for STK-push rails
 Description   string  `json:"description"`
 }
 
@@ -66,12 +67,12 @@ return
 }
 
 paymentReq := &services.PaymentRequest{
-UserID:        userID.String(), // session-derived identity (B1)
-Amount:        req.Amount,
-Currency:      req.Currency,
-PaymentMethod: req.PaymentMethod,
-Description:   req.Description,
-Metadata:      map[string]string{"source": "nidus_api"},
+UserID:      userID.String(), // session-derived identity (B1)
+Amount:      req.Amount,
+Currency:    req.Currency,
+Phone:       req.Phone,
+Description: req.Description,
+Metadata:    map[string]string{"source": "nidus_api", "rail_hint": req.PaymentMethod},
 }
 
 resp, err := h.paymentService.ProcessPayment(r.Context(), paymentReq)

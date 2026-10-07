@@ -38,7 +38,8 @@ type ProcessPaymentCommand struct {
 	OrderType       entities.OrderType
 	Amount          float64
 	Currency        string
-	PaymentMethodID string
+	PaymentMethodID string // rail hint: telebirr|chapa|mpesa (legacy name kept for API compat)
+	Phone           string // STK-push rails require the payer MSISDN
 	Description     string
 	Metadata        map[string]string
 	IdempotencyKey  string // Prevent duplicate charges
@@ -135,60 +136,59 @@ func (h *ProcessPaymentHandler) Execute(ctx context.Context, cmd *ProcessPayment
 		return nil, err
 	}
 
-	// 7. Call payment gateway (interface contract: cents int64, ETB whole cents)
-	amountCents := toCents(cmd.Amount)
-	intent, err := h.paymentGateway.CreatePaymentIntent(ctx, &payments.CreatePaymentRequest{
-		Amount:          amountCents,
-		Currency:        cmd.Currency,
-		PaymentMethodID: cmd.PaymentMethodID,
-		Description:     cmd.Description,
-		Metadata: map[string]string{
-			"transaction_id": transaction.ID.String(),
-			"order_id":       cmd.OrderID.String(),
-			"order_type":     string(cmd.OrderType),
-			"user_id":        cmd.UserID.String(),
-			"idempotency_key": cmd.IdempotencyKey,
-		},
-		CaptureMethod: "automatic",
-	})
-	if err != nil {
-		// Mark as failed
-		transaction.Status = entities.TransactionStatusFailed
-		transaction.UpdatedAt = time.Now().UTC()
-		_ = h.updateTransactionStatus(ctx, transaction)
+	// 7. Call payment rail (interface contract: santim int64, ETB minor units)
+amountSantim := toCents(cmd.Amount) // toCents returns minor units; ETB has 2 dp
+checkout, err := h.paymentGateway.CreateCheckout(ctx, &payments.CheckoutRequest{
+AmountETBSantim: amountSantim,
+Currency:        cmd.Currency,
+Phone:           cmd.Phone,
+Reference:       cmd.IdempotencyKey,
+Description:     cmd.Description,
+Metadata: map[string]string{
+"transaction_id":  transaction.ID.String(),
+"order_id":        cmd.OrderID.String(),
+"order_type":      string(cmd.OrderType),
+"user_id":         cmd.UserID.String(),
+"idempotency_key": cmd.IdempotencyKey,
+},
+})
+if err != nil {
+// Mark as failed
+transaction.Status = entities.TransactionStatusFailed
+transaction.UpdatedAt = time.Now().UTC()
+_ = h.updateTransactionStatus(ctx, transaction)
 
-		// Emit failure event
-		h.emitPaymentEvent(ctx, transaction, "payment.failed", map[string]interface{}{
-			"error": err.Error(),
-		})
+// Emit failure event
+h.emitPaymentEvent(ctx, transaction, "payment.failed", map[string]interface{}{
+"error": err.Error(),
+})
 
-		return nil, fmt.Errorf("%w: %v", ErrPaymentFailed, err)
-	}
+return nil, fmt.Errorf("%w: %v", ErrPaymentFailed, err)
+}
 
-	// 8. Update transaction with gateway response
-	status, statusErr := h.paymentGateway.GetPaymentStatus(ctx, intent.ID)
-	mappedStatus := entities.TransactionStatusProcessing
-	externalID := intent.ID
-	last4 := ""
-	brand := ""
-	if statusErr == nil && status != nil {
-		mappedStatus = mapGatewayStatus(status.Status)
-		externalID = status.ID
-		last4 = status.Last4
-		brand = status.Brand
-	} else {
-		mappedStatus = mapGatewayStatus(intent.Status)
-	}
-	transaction.Status = mappedStatus
-	transaction.ExternalTransactionID = externalID
-	transaction.PaymentIntentID = intent.ID
-	transaction.CardLast4 = last4
-	transaction.CardBrand = brand
-	transaction.UpdatedAt = time.Now().UTC()
+// 8. Update transaction with rail response. Checkout initiation means the
+// money has NOT moved yet — status stays processing/pending until the
+// webhook + VerifyPayment reconciliation confirms it (fail-safe default).
+mappedStatus := mapGatewayStatus(checkout.Status)
+externalID := checkout.Reference
+last4 := ""
+brand := ""
+if status, statusErr := h.paymentGateway.VerifyPayment(ctx, checkout.Reference); statusErr == nil && status != nil {
+mappedStatus = mapGatewayStatus(status.Status)
+if status.ProviderTxID != "" {
+externalID = status.ProviderTxID
+}
+}
+transaction.Status = mappedStatus
+transaction.ExternalTransactionID = externalID
+transaction.PaymentIntentID = checkout.Reference
+transaction.CardLast4 = last4
+transaction.CardBrand = brand
+transaction.UpdatedAt = time.Now().UTC()
 
-	if err := h.updateTransaction(ctx, transaction); err != nil {
-		return nil, fmt.Errorf("failed to update transaction: %w", err)
-	}
+if err := h.updateTransaction(ctx, transaction); err != nil {
+return nil, fmt.Errorf("failed to update transaction: %w", err)
+}
 
 	// 9. Emit success event
 	if transaction.Status == entities.TransactionStatusSucceeded {
