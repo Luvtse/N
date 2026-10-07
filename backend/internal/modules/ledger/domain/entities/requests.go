@@ -290,6 +290,17 @@ const (
 	ReasonOther         ReasonCode = "other"
 )
 
+// Valid reports whether r is part of the closed reason-code vocabulary.
+func (r ReasonCode) Valid() bool {
+	switch r {
+	case ReasonNoShow, ReasonOvercharge, ReasonRouteDev, ReasonVehicleIssue,
+		ReasonUnsafeDriving, ReasonLostItem, ReasonFareSplit, ReasonOther:
+		return true
+	default:
+		return false
+	}
+}
+
 // AutoResolvableReasons are simple cases resolved by rules without admin
 // review (Phase F Step 3).
 func AutoResolvableReason(r ReasonCode) bool {
