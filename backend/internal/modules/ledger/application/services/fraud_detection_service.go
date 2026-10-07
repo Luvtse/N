@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -163,6 +164,8 @@ type FraudDetectionService struct {
 	cfg     FraudConfig
 	log     *zap.Logger
 	now     func() time.Time
+	mu      sync.Mutex                // guards signals
+	signals map[signalKey]signalEntry // HTTP-layer device/IP context cache
 }
 
 // NewFraudDetectionService wires the evaluator. txs must not be nil.
@@ -185,25 +188,82 @@ func (s *FraudDetectionService) SetClock(f func() time.Time) { s.now = f }
 // Config exposes the effective (defaulted) configuration.
 func (s *FraudDetectionService) Config() FraudConfig { return s.cfg }
 
-// Evaluation is the full result of one fraud pass.
-type Evaluation struct {
-	Score         float64
-	Hold          bool
-	Triggered     []FraudCheckType
-	Contributions map[string]float64
+// signalEntry is one recorded HTTP-layer fraud context.
+type signalEntry struct {
+	fc FraudContext
+	at time.Time
+}
+
+// signalKey is the per-user slot holding the latest HTTP-layer fraud signals.
+type signalKey struct{ uuid.UUID }
+
+// RecordWithdrawalSignals implements commands.WithdrawalSignalRecorder: the
+// HTTP layer calls this just before RequestWithdrawal so the device
+// fingerprint gets indexed (SADD — "same device, multiple accounts" needs the
+// WRITE side) and the client IP / fingerprint are visible to the checks
+// inside Evaluate. Signals live for 5 minutes; a stale entry simply means the
+// richer context path falls back to plain evaluation.
+func (s *FraudDetectionService) RecordWithdrawalSignals(ctx context.Context, userID uuid.UUID, fc FraudContext) {
+	if userID == uuid.Nil {
+		return
+	}
+	if s.devices != nil && fc.DeviceFingerprint != "" {
+		if rec, ok := s.devices.(interface {
+			RecordDevice(context.Context, string, uuid.UUID) error
+		}); ok {
+			if err := rec.RecordDevice(ctx, fc.DeviceFingerprint, userID); err != nil {
+				s.log.Warn("ledger/fraud: record device failed", zap.String("error", err.Error()))
+			}
+		}
+	}
+	if fc.DeviceFingerprint == "" && fc.ClientIP == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.signals == nil {
+		s.signals = map[signalKey]signalEntry{}
+	}
+	s.signals[signalKey{userID}] = signalEntry{fc: fc, at: s.now()}
+	s.mu.Unlock()
 }
 
 // EvaluateWithdrawal satisfies commands.FraudEvaluator. A nil-repository
 // service still scores; it simply skips writing fraud_flags rows. The entity
 // reference recorded on flags is the user (the withdrawal id is not known
 // until after this gate runs — the command layer stamps RiskScore onto the
-// request itself).
+// request itself). If the HTTP layer recorded fresh signals for this user
+// they are consumed here; otherwise the plain (no-context) evaluation runs.
 func (s *FraudDetectionService) EvaluateWithdrawal(ctx context.Context, userID uuid.UUID, amountCents int64) (float64, bool, error) {
-	ev, err := s.Evaluate(ctx, userID, amountCents, FraudContext{})
+	fc := s.takeSignals(userID)
+	ev, err := s.Evaluate(ctx, userID, amountCents, fc)
 	if err != nil {
 		return 0, false, err
 	}
 	return ev.Score, ev.Hold, nil
+}
+
+// takeSignals pops a fresh (< 5 min) recorded context for the user, if any.
+func (s *FraudDetectionService) takeSignals(userID uuid.UUID) FraudContext {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := signalKey{userID}
+	entry, ok := s.signals[key]
+	if !ok {
+		return FraudContext{}
+	}
+	delete(s.signals, key)
+	if s.now().Sub(entry.at) > 5*time.Minute {
+		return FraudContext{} // stale: caller acted on an old request
+	}
+	return entry.fc
+}
+
+// Evaluation is the full result of one fraud pass.
+type Evaluation struct {
+	Score         float64
+	Hold          bool
+	Triggered     []FraudCheckType
+	Contributions map[string]float64
 }
 
 // EvaluateWithContext is the richer entry point when the HTTP layer supplied
