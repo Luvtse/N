@@ -100,6 +100,9 @@ type WithdrawalRepository interface {
 	// ListActionable enumerates pending (awaiting payout submission) and
 	// processing (awaiting completion poll) requests for the payout job.
 	ListActionable(ctx context.Context, limit int) ([]*entities.WithdrawalRequest, error)
+	// ListByStatus enumerates requests in one exact status (the payout job
+	// uses it to pick up 'approved' rows after admin sign-off).
+	ListByStatus(ctx context.Context, status entities.WithdrawalStatus, limit int) ([]*entities.WithdrawalRequest, error)
 }
 
 // EscrowRepository persists 72h ride holds.

@@ -251,11 +251,23 @@ func (j *PayoutJob) Run(ctx context.Context) {
 }
 
 func (j *PayoutJob) Tick(ctx context.Context) {
-	list, err := j.deps.Withdrawals.ListActionable(ctx, j.cfg.BatchSize)
+	// 'approved' first: admin sign-off must reach the rail promptly; then the
+	// standard actionable set (pending = deferred submission, processing =
+	// completion poll).
+	var list []*entities.WithdrawalRequest
+	approved, err := j.deps.Withdrawals.ListByStatus(ctx, entities.WithdrawalStatusApproved, j.cfg.BatchSize)
+	if err != nil {
+		j.log.Warn("payout job: list approved withdrawals", zap.Error(err))
+	}
+	list = append(list, approved...)
+
+	actionable, err := j.deps.Withdrawals.ListActionable(ctx, j.cfg.BatchSize)
 	if err != nil {
 		j.log.Error("payout job: list actionable", zap.Error(err))
 		return
 	}
+	list = append(list, actionable...)
+
 	for _, w := range list {
 		if err := j.process(ctx, w); err != nil {
 			j.log.Warn("payout job: process failed (will retry)",
@@ -314,5 +326,3 @@ func (j *PayoutJob) markProcessing(ctx context.Context, w *entities.WithdrawalRe
 		return j.deps.Withdrawals.Update(ctx, tx, fresh)
 	})
 }
-
-

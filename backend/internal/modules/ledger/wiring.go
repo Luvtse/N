@@ -14,6 +14,7 @@ import (
 
 	"nidaw-backend/internal/modules/ledger/application/commands"
 	"nidaw-backend/internal/modules/ledger/application/services"
+	"nidaw-backend/internal/modules/ledger/infrastructure/adapters"
 	"nidaw-backend/internal/modules/ledger/infrastructure/repositories"
 	ledgerhttp "nidaw-backend/internal/modules/ledger/interfaces/http"
 )
@@ -24,8 +25,9 @@ const EscrowWindow = 72 * time.Hour
 
 // Components is the assembled ledger dependency graph.
 type Components struct {
-	Deps    *commands.Deps
-	Handler *ledgerhttp.Handler
+	Deps     *commands.Deps
+	Handler  *ledgerhttp.Handler
+	Resolver adapters.GatewayResolver // Phase E rails (nil when unconfigured)
 }
 
 // Config controls wiring. Optional interfaces (Verifier, Payouts, Fraud,
@@ -38,6 +40,7 @@ type Config struct {
 	Logger      *zap.Logger
 	ReportKey   string // HMAC secret for signed audit reports (env-driven)
 	Events      commands.EventPublisher
+	Resolver    adapters.GatewayResolver // Phase E: Ethiopian rails (may be nil)
 	Verifier    commands.TopupVerifier
 	Payouts     commands.PayoutInitiator
 	Fraud       commands.FraudEvaluator
@@ -119,7 +122,7 @@ func Build(cfg Config) (*Components, error) {
 		log.Warn("ledger audit reports will be UNSIGNED: set LEDGER_REPORT_KEY")
 	}
 
-	return &Components{Deps: deps, Handler: ledgerhttp.NewHandler(deps, log, signer)}, nil
+	return &Components{Deps: deps, Handler: ledgerhttp.NewHandler(deps, log, signer), Resolver: cfg.Resolver}, nil
 }
 
 type systemClock struct{}
