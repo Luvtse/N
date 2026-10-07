@@ -16,6 +16,7 @@ import (
 
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
+	"nidaw-backend/internal/shared/config"
 	"nidaw-backend/internal/shared/integrations/payments"
 )
 
@@ -263,13 +264,57 @@ func pemPair(t *testing.T) (privPEM, pubPEM string) {
 	return string(priv), string(pub)
 }
 
-func baseCfg() *configShim {
-	return &configShim{}
+// loadTestConfig builds a *config.Config whose Payments section mirrors the
+// given env map — exactly what BuildResolver consumes at boot. It bypasses
+// config.Load() (which fatals on missing infra env) so rail-resolution logic
+// stays unit-testable without a live environment.
+func loadTestConfig(env map[string]string) *config.Config {
+	cfg := &config.Config{Payments: config.PaymentsConfig{
+		ActiveProvider:  env["PAYMENT_ACTIVE_PROVIDER"],
+		DefaultCurrency: "ETB",
+	}}
+	p := &cfg.Payments
+	if v, ok := env["CHAPA_SECRET_KEY"]; ok {
+		p.ChapaSecretKey = v
+	}
+	if v, ok := env["CHAPA_WEBHOOK_HASH"]; ok {
+		p.ChapaWebhookHash = v
+	}
+	if v, ok := env["TELEBIRR_CLIENT_ID"]; ok {
+		p.TelebirrClientID = v
+	}
+	if v, ok := env["TELEBIRR_CLIENT_SECRET"]; ok {
+		p.TelebirrClientSecret = v
+	}
+	if v, ok := env["TELEBIRR_PRIVATE_KEY"]; ok {
+		p.TelebirrPrivateKey = v
+	}
+	if v, ok := env["TELEBIRR_PUBLIC_KEY"]; ok {
+		p.TelebirrPublicKey = v
+	}
+	if v, ok := env["MPESA_CONSUMER_KEY"]; ok {
+		p.MpesaConsumerKey = v
+	}
+	if v, ok := env["MPESA_CONSUMER_SECRET"]; ok {
+		p.MpesaConsumerSecret = v
+	}
+	if v, ok := env["MPESA_SHORTCODE"]; ok {
+		p.MpesaShortcode = v
+	}
+	if v, ok := env["MPESA_PASSKEY"]; ok {
+		p.MpesaPasskey = v
+	}
+	if v, ok := env["MPESA_INITIATOR_NAME"]; ok {
+		p.MpesaInitiatorName = v
+	}
+	if v, ok := env["MPESA_INITIATOR_PASSWORD"]; ok {
+		p.MpesaInitiatorPwd = v
+	}
+	if v, ok := env["MPESA_SECURITY_CERT"]; ok {
+		p.MpesaSecurityCert = v
+	}
+	return cfg
 }
-
-// configShim builds a *config.Config with sane defaults for tests without
-// importing the config package's env loading.
-type configShim = struct{}
 
 func TestBuildResolver_NoRailsReturnsNil(t *testing.T) {
 	cfg := loadTestConfig(map[string]string{"PAYMENT_ACTIVE_PROVIDER": "chapa"})
