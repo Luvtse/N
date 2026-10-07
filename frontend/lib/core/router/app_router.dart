@@ -22,6 +22,8 @@ import '../../features/vorax/presentation/pages/order_tracking_page.dart';
 import '../../features/profile/presentation/pages/profile_page.dart';
 import '../../features/profile/presentation/pages/settings_page.dart';
 import '../../features/profile/presentation/pages/consent_management_page.dart';
+import '../../features/wallet/presentation/bloc/wallet_bloc.dart';
+import '../../features/wallet/presentation/pages/wallet_page.dart';
 
 // ============================================================================
 // ROUTE NAMES (for type-safe navigation)

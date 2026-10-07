@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../domain/entities/ledger_models.dart';
 import '../bloc/wallet_bloc.dart';
 import '../widgets/balance_card.dart';
 import '../widgets/topup_sheet.dart';
 import '../widgets/transaction_tile.dart';
-import '../../domain/entities/ledger_models.dart';
+import '../widgets/dispute_form_sheet.dart';
 
 /// Rider Wallet screen (Phase H Step 1): balance breakdown, top-up entry
 /// point and hash-linked transaction history with infinite scroll.
@@ -19,6 +20,25 @@ class WalletPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return BlocConsumer<WalletBloc, WalletState>(
+      // When pushed here from ride history with a disputeRideId, open the
+      // dispute form automatically once the wallet has loaded.
+      listenWhen: (previous, current) =>
+          previous is! WalletLoaded && current is WalletLoaded,
+      listener: (context, state) {
+        final rideId = disputeRideId;
+        if (rideId != null && state is WalletLoaded) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) _onDisputePressed(context, rideId);
+          });
+        }
+      },
+      buildWhen: (previous, current) => true,
+      builder: (context, state) => _buildScaffold(context, state),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, WalletState state) {
     return BlocListener<WalletBloc, WalletState>(
       listener: (context, state) {
         if (state is TopupSubmitted) {
@@ -111,6 +131,24 @@ class WalletPage extends StatelessWidget {
                       child: BalanceCard(balance: loaded.balance),
                     ),
                   ),
+                  // Dispute shortcut when opened from ride history.
+                  if (disputeRideId != null)
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      sliver: SliverToBoxAdapter(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.error,
+                            side: const BorderSide(color: AppColors.error),
+                            minimumSize: const Size.fromHeight(44),
+                          ),
+                          icon: const Icon(Icons.gavel),
+                          label: const Text('File a dispute for this ride'),
+                          onPressed: () => _onDisputePressed(
+                              context, disputeRideId!),
+                        ),
+                      ),
+                    ),
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -177,6 +215,18 @@ class WalletPage extends StatelessWidget {
           StartTopup(amount: request.amount, provider: request.provider),
         );
   }
+
+  /// Open the dispute form sheet and dispatch [FileRideDispute] on submit.
+  Future<void> _onDisputePressed(BuildContext context, String rideId) async {
+    final submission = await DisputeFormSheet.show(context, rideId: rideId);
+    if (submission == null || !context.mounted) return;
+    context.read<WalletBloc>().add(FileRideDispute(
+          rideId: rideId,
+          reasonCode: submission.reasonCode,
+          description: submission.description,
+          evidenceUrls: submission.evidenceUrls,
+        ));
+  }
 }
 
 // ============================================================================
@@ -184,13 +234,13 @@ class WalletPage extends StatelessWidget {
 // ============================================================================
 
 class _TransactionRow extends StatelessWidget {
-  final dynamic tx; // LedgerTransaction (kept dynamic-free below)
+  final LedgerTransaction tx;
 
   const _TransactionRow({required this.tx});
 
   @override
   Widget build(BuildContext context) {
-    final visual = TransactionTypeVisual.of(tx.type as String);
+    final visual = TransactionTypeVisual.of(tx.type);
     final amount = tx.amount;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -206,13 +256,13 @@ class _TransactionRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${_formatDate(tx.createdAt as DateTime)}'
+              '${_formatDate(tx.createdAt)}'
               '${tx.description != null ? ' · ${tx.description}' : ''}',
               style: const TextStyle(fontSize: 12),
             ),
             // Hash link so users can see chain continuity (audit UX).
             Text(
-              '#${shortHash(tx.txHash as String)} ← ${shortHash(tx.prevHash as String)}',
+              '#${shortHash(tx.txHash)} ← ${shortHash(tx.prevHash)}',
               style: const TextStyle(fontSize: 10, color: Colors.black38),
             ),
           ],
@@ -225,7 +275,7 @@ class _TransactionRow extends StatelessWidget {
               formatEtb(amount, signed: true),
               style: TextStyle(
                 fontWeight: FontWeight.bold,
-                color: (amount.cents as int) >= 0
+                color: amount.cents >= 0
                     ? AppColors.success
                     : AppColors.error,
               ),
