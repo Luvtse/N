@@ -313,6 +313,14 @@ func loadTestConfig(env map[string]string) *config.Config {
 	if v, ok := env["MPESA_SECURITY_CERT"]; ok {
 		p.MpesaSecurityCert = v
 	}
+	if v, ok := env["MPESA_SANDBOX_BASE_URL"]; ok {
+		p.MpesaSandboxBaseURL = v
+	} else {
+		// Mirror production defaults so tests exercising all rails get a
+		// non-empty base URL (gateway construction fails fast without one).
+		p.MpesaUseSandbox = true
+		p.MpesaSandboxBaseURL = "https://sandbox.safaricom.et"
+	}
 	return cfg
 }
 
