@@ -47,6 +47,7 @@ class RouteNames {
   static const String settings = 'settings';
   static const String consentManagement = 'consentManagement';
   static const String legalDocument = 'legalDocument';
+  static const String wallet = 'wallet';
 }
 
 // ============================================================================
@@ -56,14 +57,17 @@ class RouteNames {
 class AppRouter {
   final AuthBloc _authBloc;
   final RideBloc Function() _rideBlocFactory;
+  final WalletBloc Function() _walletBlocFactory;
 
   late final GoRouter _router;
 
   AppRouter({
     required AuthBloc authBloc,
     required RideBloc Function() rideBlocFactory,
+    required WalletBloc Function() walletBlocFactory,
   })  : _authBloc = authBloc,
-        _rideBlocFactory = rideBlocFactory {
+        _rideBlocFactory = rideBlocFactory,
+        _walletBlocFactory = walletBlocFactory {
     _router = GoRouter(
       initialLocation: '/splash',
       debugLogDiagnostics: true,
@@ -270,6 +274,21 @@ class AppRouter {
             name: RouteNames.consentManagement,
             builder: (context, state) => const ConsentManagementPage(),
           ),
+
+          // ==================================================================
+          // WALLET (Ledger — Phase H Step 1)
+          // ==================================================================
+          GoRoute(
+            path: '/wallet',
+            name: RouteNames.wallet,
+            builder: (context, state) {
+              final disputeRideId = state.uri.queryParameters['disputeRideId'];
+              return BlocProvider(
+                create: (_) => _walletBlocFactory()..add(const LoadWallet()),
+                child: WalletPage(disputeRideId: disputeRideId),
+              );
+            },
+          ),
         ],
       ),
     ];
@@ -341,6 +360,11 @@ class _AppShell extends StatelessWidget {
           label: 'Stays',
         ),
         BottomNavigationBarItem(
+          icon: Icon(Icons.account_balance_wallet_outlined),
+          activeIcon: Icon(Icons.account_balance_wallet),
+          label: 'Wallet',
+        ),
+        BottomNavigationBarItem(
           icon: Icon(Icons.person_outline),
           activeIcon: Icon(Icons.person),
           label: 'Profile',
@@ -354,7 +378,8 @@ class _AppShell extends StatelessWidget {
     if (location.startsWith('/nidus')) return 1;
     if (location.startsWith('/vorax')) return 2;
     if (location.startsWith('/haven')) return 3;
-    if (location.startsWith('/profile') || location.startsWith('/settings')) return 4;
+    if (location.startsWith('/wallet')) return 4;
+    if (location.startsWith('/profile') || location.startsWith('/settings')) return 5;
     return 0;
   }
 
@@ -373,6 +398,9 @@ class _AppShell extends StatelessWidget {
         context.goNamed(RouteNames.hotelSearch);
         break;
       case 4:
+        context.goNamed(RouteNames.wallet);
+        break;
+      case 5:
         context.goNamed(RouteNames.profile);
         break;
     }
@@ -503,6 +531,13 @@ extension NavigationHelper on BuildContext {
   
   /// Navigate to profile
   void goProfile() => GoRouter.of(this).goNamed(RouteNames.profile);
+
+  /// Navigate to the ledger wallet
+  void goWallet() => GoRouter.of(this).goNamed(RouteNames.wallet);
+
+  /// Open the wallet with the dispute form pre-filled for a completed ride.
+  void goWalletDispute(String rideId) =>
+      GoRouter.of(this).go('/wallet?disputeRideId=$rideId');
   
   /// Navigate to login
   void goLogin() => GoRouter.of(this).goNamed(RouteNames.login);
