@@ -55,6 +55,30 @@ type FraudEvaluator interface {
 	EvaluateWithdrawal(ctx context.Context, userID uuid.UUID, amountCents int64) (score float64, hold bool, err error)
 }
 
+// WithdrawalSignalRecorder is an OPTIONAL extension port (Phase G Step 1):
+// the HTTP layer hands the raw device fingerprint / client IP to the fraud
+// service BEFORE RequestWithdrawal runs the evaluator, so the signal is
+// recorded (device index write) and visible to the velocity/device/IP checks.
+// Evaluated via type assertion — services.FraudEvaluator implementations do
+// not have to support it.
+type WithdrawalSignalRecorder interface {
+	RecordWithdrawalSignals(ctx context.Context, userID uuid.UUID, fc services.FraudContext)
+}
+
+// RecordWithdrawalSignals forwards per-request signals from r's headers
+// (X-Device-Fingerprint / X-Forwarded-For) when the wired evaluator supports
+// them. No-op otherwise. Called by the HTTP layer just before the command.
+func RecordWithdrawalSignals(ctx context.Context, eval FraudEvaluator, userID uuid.UUID, deviceFingerprint, clientIP string) {
+	rec, ok := eval.(WithdrawalSignalRecorder)
+	if !ok {
+		return
+	}
+	rec.RecordWithdrawalSignals(ctx, userID, services.FraudContext{
+		DeviceFingerprint: deviceFingerprint,
+		ClientIP:          clientIP,
+	})
+}
+
 // DriverStatsProvider supplies the age/ride-count inputs for the withdrawal
 // fraud pre-checks (Phase E Step 4: account age > 24h, rides > 5).
 type DriverStatsProvider interface {
