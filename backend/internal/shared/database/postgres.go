@@ -279,6 +279,14 @@ func (p *Postgres) Stats() *pgxpool.Stat {
 	return p.pool.Stat()
 }
 
+// Pool exposes the underlying pgx connection pool to modules that require
+// native pgx semantics (e.g. the ledger module's SELECT ... FOR UPDATE NOWAIT
+// transactions, Phase D Step 4). Callers must NOT close the returned pool;
+// its lifecycle belongs to Postgres.Close.
+func (p *Postgres) Pool() *pgxpool.Pool {
+	return p.pool
+}
+
 // Close gracefully closes the connection pool
 func (p *Postgres) Close() {
 	if p.pool != nil {
