@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -147,7 +148,7 @@ func validateErr(format string, args ...interface{}) error {
 func userIDFromContext(ctx context.Context) (uuid.UUID, error) {
 	uid, ok := auth.GetUserIDFromContext(ctx)
 	if !ok || uid == uuid.Nil {
-		return uuid.Nil, auth.ErrUnauthorized
+		return uuid.Nil, auth.ErrMissingToken
 	}
 	return uid, nil
 }
