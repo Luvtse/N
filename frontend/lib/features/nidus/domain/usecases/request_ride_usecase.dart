@@ -1,5 +1,5 @@
 import '../../data/repositories/ride_repository.dart';
-import '../../domain/entities/ride.dart';
+import '../../data/repositories/ride_repository.dart';
 
 /// Use case for requesting a new ride
 class RequestRideUseCase {

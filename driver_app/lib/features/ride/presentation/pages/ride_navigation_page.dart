@@ -61,7 +61,7 @@ class RideNavigationPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(
-                        '\$${state.ride.fare.toStringAsFixed(2)}',
+                        'ETB ${state.ride.fareAmount.toStringAsFixed(2)}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -108,17 +108,17 @@ class RideNavigationPage extends StatelessWidget {
                       // Navigation Controls
                       NavigationControls(
                         status: state.ride.status,
-                        onStartNavigation: () {
+                        onNavigateToPickup: () {
                           _openNavigation(
                             state.ride.pickupLat,
                             state.ride.pickupLng,
                           );
                         },
                         onStartRide: () {
-                          context.read<ActiveRideBloc>().add(StartRide(rideId));
+                          context.read<ActiveRideBloc>().add(StartRideRequested(rideId: rideId));
                         },
                         onCompleteRide: () {
-                          context.read<ActiveRideBloc>().add(CompleteRide(rideId));
+                          context.read<ActiveRideBloc>().add(CompleteRideRequested(rideId: rideId, tipAmount: 0));
                         },
                       ),
 

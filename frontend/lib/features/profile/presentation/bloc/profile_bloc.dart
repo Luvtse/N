@@ -1,8 +1,8 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 
-import '../../data/repositories/profile_repository.dart';
-import '../../domain/entities/user_profile.dart';
+import '../../../../core/network/api_client.dart';
+
 
 // Events
 abstract class ProfileEvent extends Equatable {
@@ -81,13 +81,57 @@ class ProfileError extends ProfileState {
   List<Object?> get props => [message];
 }
 
+// ============================================================================
+// DOMAIN ENTITY + REPOSITORY (kept here so the slice is self-contained until
+// the profile feature grows into full clean-architecture layers)
+// ============================================================================
+
+/// User profile entity.
+class UserProfile extends Equatable {
+  final String id;
+  final String fullName;
+  final String email;
+  final String phone;
+  final String? avatarUrl;
+  final DateTime createdAt;
+
+  const UserProfile({
+    required this.id,
+    required this.fullName,
+    required this.email,
+    required this.phone,
+    this.avatarUrl,
+    required this.createdAt,
+  });
+
+  factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
+        id: json['id']?.toString() ?? '',
+        fullName: json['full_name'] as String? ?? json['name'] as String? ?? '',
+        email: json['email'] as String? ?? '',
+        phone: json['phone'] as String? ?? '',
+        avatarUrl: json['avatar_url'] as String?,
+        createdAt: DateTime.tryParse(json['created_at'] as String? ?? '') ??
+            DateTime.now(),
+      );
+
+  @override
+  List<Object?> get props => [id, fullName, email, phone, avatarUrl, createdAt];
+}
+
+/// Abstract repository for profile operations (implemented by UserRepository).
+abstract class ProfileRepository {
+  Future<UserProfile> getProfile();
+  Future<UserProfile> updateProfile(Map<String, dynamic> data);
+  Future<UserProfile> updateProfilePicture(String imagePath);
+}
+
 // BLoC
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final ProfileRepository _profileRepository;
 
   ProfileBloc({
-    required ProfileRepository profileRepository,
-  })  : _profileRepository = profileRepository,
+    required ProfileRepository userRepository,
+  })  : _profileRepository = userRepository,
         super(const ProfileInitial()) {
     on<LoadProfile>(_onLoadProfile);
     on<UpdateProfile>(_onUpdateProfile);

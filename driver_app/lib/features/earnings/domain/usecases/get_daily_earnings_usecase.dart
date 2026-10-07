@@ -1,5 +1,5 @@
 import '../../data/repositories/earnings_repository.dart';
-import '../../entities/earnings_report.dart';
+import '../entities/earnings_report.dart';
 
 class GetDailyEarningsUseCase {
   final EarningsRepository _repository;

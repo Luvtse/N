@@ -1,5 +1,5 @@
 import '../../data/repositories/driver_home_repository.dart';
-import '../../entities/driver_stats.dart';
+import '../entities/driver_stats.dart';
 
 class GetDriverStatsUseCase {
   final DriverHomeRepository _repository;
