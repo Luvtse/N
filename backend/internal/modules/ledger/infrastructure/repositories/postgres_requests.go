@@ -138,6 +138,56 @@ func (r *TopupRepo) GetByID(ctx context.Context, id uuid.UUID) (*entities.TopupR
 	return t, err
 }
 
+// LookupByProviderReference resolves a webhook reference back to the request.
+// It matches the provider's own transaction id first, then falls back to our
+// topup UUID (we send tx_ref = topup_id to every rail as the checkout
+// reference). Returns (nil, nil) when nothing matches so callers can treat
+// unknown references as no-ops rather than errors.
+func (r *TopupRepo) LookupByProviderReference(ctx context.Context, ref string) (*entities.TopupRequest, error) {
+	if ref == "" {
+		return nil, nil
+	}
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+topupColumns+` FROM topup_requests
+		  WHERE provider_reference = $1
+		     OR ($1 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+		         AND topup_id = $1::uuid)
+		  LIMIT 1`, ref)
+	t, err := scanTopup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ledger: lookup topup by provider ref: %w", err)
+	}
+	return t, nil
+}
+
+// ListStuck returns non-terminal topups requested before `before` (unix
+// seconds), oldest first — the polling safety net for missed webhooks.
+func (r *TopupRepo) ListStuck(ctx context.Context, beforeUnix int64, limit int) ([]*entities.TopupRequest, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+topupColumns+` FROM topup_requests
+		  WHERE status IN ('pending','processing') AND requested_at < to_timestamp($1)
+		  ORDER BY requested_at ASC LIMIT $2`, beforeUnix, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list stuck topups: %w", err)
+	}
+	defer rows.Close()
+	var out []*entities.TopupRequest
+	for rows.Next() {
+		t, err := scanTopup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ============================================================================
 // WITHDRAWAL REPOSITORY
 // ============================================================================
@@ -219,8 +269,101 @@ func (r *WithdrawalRepo) GetByID(ctx context.Context, id uuid.UUID) (*entities.W
 	if err != nil {
 		return nil, err
 	}
-	amount, _ := valueobjects.NewMoney(amountC)
-	fee, _ := valueobjects.NewMoney(feeC)
+	return scanWithdrawal(wID, userID, amountC, feeC, destType, status, debitID, revID,
+		provRef, destRaw, failure, requestedAt, completedAt)
+}
+
+// LookupByProviderReference resolves a payout callback back to the request.
+// Matches provider_reference first, then our own withdrawal UUID (we send
+// reference = withdrawal_id to the rail). Unknown refs yield (nil, nil).
+func (r *WithdrawalRepo) LookupByProviderReference(ctx context.Context, ref string) (*entities.WithdrawalRequest, error) {
+	if ref == "" {
+		return nil, nil
+	}
+	var (
+		wID, userID    uuid.UUID
+		amountC, feeC  int64
+		destType       string
+		status         string
+		debitID, revID string
+		provRef        string
+		destRaw        []byte
+		failure        string
+		requestedAt    time.Time
+		completedAt    *time.Time
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT `+withdrawalColumns+` FROM withdrawal_requests
+		  WHERE provider_reference = $1
+		     OR ($1 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+		         AND withdrawal_id = $1::uuid)
+		  LIMIT 1`, ref).
+		Scan(&wID, &userID, &amountC, &feeC, &destType, &status, &debitID, &revID,
+			&provRef, &destRaw, &failure, &requestedAt, &completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ledger: lookup withdrawal by provider ref: %w", err)
+	}
+	return scanWithdrawal(wID, userID, amountC, feeC, destType, status, debitID, revID,
+		provRef, destRaw, failure, requestedAt, completedAt)
+}
+
+// ListActionable returns withdrawals still awaiting work: pending (payout not
+// yet submitted — e.g. no initiator wired at request time) and processing
+// (submitted, awaiting terminal confirmation via poll/webhook).
+func (r *WithdrawalRepo) ListActionable(ctx context.Context, limit int) ([]*entities.WithdrawalRequest, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+withdrawalColumns+` FROM withdrawal_requests
+		  WHERE status IN ('pending','processing')
+		  ORDER BY requested_at ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list actionable withdrawals: %w", err)
+	}
+	defer rows.Close()
+	var out []*entities.WithdrawalRequest
+	for rows.Next() {
+		var (
+			wID, userID    uuid.UUID
+			amountC, feeC  int64
+			destType       string
+			status         string
+			debitID, revID string
+			provRef        string
+			destRaw        []byte
+			failure        string
+			requestedAt    time.Time
+			completedAt    *time.Time
+		)
+		if err := rows.Scan(&wID, &userID, &amountC, &feeC, &destType, &status, &debitID, &revID,
+			&provRef, &destRaw, &failure, &requestedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		w, err := scanWithdrawal(wID, userID, amountC, feeC, destType, status, debitID, revID,
+			provRef, destRaw, failure, requestedAt, completedAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func scanWithdrawal(wID, userID uuid.UUID, amountC, feeC int64, destType, status, debitID, revID,
+	provRef string, destRaw []byte, failure string, requestedAt time.Time, completedAt *time.Time,
+) (*entities.WithdrawalRequest, error) {
+	amount, err := valueobjects.NewMoney(amountC)
+	if err != nil {
+		return nil, err
+	}
+	fee, err := valueobjects.NewMoney(feeC)
+	if err != nil {
+		return nil, err
+	}
 	w := &entities.WithdrawalRequest{
 		WithdrawalID: wID, UserID: userID, Amount: amount, Fee: fee,
 		DestinationType:   entities.DestinationType(destType),

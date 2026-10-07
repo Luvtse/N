@@ -81,6 +81,13 @@ type TopupRepository interface {
 	Create(ctx context.Context, tx DBTx, t *entities.TopupRequest) error
 	Update(ctx context.Context, tx DBTx, t *entities.TopupRequest) error
 	GetByID(ctx context.Context, id uuid.UUID) (*entities.TopupRequest, error)
+	// LookupByProviderReference resolves a webhook reference back to the
+	// request (provider tx id first, then our own topup id).
+	LookupByProviderReference(ctx context.Context, ref string) (*entities.TopupRequest, error)
+	// ListStuck enumerates non-terminal requests older than before for the
+	// polling/retry job (Phase E Step 3: async verification fallback when
+	// webhooks are missed).
+	ListStuck(ctx context.Context, beforeUnix int64, limit int) ([]*entities.TopupRequest, error)
 }
 
 // WithdrawalRepository persists payout requests.
@@ -88,6 +95,11 @@ type WithdrawalRepository interface {
 	Create(ctx context.Context, tx DBTx, w *entities.WithdrawalRequest) error
 	Update(ctx context.Context, tx DBTx, w *entities.WithdrawalRequest) error
 	GetByID(ctx context.Context, id uuid.UUID) (*entities.WithdrawalRequest, error)
+	// LookupByProviderReference resolves a payout callback back to the request.
+	LookupByProviderReference(ctx context.Context, ref string) (*entities.WithdrawalRequest, error)
+	// ListActionable enumerates pending (awaiting payout submission) and
+	// processing (awaiting completion poll) requests for the payout job.
+	ListActionable(ctx context.Context, limit int) ([]*entities.WithdrawalRequest, error)
 }
 
 // EscrowRepository persists 72h ride holds.
