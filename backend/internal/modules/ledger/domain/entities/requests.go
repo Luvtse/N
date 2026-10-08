@@ -162,6 +162,7 @@ type WithdrawalRequest struct {
 	ReversalTxID       *uuid.UUID
 	ProviderReference  string
 	RiskScore          *float64
+	FraudHoldReason    string    // admin-console context (Phase H Step 3)
 	ReviewedBy         *uuid.UUID
 	ReviewedAt         *time.Time
 	FailureReason      string

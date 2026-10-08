@@ -23,6 +23,8 @@ import '../../features/vorax/data/repositories/restaurant_repository.dart';
 import '../../features/vorax/presentation/bloc/restaurant_bloc.dart';
 import '../../features/profile/data/repositories/user_repository.dart';
 import '../../features/profile/presentation/bloc/profile_bloc.dart';
+import '../../features/wallet/data/repositories/wallet_repository.dart';
+import '../../features/wallet/presentation/bloc/wallet_bloc.dart';
 
 // ============================================================================
 // SERVICE LOCATOR
@@ -146,6 +148,11 @@ void _registerRepositories() {
   getIt.registerLazySingleton<RestaurantRepository>(
     () => RestaurantRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
+
+  // Wallet (Ledger) Repository — Phase H Step 1
+  getIt.registerLazySingleton<WalletRepository>(
+    () => WalletRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
 }
 
 // ============================================================================
@@ -205,6 +212,11 @@ void _registerBlocs() {
   getIt.registerLazySingleton<ProfileBloc>(
     () => ProfileBloc(userRepository: getIt<UserRepository>()),
   );
+
+  // Wallet BLoC (factory - new instance per wallet screen)
+  getIt.registerFactory<WalletBloc>(
+    () => WalletBloc(repository: getIt<WalletRepository>()),
+  );
 }
 
 // ============================================================================
@@ -216,6 +228,7 @@ void _registerRouter() {
     () => AppRouter(
       authBloc: getIt<AuthBloc>(),
       rideBlocFactory: getIt<RideBloc>,
+      walletBlocFactory: getIt<WalletBloc>,
     ),
   );
 }

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/router/app_router.dart';
 import '../../data/repositories/ride_repository.dart';
 import '../bloc/ride_bloc.dart';
 
@@ -258,6 +259,23 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
                   ),
                 ],
               ),
+
+              // Dispute shortcut for completed rides (Phase H Step 1):
+              // opens the wallet with the dispute form pre-filled.
+              if (ride.status == 'completed') ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => context.goWalletDispute(ride.id),
+                    icon: const Icon(Icons.gavel, size: 16),
+                    label: const Text('File a dispute'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.error,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

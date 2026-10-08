@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,8 +165,9 @@ type FraudDetectionService struct {
 	cfg     FraudConfig
 	log     *zap.Logger
 	now     func() time.Time
-	mu      sync.Mutex                // guards signals
+	mu      sync.Mutex                // guards signals & lastEval
 	signals map[signalKey]signalEntry // HTTP-layer device/IP context cache
+	lastEval map[signalKey]lastEvaluation // latest fraud pass per user (admin console reason)
 }
 
 // NewFraudDetectionService wires the evaluator. txs must not be nil.
@@ -179,6 +181,8 @@ func NewFraudDetectionService(txs TxCounter, flags FraudRepository, devices Devi
 	return &FraudDetectionService{
 		txs: txs, flags: flags, devices: devices, ips: ips, ml: ml,
 		cfg: cfg.withDefaults(), log: log, now: func() time.Time { return time.Now().UTC() },
+		signals:  make(map[signalKey]signalEntry),
+		lastEval: make(map[signalKey]lastEvaluation),
 	}, nil
 }
 
@@ -239,7 +243,31 @@ func (s *FraudDetectionService) EvaluateWithdrawal(ctx context.Context, userID u
 	if err != nil {
 		return 0, false, err
 	}
+	s.mu.Lock()
+	s.lastEval[userID] = lastEvaluation{at: s.now(), reason: ev.ReasonSummary(), hold: ev.Hold}
+	s.mu.Unlock()
 	return ev.Score, ev.Hold, nil
+}
+
+// lastEvaluation caches the most recent fraud pass per user so the admin
+// console can explain why a withdrawal sits in fraud_hold without re-running
+// the rule stack (which would double-count velocity and re-file flags).
+type lastEvaluation struct {
+	at     time.Time
+	reason string
+	hold   bool
+}
+
+// ReasonForHold satisfies commands.FraudEvaluator. Returns "" when no hold is
+// currently applied for the user.
+func (s *FraudDetectionService) ReasonForHold(_ context.Context, userID uuid.UUID) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.lastEval[userID]
+	if !ok || !entry.hold {
+		return ""
+	}
+	return entry.reason
 }
 
 // takeSignals pops a fresh (< 5 min) recorded context for the user, if any.
@@ -264,6 +292,23 @@ type Evaluation struct {
 	Hold          bool
 	Triggered     []FraudCheckType
 	Contributions map[string]float64
+}
+
+// ReasonSummary renders the triggered checks into a compact human-readable
+// string for the admin withdrawal-review queue (Phase H Step 3), e.g.
+// "risk 0.82: velocity(0.70), device_fingerprint(0.60)".
+func (e *Evaluation) ReasonSummary() string {
+	if e == nil {
+		return ""
+	}
+	if len(e.Triggered) == 0 {
+		return fmt.Sprintf("risk %.2f: no checks triggered", e.Score)
+	}
+	parts := make([]string, 0, len(e.Triggered))
+	for _, t := range e.Triggered {
+		parts = append(parts, fmt.Sprintf("%s(%.2f)", string(t), e.Contributions[string(t)]))
+	}
+	return fmt.Sprintf("risk %.2f: %s", e.Score, strings.Join(parts, ", "))
 }
 
 // EvaluateWithContext is the richer entry point when the HTTP layer supplied
