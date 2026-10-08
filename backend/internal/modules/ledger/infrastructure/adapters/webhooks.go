@@ -23,6 +23,7 @@ import (
 
 	"nidaw-backend/internal/modules/ledger/application/commands"
 	"nidaw-backend/internal/shared/integrations/payments"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // maxWebhookBody bounds request size to keep malformed/spray payloads cheap.

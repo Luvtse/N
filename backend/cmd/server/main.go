@@ -24,6 +24,7 @@ import (
 	"nidaw-backend/internal/shared/config"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+	"nidaw-backend/internal/shared/observability"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -144,6 +145,14 @@ func main() {
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
+	// Phase I Step 2: Prometheus request instrumentation (bounded-label
+	// counters/histograms; exported at GET /metrics below).
+	r.Use(observability.Middleware())
+
+	// Phase I Step 2: metrics scrape endpoint. Kong strips this path from the
+	// public ingress (see monitoring/prometheus/prometheus.yml, which scrapes
+	// backend:8080 directly on the private network).
+	observability.RegisterMetricsRoute(r)
 
 	// Mount module routers
 	r.Mount("/", authhttp.NewRouter(db, authService, logger))

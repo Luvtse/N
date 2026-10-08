@@ -70,3 +70,105 @@ groups:
         annotations:
           summary: "Database connection pool nearly exhausted"
           description: "{{ $value | humanizePercentage }} of connections are in use"
+      # ------------------------------------------------------------------
+      # Phase I Step 2: ledger money-movement alerts. Metric names come from
+      # backend/internal/shared/observability/metrics.go (namespace "ledger").
+      # severity=critical routes to PagerDuty (see alertmanager.yml).
+      # ------------------------------------------------------------------
+
+      # Hash chain corruption detected — immutability of the private ledger is
+      # broken (tampering or a bug). ANY occurrence pages on-call immediately.
+      - alert: HashChainCorruptionDetected
+        expr: increase(ledger_hash_chain_corruptions_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Hash chain corruption detected"
+          description: "VerifyChain failed {{ $value }} time(s) in the last 5m. Freeze escrow releases and follow docs/operations/ledger-integrity-runbook.md."
+
+      # A payment rail (Telebirr / Chapa / M-Pesa Ethiopia) circuit has tripped.
+      - alert: ProviderDown
+        expr: max by (provider) (ledger_provider_down) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Payment provider {{ $labels.provider }} down"
+          description: "Rail {{ $labels.provider }} has reported unhealthy for 5m; fallback routing is active. Check provider status page and outbound connectivity."
+
+      # Sustained rail error rate (signature failures, timeouts) even before the
+      # circuit trips — early warning for mis-rotated webhook secrets.
+      - alert: ProviderHighErrorRate
+        expr: |
+          sum by (provider) (rate(ledger_provider_requests_total{status="error"}[5m]))
+            / clamp_min(sum by (provider) (rate(ledger_provider_requests_total[5m])), 0.001) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Provider {{ $labels.provider }} error rate high"
+          description: "{{ $value | humanizePercentage }} of rail calls failing over 10m."
+
+      # Ledger operation latency p95 above SLO (money paths must stay fast).
+      - alert: LedgerLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum(rate(ledger_operation_duration_seconds_bucket[5m])) by (le, op)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Ledger op {{ $labels.op }} p95 latency high"
+          description: "p95 for {{ $labels.op }} is {{ $value }}s (>0.5s SLO) over 10m."
+
+      # Cached balances diverged from the hash-chain rebuild (weekly job).
+      - alert: BalanceDriftDetected
+        expr: increase(ledger_balance_drift_total[24h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Balance drift detected"
+          description: "Balance-rebuild job found {{ $value }} cached-vs-chain mismatch(es) in 24h. See docs/operations/balance-rebuild-runbook.md."
+
+      # Fraud holds spiking — either an attack wave or an over-tuned rule set.
+      - alert: FraudAlertSpike
+        expr: sum(increase(ledger_fraud_flags_total[1h])) > 20
+        for: 0m
+        labels:
+          severity: warning
+          team: trust-safety
+        annotations:
+          summary: "Fraud flag spike"
+          description: "{{ $value }} fraud flags in the last hour; review the admin console fraud queue."
+
+      # Dispute rate trending up (filed disputes vs ride payments).
+      - alert: DisputeRateElevated
+        expr: |
+          sum(rate(ledger_disputes_total{outcome="filed"}[6h]))
+            / clamp_min(sum(rate(ledger_transactions_total{type="ride_payment"}[6h])), 0.001) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+          team: trust-safety
+        annotations:
+          summary: "Dispute rate elevated"
+          description: "Disputes are {{ $value | humanizePercentage }} of ride payments over 6h (>5%)."
+
+      # Unprocessed ledger errors (INSUFFICIENT_FUNDS excluded would be noise;
+      # this catches LOCK_CONFLICT storms and unknown codes).
+      - alert: LedgerErrorRateHigh
+        expr: |
+          sum by (code) (rate(ledger_operation_errors_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Ledger error code {{ $labels.code }} frequent"
+          description: "{{ $value }}/s operations failing with {{ $labels.code }}."
