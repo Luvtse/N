@@ -1,0 +1,65 @@
+# Phase I Step 2: Alertmanager routing. Prometheus (monitoring/prometheus/
+# prometheus.yml -> alerting) forwards every rule from alerts.yml here.
+#
+# PagerDuty integration key is provided via the PAGERDUTY_ROUTING_KEY secret
+# (never committed; injected by CI/deploy per Phase B/B9 secret policy).
+
+global:
+  resolve_timeout: 5m
+  pagerduty_url: https://events.pagerduty.com/v2/enqueue
+
+route:
+  receiver: default-slack
+  group_by: ['alertname', 'team']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Money-path integrity and rail outages page a human immediately.
+    - matchers:
+        - severity = "critical"
+      receiver: pagerduty-payments
+      group_wait: 0s
+      repeat_interval: 1h
+      continue: true
+    - matchers:
+        - team = "payments"
+      receiver: payments-slack
+    - matchers:
+        - team = "trust-safety"
+      receiver: trust-slack
+
+receivers:
+  - name: default-slack
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: '#ops-alerts'
+        send_resolved: true
+
+  - name: payments-slack
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: '#payments-alerts'
+        send_resolved: true
+
+  - name: trust-slack
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: '#trust-safety-alerts'
+        send_resolved: true
+
+  - name: pagerduty-payments
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY}
+        severity: critical
+        class: ledger-integrity
+        component: private-ledger
+        group: payments
+        description: '{{ .CommonAnnotations.summary }}'
+        send_resolved: true
+
+inhibit_rules:
+  # When a rail is fully down, its error-rate warning is noise.
+  - source_matchers: [ 'alertname = "ProviderDown"' ]
+    target_matchers: [ 'alertname = "ProviderHighErrorRate"' ]
+    equal: ['provider']

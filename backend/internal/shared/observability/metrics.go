@@ -275,3 +275,30 @@ func (l *LedgerMetrics) RecordProviderResult(provider string, ok bool) {
 	}
 	l.ProviderRequestsTotal.WithLabelValues(provider, status).Inc()
 }
+
+// RecordDispute counts one dispute lifecycle event by outcome class
+// ("filed", "refund", "release", "split"). Dispute rate is computed in
+// Grafana as disputes_total{outcome="filed"} / transactions_total{type="ride_payment"}.
+func (l *LedgerMetrics) RecordDispute(outcome string) {
+	l.DisputesTotal.WithLabelValues(outcome).Inc()
+}
+
+// RecordDrift logs one cached-vs-chain balance mismatch found by the weekly
+// rebuild job; corrected reports whether ApplyCorrections rewrote the cache.
+func (l *LedgerMetrics) RecordDrift(corrected bool) {
+	c := "false"
+	if corrected {
+		c = "true"
+	}
+	l.BalanceDriftTotal.WithLabelValues(c).Inc()
+}
+
+// SetProviderDown flips the health gauge for a rail (1 = circuit tripped).
+// Any provider reporting 1 for 5m fires the PagerDuty ProviderDown alert.
+func (l *LedgerMetrics) SetProviderDown(provider string, down bool) {
+	v := 0.0
+	if down {
+		v = 1.0
+	}
+	l.ProviderDown.WithLabelValues(provider).Set(v)
+}

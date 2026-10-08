@@ -23,6 +23,7 @@ import (
 
 	"nidaw-backend/internal/modules/ledger/application/commands"
 	"nidaw-backend/internal/shared/integrations/payments"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // maxWebhookBody bounds request size to keep malformed/spray payloads cheap.
@@ -69,6 +70,9 @@ func (h *WebhookHandler) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ev, err := gw.ParseWebhook(r.Context(), body, headers)
+	// Phase I Step 2: inbound rail callback health (signature failures count
+	// as errors — a spike usually means a mis-rotated webhook secret).
+	observability.Ledger().RecordProviderResult(provider, err == nil)
 	if err != nil {
 		// Signature failure or unparseable payload: reject, never trust.
 		h.log.Warn("payment webhook rejected",
