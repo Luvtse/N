@@ -46,12 +46,17 @@ var (
 
 // NewLedgerTransaction builds a transaction and computes its chain hash.
 // The caller supplies prevHash (head of the user's chain, "0" for genesis).
+// allowNegativeBalance permits a negative balance_after snapshot, which is
+// only legal on the failed-topup claw-back path (negative_lock, Phase E
+// Step 3): the account was optimistically credited and partially spent, so
+// removing the full credit drives the total below zero until repaid.
 func NewLedgerTransaction(
 	txID, userID uuid.UUID,
 	amount, balanceAfter valueobjects.Money,
 	prevHash valueobjects.TransactionHash,
 	txType valueobjects.TransactionType,
 	timestamp time.Time,
+	allowNegativeBalance bool,
 ) (*LedgerTransaction, error) {
 	if txID == uuid.Nil {
 		return nil, ErrTxMissingID
@@ -69,7 +74,7 @@ func NewLedgerTransaction(
 		balanceAfter.Currency() != valueobjects.CurrencyETB {
 		return nil, valueobjects.ErrUnsupportedCurrency
 	}
-	if balanceAfter.IsNegative() {
+	if balanceAfter.IsNegative() && !allowNegativeBalance {
 		return nil, ErrTxInvalidBalance
 	}
 

@@ -92,6 +92,9 @@ func (s *LedgerService) Credit(
 		if bal.Status == entities.BalanceStatusFrozenReview || bal.Status == entities.BalanceStatusClosed {
 			return ErrAccountLocked
 		}
+		// negative_lock blocks new rides/spends; repayment must still be able to
+		// credit the account (the service lifts the lock once funds cover the debt).
+		negLockRepay := bal.Status == entities.BalanceStatusNegativeLock
 		if err := bal.ApplyCredit(amount, toHeld); err != nil {
 			return err
 		}
@@ -101,9 +104,15 @@ func (s *LedgerService) Credit(
 		}
 		led, err := s.chain.Append(ctx, tx, userIDs, amount, total, txType,
 			s.now().UnixNano(), bal, opts.IdempotencyKey, opts.ReferenceID, opts.ReferenceType,
-			opts.Description, opts.Metadata)
+			opts.Description, opts.Metadata, negLockRepay)
 		if err != nil {
 			return err
+		}
+		if negLockRepay && !total.IsNegative() {
+			if err := s.bals.SetStatus(ctx, tx, userIDs, entities.BalanceStatusAccount); err != nil {
+				return err
+			}
+			bal.Status = entities.BalanceStatusAccount
 		}
 		bal.Version++
 		if err := s.bals.Save(ctx, tx, bal); err != nil {
@@ -187,7 +196,7 @@ func (s *LedgerService) Debit(
 		}
 		led, err := s.chain.Append(ctx, tx, userID, negAmount, total, txType,
 			s.now().UnixNano(), bal, opts.IdempotencyKey, opts.ReferenceID, opts.ReferenceType,
-			opts.Description, opts.Metadata)
+			opts.Description, opts.Metadata, negLock)
 		if err != nil {
 			return err
 		}
@@ -249,7 +258,7 @@ func (s *LedgerService) ReleaseEscrowAt(
 		// equals the unchanged total.
 		led, err := s.chain.Append(ctx, tx, driverID, amount, total, valueobjects.TxTypeEscrowRelease,
 			s.now().UnixNano(), bal, opts.IdempotencyKey, opts.ReferenceID, opts.ReferenceType,
-			opts.Description, opts.Metadata)
+			opts.Description, opts.Metadata, false)
 		if err != nil {
 			return err
 		}

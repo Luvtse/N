@@ -485,7 +485,7 @@ func reverseHeldCredit(
 	ref := disputeID
 	led, err := d.Chain.Append(ctx, tx, hold.DriverID, negAmount, total,
 		valueobjects.TxTypeAdjustmentDebit, d.clock().Now().UnixNano(), bal,
-		releaseKey, &ref, "dispute", description, nil)
+		releaseKey, &ref, "dispute", description, nil, false)
 	if err != nil {
 		return err
 	}
