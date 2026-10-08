@@ -88,10 +88,14 @@ type FraudRepository interface {
 	// CountRecentFlags reports how many open flags of this check type the
 	// user accumulated since `since` (repeat-offender escalation).
 	CountRecentFlags(ctx context.Context, userID uuid.UUID, checkType FraudCheckType, since time.Time) (int, error)
+	// ListOpen enumerates open flags newest-first for the admin review
+	// queue (Phase H Step 3). limit <= 0 defaults to 100.
+	ListOpen(ctx context.Context, limit int) ([]*FraudFlagRecord, error)
 }
 
 // FraudFlagRecord mirrors one fraud_flags row.
 type FraudFlagRecord struct {
+	FlagID     uuid.UUID // populated by ListOpen (admin console review)
 	UserID     uuid.UUID
 	CheckType  FraudCheckType
 	Severity   Severity

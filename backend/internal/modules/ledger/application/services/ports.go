@@ -4,6 +4,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -129,6 +130,24 @@ type DisputeRepository interface {
 // AuditRepository appends admin-action audit records (append-only table).
 type AuditRepository interface {
 	Log(ctx context.Context, tx DBTx, entry *AuditEntry) error
+	// ListRecent enumerates audit_log rows newest-first for the admin
+	// console Activity/Audit view (Phase H Step 3). limit <= 0 => 100;
+	// actionFilter restricts to one exact action when non-empty.
+	ListRecent(ctx context.Context, limit int, actionFilter string) ([]*AuditRecord, error)
+}
+
+// AuditRecord mirrors one audit_log row for read-side consumers.
+type AuditRecord struct {
+	ID          uuid.UUID
+	ActorUserID uuid.UUID
+	ActorRole   string
+	Action      string
+	TargetType  string
+	TargetID    *uuid.UUID
+	ReasonCode  string
+	ReasonText  string
+	IPAddress   string
+	OccurredAt  time.Time
 }
 
 // AuditEntry describes one append-only audit record.
