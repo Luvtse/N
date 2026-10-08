@@ -104,6 +104,9 @@ type WithdrawalRepository interface {
 	// ListByStatus enumerates requests in one exact status (the payout job
 	// uses it to pick up 'approved' rows after admin sign-off).
 	ListByStatus(ctx context.Context, status entities.WithdrawalStatus, limit int) ([]*entities.WithdrawalRequest, error)
+	// ListHeldForReview enumerates fraud_hold + pending rows oldest-first for
+	// the Phase H Step 3 admin Withdrawal Approvals queue.
+	ListHeldForReview(ctx context.Context, limit int) ([]*entities.WithdrawalRequest, error)
 }
 
 // EscrowRepository persists 72h ride holds.

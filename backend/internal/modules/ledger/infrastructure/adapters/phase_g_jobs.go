@@ -33,6 +33,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,6 +106,19 @@ type ReconciliationJob struct {
 	log      *zap.Logger
 	flags    services.FraudRepository // may be nil (report-only mode)
 	nowFunc  func() time.Time
+
+	// lastRep stores the most recent Tick result so the Phase H Step 3 admin
+	// console can surface "daily provider mismatches" without re-running the
+	// (expensive, provider-hitting) reconciliation pass.
+	mu      sync.Mutex
+	lastRep *ReconReport
+}
+
+// FraudFlagLister is the read side of services.FraudRepository. The concrete
+// repositories.PoolRepo satisfies it; adapters must not import services'
+// infra types directly, so the job holds this narrow port instead.
+type FraudFlagLister interface {
+	ListOpen(ctx context.Context, limit int) ([]*services.FraudFlagRecord, error)
 }
 
 // NewReconciliationJob wires the daily worker. resolver must not be nil (no
@@ -163,7 +177,21 @@ func (j *ReconciliationJob) Tick(ctx context.Context) *ReconReport {
 		zap.Int("discrepancies", len(rep.Discrepancies)),
 		zap.Any("detail", rep.Discrepancies),
 	)
+
+	j.mu.Lock()
+	j.lastRep = rep
+	j.mu.Unlock()
+
 	return rep
+}
+
+// LastReport returns the most recent reconciliation tick result (nil before
+// the first run). The Phase H Step 3 admin console Reconciliation Dashboard
+// reads this via GET /admin/reconciliation instead of forcing a live pass.
+func (j *ReconciliationJob) LastReport() *ReconReport {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.lastRep
 }
 
 // reconcileTopups checks non-terminal top-ups inside the window against the
