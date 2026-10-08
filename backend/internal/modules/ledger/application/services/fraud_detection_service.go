@@ -34,6 +34,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"nidaw-backend/internal/shared/observability"
 
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
 )
@@ -325,8 +326,24 @@ func (s *FraudDetectionService) EvaluateWithContext(ctx context.Context, userID 
 }
 
 // Evaluate runs the rule stack and (best-effort) persists open flags for
-// every triggered check.
+// every triggered check. Phase I Step 2: holds are exported to Prometheus as
+// ledger_fraud_flags_total{reason=...} — the "Fraud alerts" dashboard/alert
+// source.
 func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, amountCents int64, fc FraudContext) (*Evaluation, error) {
+	ev, err := s.evaluate(ctx, userID, amountCents, fc)
+	if err == nil && ev != nil && ev.Hold {
+		m := observability.Ledger()
+		if len(ev.Triggered) == 0 {
+			m.FraudFlagsTotal.WithLabelValues("composite").Inc()
+		}
+		for _, t := range ev.Triggered {
+			m.FraudFlagsTotal.WithLabelValues(string(t)).Inc()
+		}
+	}
+	return ev, err
+}
+
+func (s *FraudDetectionService) evaluate(ctx context.Context, userID uuid.UUID, amountCents int64, fc FraudContext) (*Evaluation, error) {
 	if userID == uuid.Nil {
 		return nil, errors.New("ledger/fraud: user id required")
 	}
