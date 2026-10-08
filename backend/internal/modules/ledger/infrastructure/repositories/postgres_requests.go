@@ -730,3 +730,40 @@ func (r *AuditRepo) Log(ctx context.Context, tx services.DBTx, e *services.Audit
 		rc, e.ReasonText, jsonCol(e.BeforeState), jsonCol(e.AfterState), ip, ua)
 	return err
 }
+
+// ListRecent enumerates audit_log rows newest-first for the admin console
+// Activity/Audit view (Phase H Step 3). limit <= 0 defaults to 100; a
+// non-empty actionFilter restricts results to that exact action.
+func (r *AuditRepo) ListRecent(ctx context.Context, limit int, actionFilter string) ([]*services.AuditRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT audit_id, actor_user_id, actor_role, action, target_type, target_id,
+		       COALESCE(reason_code,''), reason_text, COALESCE(host(ip_address),''), created_at
+		FROM audit_log
+		WHERE ($1 = '' OR action = $1)
+		ORDER BY created_at DESC
+		LIMIT $2`, actionFilter, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ledger/repo: list audit log: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*services.AuditRecord
+	for rows.Next() {
+		var (
+			rec        services.AuditRecord
+			targetID   *uuid.UUID
+			occurredAt time.Time
+		)
+		if err := rows.Scan(&rec.ID, &rec.ActorUserID, &rec.ActorRole, &rec.Action,
+			&rec.TargetType, &targetID, &rec.ReasonCode, &rec.ReasonText, &rec.IPAddress, &occurredAt); err != nil {
+			return nil, fmt.Errorf("ledger/repo: scan audit record: %w", err)
+		}
+		rec.TargetID = targetID
+		rec.OccurredAt = occurredAt.UTC()
+		out = append(out, &rec)
+	}
+	return out, rows.Err()
+}

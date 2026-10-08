@@ -112,6 +112,7 @@ func (r *FraudRepo) ListOpen(ctx context.Context, limit int) ([]*services.FraudF
 		details := map[string]interface{}{}
 		_ = json.Unmarshal(raw, &details)
 		out = append(out, &services.FraudFlagRecord{
+			FlagID:     flagID,
 			UserID:     userID,
 			CheckType:  services.FraudCheckType(ct),
 			Severity:   services.Severity(sev),
