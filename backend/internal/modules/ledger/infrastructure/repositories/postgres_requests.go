@@ -395,6 +395,50 @@ func (r *WithdrawalRepo) ListByStatus(ctx context.Context, status entities.Withd
 	return out, rows.Err()
 }
 
+// ListHeldForReview returns fraud_hold and pending withdrawals oldest-first —
+// the Phase H Step 3 admin "Withdrawal Approvals" queue. Manual sign-off is
+// required for high-value/risky payouts; pending rows are included so admins
+// can see the full inbound pipeline alongside held items.
+func (r *WithdrawalRepo) ListHeldForReview(ctx context.Context, limit int) ([]*entities.WithdrawalRequest, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+withdrawalColumns+` FROM withdrawal_requests
+		  WHERE status IN ('fraud_hold','pending')
+		  ORDER BY requested_at ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list withdrawals for review: %w", err)
+	}
+	defer rows.Close()
+	var out []*entities.WithdrawalRequest
+	for rows.Next() {
+		var (
+			wID, userID    uuid.UUID
+			amountC, feeC  int64
+			destType       string
+			st             string
+			debitID, revID string
+			provRef        string
+			destRaw        []byte
+			failure        string
+			requestedAt    time.Time
+			completedAt    *time.Time
+		)
+		if err := rows.Scan(&wID, &userID, &amountC, &feeC, &destType, &st, &debitID, &revID,
+			&provRef, &destRaw, &failure, &requestedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		w, err := scanWithdrawal(wID, userID, amountC, feeC, destType, st, debitID, revID,
+			provRef, destRaw, failure, requestedAt, completedAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 func scanWithdrawal(wID, userID uuid.UUID, amountC, feeC int64, destType, status, debitID, revID,
 	provRef string, destRaw []byte, failure string, requestedAt time.Time, completedAt *time.Time,
 ) (*entities.WithdrawalRequest, error) {

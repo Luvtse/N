@@ -34,6 +34,7 @@ import (
 	"nidaw-backend/internal/modules/ledger/application/services"
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
+	"nidaw-backend/internal/modules/ledger/infrastructure/adapters"
 	"nidaw-backend/internal/shared/auth"
 )
 
@@ -46,6 +47,30 @@ type Handler struct {
 	signer ReportSigner
 	// now injectable clock (tests).
 	now func() time.Time
+
+	// Admin console read-side ports (Phase H Step 3). All optional: routes
+	// return 503 NOT_WIRED when the corresponding dependency is absent.
+	fraudFlags services.FraudRepository      // open fraud-flag review queue
+	recon      ReconciliationReporter        // daily provider-mismatch report
+	lastRecon  func() *adapters.ReconReport  // convenience getter from the job
+}
+
+// ReconciliationReporter is the minimal port the admin dashboard needs from
+// the Phase G reconciliation job (satisfied by *adapters.ReconciliationJob).
+type ReconciliationReporter interface {
+	Tick(ctx context.Context) *adapters.ReconReport
+	LastReport() *adapters.ReconReport
+}
+
+// SetAdminConsolePorts wires the admin-only read endpoints after construction
+// (called from wiring.Build once the Phase G jobs exist). Safe to call with
+// nil values; each endpoint degrades independently.
+func (h *Handler) SetAdminConsolePorts(fraudFlags services.FraudRepository, recon ReconciliationReporter) {
+	h.fraudFlags = fraudFlags
+	h.recon = recon
+	if jr, ok := recon.(interface{ LastReport() *adapters.ReconReport }); ok {
+		h.lastRecon = jr.LastReport
+	}
 }
 
 // NewHandler constructs the ledger HTTP handler. signer may be nil, in which
@@ -74,6 +99,12 @@ func (h *Handler) Register(r chi.Router) {
 	r.Post("/withdrawals/{withdrawalID}/reject", h.requireAdmin(h.handleRejectWithdrawal))
 	r.Post("/adjustments", h.requireAdmin(h.handleAdjustment))
 	r.Get("/audit/report", h.handleAuditReport)
+
+	// Admin console read APIs (Phase H Step 3).
+	r.Get("/admin/withdrawals/pending", h.requireAdmin(h.handlePendingWithdrawals))
+	r.Get("/admin/fraud-flags", h.requireAdmin(h.handleFraudFlags))
+	r.Get("/admin/audit-log", h.requireAdmin(h.handleAuditLog))
+	r.Get("/admin/reconciliation", h.requireAdmin(h.handleReconciliation))
 }
 
 // ============================================================================
@@ -767,4 +798,252 @@ func clientIP(r *http.Request) string {
 		return strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
 	return r.RemoteAddr
+}
+
+// ============================================================================
+// ADMIN CONSOLE READ APIS (Phase H Step 3)
+//   GET /admin/withdrawals/pending  — Withdrawal Approvals queue
+//   GET /admin/fraud-flags          — open fraud review queue
+//   GET /admin/audit-log            — admin activity feed
+//   GET /admin/reconciliation       — daily provider mismatches
+// ============================================================================
+
+func (h *Handler) adminQueueLimit(r *http.Request, def int) int {
+	limit := def
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 || n > 500 {
+			return -1
+		}
+		limit = n
+	}
+	return limit
+}
+
+// handlePendingWithdrawals serves the admin "Withdrawal Approvals" view:
+// manual sign-off queue for high-value/risky payouts. Includes fraud_hold
+// rows (with their hold reason) plus inbound pending requests, oldest first.
+func (h *Handler) handlePendingWithdrawals(w http.ResponseWriter, r *http.Request) {
+	limit := h.adminQueueLimit(r, 100)
+	if limit < 0 {
+		h.fail(r.Context(), w, validateErr("limit must be between 1 and 500"))
+		return
+	}
+	list, err := h.deps.Withdrawals.ListHeldForReview(r.Context(), limit)
+	if err != nil {
+		h.fail(r.Context(), w, err)
+		return
+	}
+	type withdrawalView struct {
+		WithdrawalID    string                 `json:"withdrawal_id"`
+		UserID          string                 `json:"user_id"`
+		AmountETB       string                 `json:"amount_etb"`
+		FeeETB          string                 `json:"fee_etb"`
+		DestinationType string                 `json:"destination_type"`
+		Status          string                 `json:"status"`
+		RiskScore       *float64               `json:"risk_score,omitempty"`
+		FraudHoldReason string                 `json:"fraud_hold_reason,omitempty"`
+		RequestedAt     time.Time              `json:"requested_at"`
+		Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	}
+	out := make([]withdrawalView, 0, len(list))
+	for _, wd := range list {
+		v := withdrawalView{
+			WithdrawalID:    wd.WithdrawalID.String(),
+			UserID:          wd.UserID.String(),
+			AmountETB:       wd.Amount.String(),
+			FeeETB:          wd.Fee.String(),
+			DestinationType: string(wd.DestinationType),
+			Status:          string(wd.Status),
+			RiskScore:       wd.RiskScore,
+			FraudHoldReason: wd.FraudHoldReason,
+			RequestedAt:     wd.RequestedAt.UTC(),
+			Metadata:        wd.DestinationDetails,
+		}
+		// Fresh holds may predate persistence of the reason column; fall back
+		// to the live evaluator's cached explanation.
+		if v.FraudHoldReason == "" && wd.Status == entities.WithdrawalStatusFraudHold && h.deps.Fraud != nil {
+			v.FraudHoldReason = h.deps.Fraud.ReasonForHold(r.Context(), wd.UserID)
+		}
+		out = append(out, v)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":           len(out),
+		"requires_action": countFraudHeld(list),
+		"withdrawals":     out,
+	})
+}
+
+func countFraudHeld(list []*entities.WithdrawalRequest) int {
+	n := 0
+	for _, wd := range list {
+		if wd.Status == entities.WithdrawalStatusFraudHold {
+			n++
+		}
+	}
+	return n
+}
+
+// handleFraudFlags lists open fraud_flags rows for the admin review queue.
+// Returns 503 NOT_WIRED when the fraud stack (Phase G) is disabled.
+func (h *Handler) handleFraudFlags(w http.ResponseWriter, r *http.Request) {
+	if h.fraudFlags == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{
+			Code: "NOT_WIRED", Message: "Fraud detection is not enabled on this deployment.",
+		})
+		return
+	}
+	limit := h.adminQueueLimit(r, 100)
+	if limit < 0 {
+		h.fail(r.Context(), w, validateErr("limit must be between 1 and 500"))
+		return
+	}
+	flags, err := h.fraudFlags.ListOpen(r.Context(), limit)
+	if err != nil {
+		h.fail(r.Context(), w, err)
+		return
+	}
+	type flagView struct {
+		FlagID     string                 `json:"flag_id"`
+		UserID     string                 `json:"user_id"`
+		CheckType  string                 `json:"check_type"`
+		Severity   string                 `json:"severity"`
+		RiskScore  float64                `json:"risk_score"`
+		EntityType string                 `json:"entity_type"`
+		EntityID   string                 `json:"entity_id,omitempty"`
+		Details    map[string]interface{} `json:"details,omitempty"`
+	}
+	out := make([]flagView, 0, len(flags))
+	for _, f := range flags {
+		v := flagView{
+			FlagID:     f.FlagID.String(),
+			UserID:     f.UserID.String(),
+			CheckType:  string(f.CheckType),
+			Severity:   string(f.Severity),
+			RiskScore:  f.RiskScore,
+			EntityType: f.EntityType,
+			Details:    f.Details,
+		}
+		if f.EntityID != nil {
+			v.EntityID = f.EntityID.String()
+		}
+		out = append(out, v)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":      len(out),
+		"fraud_flags": out,
+	})
+}
+
+// handleAuditLog exposes the append-only admin activity trail so every
+// mutation made from the console (adjustments, approvals, resolutions) can be
+// reviewed independently of the UI state.
+func (h *Handler) handleAuditLog(w http.ResponseWriter, r *http.Request) {
+	limit := h.adminQueueLimit(r, 100)
+	if limit < 0 {
+		h.fail(r.Context(), w, validateErr("limit must be between 1 and 500"))
+		return
+	}
+	actionFilter := strings.TrimSpace(r.URL.Query().Get("action"))
+	records, err := h.deps.Audit.ListRecent(r.Context(), limit, actionFilter)
+	if err != nil {
+		h.fail(r.Context(), w, err)
+		return
+	}
+	type entryView struct {
+		ID         string    `json:"id"`
+		Actor      string    `json:"actor_user_id"`
+		ActorRole  string    `json:"actor_role"`
+		Action     string    `json:"action"`
+		TargetType string    `json:"target_type"`
+		TargetID   string    `json:"target_id,omitempty"`
+		ReasonCode string    `json:"reason_code,omitempty"`
+		ReasonText string    `json:"reason_text,omitempty"`
+		IPAddress  string    `json:"ip_address,omitempty"`
+		OccurredAt time.Time `json:"occurred_at"`
+	}
+	out := make([]entryView, 0, len(records))
+	for _, rec := range records {
+		v := entryView{
+			ID:         rec.ID.String(),
+			Actor:      rec.ActorUserID.String(),
+			ActorRole:  rec.ActorRole,
+			Action:     rec.Action,
+			TargetType: rec.TargetType,
+			ReasonCode: rec.ReasonCode,
+			ReasonText: rec.ReasonText,
+			IPAddress:  rec.IPAddress,
+			OccurredAt: rec.OccurredAt.UTC(),
+		}
+		if rec.TargetID != nil {
+			v.TargetID = rec.TargetID.String()
+		}
+		out = append(out, v)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":       len(out),
+		"action_filter": actionFilter,
+		"entries":     out,
+	})
+}
+
+// handleReconciliation serves the finance mismatch dashboard. Default reads
+// the last scheduled Phase G tick (cheap); ?live=true forces a fresh pass
+// against the providers (rate-limited by the job itself — use sparingly).
+func (h *Handler) handleReconciliation(w http.ResponseWriter, r *http.Request) {
+	if h.recon == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{
+			Code: "NOT_WIRED", Message: "Reconciliation job is not enabled on this deployment.",
+		})
+		return
+	}
+	var rep *adapters.ReconReport
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("live")), "true") {
+		rep = h.recon.Tick(r.Context())
+	} else if h.lastRecon != nil {
+		rep = h.lastRecon()
+	}
+	if rep == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"available": false,
+			"note":      "No reconciliation pass has run yet on this instance.",
+		})
+		return
+	}
+	type discView struct {
+		Kind        string `json:"kind"`
+		Provider    string `json:"provider"`
+		RequestID   string `json:"request_id"`
+		UserID      string `json:"user_id"`
+		OursETB     string `json:"ours_etb"`
+		TheirsETB   string `json:"theirs_etb"`
+		OurStatus   string `json:"our_status"`
+		TheirStatus string `json:"their_status"`
+		Reference   string `json:"reference,omitempty"`
+	}
+	discs := make([]discView, 0, len(rep.Discrepancies))
+	for _, d := range rep.Discrepancies {
+		ours, _ := valueobjects.NewMoney(d.OursCents)
+		theirs, _ := valueobjects.NewMoney(d.TheirsCents)
+		discs = append(discs, discView{
+			Kind:        d.Kind,
+			Provider:    d.Provider,
+			RequestID:   d.RequestID.String(),
+			UserID:      d.UserID.String(),
+			OursETB:     ours.String(),
+			TheirsETB:   theirs.String(),
+			OurStatus:   d.OurStatus,
+			TheirStatus: d.TheirStatus,
+			Reference:   d.Reference,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"available":      true,
+		"ran_at":         rep.RanAt.UTC().Format(time.RFC3339),
+		"window_start":   rep.WindowStart.UTC().Format(time.RFC3339),
+		"checked_topups": rep.CheckedTopups,
+		"checked_payouts": rep.CheckedPayouts,
+		"errors":         rep.Errors,
+		"discrepancies":  discs,
+	})
 }

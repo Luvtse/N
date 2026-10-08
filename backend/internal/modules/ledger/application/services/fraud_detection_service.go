@@ -248,7 +248,10 @@ func (s *FraudDetectionService) EvaluateWithdrawal(ctx context.Context, userID u
 		return 0, false, err
 	}
 	s.mu.Lock()
-	s.lastEval[userID] = lastEvaluation{at: s.now(), reason: ev.ReasonSummary(), hold: ev.Hold}
+	if s.lastEval == nil {
+		s.lastEval = map[signalKey]lastEvaluation{}
+	}
+	s.lastEval[signalKey{userID}] = lastEvaluation{at: s.now(), reason: ev.ReasonSummary(), hold: ev.Hold}
 	s.mu.Unlock()
 	return ev.Score, ev.Hold, nil
 }
@@ -267,7 +270,7 @@ type lastEvaluation struct {
 func (s *FraudDetectionService) ReasonForHold(_ context.Context, userID uuid.UUID) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entry, ok := s.lastEval[userID]
+	entry, ok := s.lastEval[signalKey{userID}]
 	if !ok || !entry.hold {
 		return ""
 	}
