@@ -11,6 +11,7 @@ import (
 
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // tsNano converts a Unix-nanosecond timestamp to time.Time for hashing.
@@ -157,6 +158,9 @@ func (h *HashChainService) VerifyUserChain(ctx context.Context, userID uuid.UUID
 				zap.String("stored_hash", next.TxHash.Hex()),
 				zap.String("recomputed_hash", next.RecomputeHash().Hex()),
 			)
+			// Phase I Step 2: any increment of this counter pages on-call
+			// (PagerDuty route LedgerHashChainCorruption, severity critical).
+			observability.Ledger().HashChainCorruptionsTotal.Inc()
 			return verified, expected, fmt.Errorf("%w at tx %s", ErrChainCorrupted, next.TxID)
 		}
 		expected = next.TxHash

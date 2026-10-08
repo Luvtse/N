@@ -11,6 +11,7 @@ import (
 
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // ============================================================================
@@ -64,6 +65,16 @@ type CreditOptions struct {
 
 // Credit adds funds to a user's available (or held) bucket atomically.
 func (s *LedgerService) Credit(
+	ctx context.Context, userIDs uuid.UUID, amount valueobjects.Money,
+	txType valueobjects.TransactionType, toHeld bool, opts CreditOptions,
+) (*entities.LedgerTransaction, error) {
+	start := time.Now()
+	led, err := s.credit(ctx, userIDs, amount, txType, toHeld, opts)
+	recordLedgerMetrics("credit", led, start, err)
+	return led, err
+}
+
+func (s *LedgerService) credit(
 	ctx context.Context, userIDs uuid.UUID, amount valueobjects.Money,
 	txType valueobjects.TransactionType, toHeld bool, opts CreditOptions,
 ) (*entities.LedgerTransaction, error) {
@@ -131,6 +142,16 @@ func (s *LedgerService) Credit(
 // allowNegativeLock is true and funds fall short, the account transitions
 // to negative_lock (failed-topup claw-back path, Phase E Step 3).
 func (s *LedgerService) Debit(
+	ctx context.Context, userID uuid.UUID, amount valueobjects.Money,
+	txType valueobjects.TransactionType, allowNegativeLock bool, opts CreditOptions,
+) (*entities.LedgerTransaction, error) {
+	start := time.Now()
+	led, err := s.debit(ctx, userID, amount, txType, allowNegativeLock, opts)
+	recordLedgerMetrics("debit", led, start, err)
+	return led, err
+}
+
+func (s *LedgerService) debit(
 	ctx context.Context, userID uuid.UUID, amount valueobjects.Money,
 	txType valueobjects.TransactionType, allowNegativeLock bool, opts CreditOptions,
 ) (*entities.LedgerTransaction, error) {
@@ -227,6 +248,16 @@ func (s *LedgerService) ReleaseEscrowAt(
 	ctx context.Context, driverID uuid.UUID, amount valueobjects.Money,
 	releaseTime time.Time, opts CreditOptions,
 ) (*entities.LedgerTransaction, error) {
+	start := time.Now()
+	led, err := s.releaseEscrowAt(ctx, driverID, amount, releaseTime, opts)
+	recordLedgerMetrics("escrow_release", led, start, err)
+	return led, err
+}
+
+func (s *LedgerService) releaseEscrowAt(
+	ctx context.Context, driverID uuid.UUID, amount valueobjects.Money,
+	releaseTime time.Time, opts CreditOptions,
+) (*entities.LedgerTransaction, error) {
 	if !amount.IsPositive() {
 		return nil, errors.New("ledger: release amount must be positive")
 	}
@@ -313,4 +344,31 @@ func (s *LedgerService) ClearNegativeLock(ctx context.Context, userID uuid.UUID)
 // GetBalance reads the cached balance without locking (GET /balance).
 func (s *LedgerService) GetBalance(ctx context.Context, userID uuid.UUID) (*entities.UserBalance, error) {
 	return s.bals.Get(ctx, userID)
+}
+
+// recordLedgerMetrics emits the Phase I Step 2 observability signals for one
+// completed money-movement operation: throughput by tx type, op latency p95
+// source, and coded error counts. Idempotent replays (non-nil led +
+// ErrDuplicateRequest) are deliberately NOT re-counted — the original
+// operation already recorded the transaction.
+func recordLedgerMetrics(op string, led *entities.LedgerTransaction, start time.Time, err error) {
+	m := observability.Ledger()
+	if errors.Is(err, ErrDuplicateRequest) {
+		return
+	}
+	m.OperationDurationSeconds.WithLabelValues(op).Observe(time.Since(start).Seconds())
+	if err != nil {
+		code := "INTERNAL_ERROR"
+		switch {
+		case errors.Is(err, ErrInsufficientFunds):
+			code = "INSUFFICIENT_FUNDS"
+		case errors.Is(err, ErrAccountLocked):
+			code = "ACCOUNT_LOCKED"
+		}
+		m.ErrorsTotal.WithLabelValues(op, code).Inc()
+		return
+	}
+	if led != nil {
+		m.TransactionsTotal.WithLabelValues(string(led.Type)).Inc()
+	}
 }
