@@ -103,6 +103,7 @@ func (h *HashChainService) Append(
 	referenceType string,
 	description string,
 	metadata map[string]interface{},
+	allowNegativeBalance bool,
 ) (*entities.LedgerTransaction, error) {
 	prevHash, err := h.GetHead(ctx, tx, userID, balance)
 	if err != nil {
@@ -110,7 +111,7 @@ func (h *HashChainService) Append(
 	}
 
 	created, err := entities.NewLedgerTransaction(
-		uuid.New(), userID, amount, balanceAfter, prevHash, txType, tsNano(ts),
+		uuid.New(), userID, amount, balanceAfter, prevHash, txType, tsNano(ts), allowNegativeBalance,
 	)
 	if err != nil {
 		return nil, err

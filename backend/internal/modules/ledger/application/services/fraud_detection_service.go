@@ -336,6 +336,11 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 	// here so both the ML branch and the final reduction see it. It can never
 	// collide with a FraudCheckType string value.
 	const maxKey = "max_signal"
+	updateMax := func(v float64) {
+		if v > ev.Contributions[maxKey] {
+			ev.Contributions[maxKey] = v
+		}
+	}
 
 	// 1. Velocity: withdrawal debits within the window. Roadmap: ">3
 	//    withdrawals in 1 hour". At limit+1 we already hold; each extra adds
@@ -352,6 +357,7 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 		}
 		ev.Triggered = append(ev.Triggered, FraudCheckVelocity)
 		ev.Contributions[string(FraudCheckVelocity)] = score
+		updateMax(score)
 		s.flag(ctx, userID, FraudCheckVelocity, score, map[string]interface{}{
 			"withdrawals_in_window": n,
 			"window":                s.cfg.VelocityWindow.String(),
@@ -374,6 +380,7 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 			}
 			ev.Triggered = append(ev.Triggered, FraudCheckDevice)
 			ev.Contributions[string(FraudCheckDevice)] = score
+			updateMax(score)
 			s.flag(ctx, userID, FraudCheckDevice, score, map[string]interface{}{
 				"shared_accounts": others + 1,
 				"amount_cents":    amountCents,
@@ -389,6 +396,7 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 		} else if denied {
 			ev.Triggered = append(ev.Triggered, FraudCheckIPReputation)
 			ev.Contributions[string(FraudCheckIPReputation)] = s.cfg.IPDeniedPenalty
+			updateMax(s.cfg.IPDeniedPenalty)
 			s.flag(ctx, userID, FraudCheckIPReputation, s.cfg.IPDeniedPenalty, map[string]interface{}{
 				"client_ip":    fc.ClientIP,
 				"amount_cents": amountCents,
@@ -419,13 +427,10 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 	}
 
 	// Composite score: strongest single signal dominates (checks overlap in
-	// practice; summing would double-count correlated fraud). NOTE: the map
-	// key below must never collide with a FraudCheckType string.
-	const maxKey = "max_signal"
-	for _, c := range ev.Contributions {
-		if c == ev.Contributions[maxKey] && c > ev.Score {
-			ev.Score = c
-		}
+	// practice; summing would double-count correlated fraud). maxKey was
+	// declared at the top of Evaluate and holds that strongest signal.
+	if m := ev.Contributions[maxKey]; m > ev.Score {
+		ev.Score = m
 	}
 	if len(ev.Triggered) > 2 && ev.Score < 0.95 {
 		ev.Score = ev.Score + 0.1 // multi-signal correlation boost

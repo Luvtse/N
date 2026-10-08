@@ -121,7 +121,7 @@ func TestHashChain_ForkRejected(t *testing.T) {
 	ctx := context.Background()
 
 	base, err := entities.NewLedgerTransaction(uuid.New(), uid, mustMoney(t, 100), mustMoney(t, 100),
-		valueobjects.MustTransactionHash(valueobjects.GenesisPrevHash), valueobjects.TxTypeTopup, time.Now())
+		valueobjects.MustTransactionHash(valueobjects.GenesisPrevHash), valueobjects.TxTypeTopup, time.Now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestHashChain_ForkRejected(t *testing.T) {
 	txs.commit()
 
 	fork, err := entities.NewLedgerTransaction(uuid.New(), uid, mustMoney(t, 200), mustMoney(t, 300),
-		base.PrevHash, valueobjects.TxTypeTopup, time.Now()) // same prev_hash as base => fork
+		base.PrevHash, valueobjects.TxTypeTopup, time.Now(), false) // same prev_hash as base => fork
 	if err != nil {
 		t.Fatal(err)
 	}
