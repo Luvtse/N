@@ -53,6 +53,10 @@ type PayoutInitiator interface {
 type FraudEvaluator interface {
 	// EvaluateWithdrawal returns (riskScore, holdRequired, error).
 	EvaluateWithdrawal(ctx context.Context, userID uuid.UUID, amountCents int64) (score float64, hold bool, err error)
+	// ReasonForHold explains why a hold was applied (human-readable summary
+	// of triggered checks; "" when no hold is/was required). Used to give
+	// the Phase H admin console review context.
+	ReasonForHold(ctx context.Context, userID uuid.UUID) string
 }
 
 // WithdrawalSignalRecorder is an OPTIONAL extension port (Phase G Step 1):
