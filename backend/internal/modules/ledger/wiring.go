@@ -191,6 +191,10 @@ func Build(cfg Config) (*Components, error) {
 		}
 		comps.Reconciliation = recon
 		comps.BalanceRebuild = rebuild
+
+		// Admin console read APIs (Phase H Step 3): fraud review queue and
+		// reconciliation dashboard. Degrade independently if absent.
+		comps.Handler.SetAdminConsolePorts(fraudRepo, recon)
 	}
 
 	return comps, nil
