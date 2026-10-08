@@ -161,16 +161,16 @@ func (c FraudConfig) withDefaults() FraudConfig {
 // Evaluate API used by jobs/admin tooling. All optional ports may be nil —
 // missing signals are skipped rather than treated as risky.
 type FraudDetectionService struct {
-	txs     TxCounter       // required (velocity)
-	flags   FraudRepository // may be nil (score-only mode, no persistence)
-	devices DeviceIndex     // may be nil
-	ips     IPDenylist      // may be nil
-	ml      MLScoreProvider // may be nil
-	cfg     FraudConfig
-	log     *zap.Logger
-	now     func() time.Time
-	mu      sync.Mutex                // guards signals & lastEval
-	signals map[signalKey]signalEntry // HTTP-layer device/IP context cache
+	txs      TxCounter       // required (velocity)
+	flags    FraudRepository // may be nil (score-only mode, no persistence)
+	devices  DeviceIndex     // may be nil
+	ips      IPDenylist      // may be nil
+	ml       MLScoreProvider // may be nil
+	cfg      FraudConfig
+	log      *zap.Logger
+	now      func() time.Time
+	mu       sync.Mutex                   // guards signals & lastEval
+	signals  map[signalKey]signalEntry    // HTTP-layer device/IP context cache
 	lastEval map[signalKey]lastEvaluation // latest fraud pass per user (admin console reason)
 }
 
@@ -332,6 +332,11 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 	}
 	ev := &Evaluation{Contributions: map[string]float64{}}
 
+	// maxKey holds the strongest single signal for composite scoring; declared
+	// here so both the ML branch and the final reduction see it. It can never
+	// collide with a FraudCheckType string value.
+	const maxKey = "max_signal"
+
 	// 1. Velocity: withdrawal debits within the window. Roadmap: ">3
 	//    withdrawals in 1 hour". At limit+1 we already hold; each extra adds
 	//    0.1 up to saturation.
@@ -404,8 +409,8 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 					"amount_cents": amountCents,
 				})
 			}
-			if mscore > ev.Contributions["max"] {
-				ev.Contributions["max"] = mscore
+			if mscore > ev.Contributions[maxKey] {
+				ev.Contributions[maxKey] = mscore
 			}
 			if mscore > ev.Score {
 				ev.Score = mscore
@@ -414,9 +419,11 @@ func (s *FraudDetectionService) Evaluate(ctx context.Context, userID uuid.UUID, 
 	}
 
 	// Composite score: strongest single signal dominates (checks overlap in
-	// practice; summing would double-count correlated fraud).
+	// practice; summing would double-count correlated fraud). NOTE: the map
+	// key below must never collide with a FraudCheckType string.
+	const maxKey = "max_signal"
 	for _, c := range ev.Contributions {
-		if c == ev.Contributions["max"] && c > ev.Score {
+		if c == ev.Contributions[maxKey] && c > ev.Score {
 			ev.Score = c
 		}
 	}
