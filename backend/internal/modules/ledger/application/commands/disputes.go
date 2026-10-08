@@ -11,6 +11,7 @@ import (
 	"nidaw-backend/internal/modules/ledger/application/services"
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/modules/ledger/domain/valueobjects"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // ============================================================================
@@ -149,6 +150,8 @@ func FileDispute(ctx context.Context, d *Deps, log *zap.Logger, in DisputeInput)
 	if err != nil {
 		return nil, err
 	}
+	// Phase I Step 2: dispute-rate numerator (filed).
+	observability.Ledger().RecordDispute("filed")
 	log.Info("dispute filed",
 		zap.String("dispute_id", out.DisputeID.String()),
 		zap.String("ride_id", in.RideID.String()),
@@ -227,10 +230,12 @@ func ResolveDispute(ctx context.Context, d *Deps, log *zap.Logger, in ResolveDis
 			if err := resolveToRiderLocked(ctx, d, tx, dsp, hold, in.AdminID, in.Notes); err != nil {
 				return err
 			}
+			observability.Ledger().RecordDispute("refund")
 		case OutcomeReleaseDriver:
 			if err := resolveToDriverLocked(ctx, d, tx, dsp, hold, in.AdminID, in.Notes); err != nil {
 				return err
 			}
+			observability.Ledger().RecordDispute("release")
 		case OutcomeSplit:
 			if in.RefundCents <= 0 || in.RefundCents >= hold.Amount.Cents() {
 				return errors.New("ledger: split refund must be strictly between 0 and the held amount")
@@ -238,6 +243,7 @@ func ResolveDispute(ctx context.Context, d *Deps, log *zap.Logger, in ResolveDis
 			if err := resolveSplitLocked(ctx, d, tx, dsp, hold, in.AdminID, in.Notes, in.RefundCents); err != nil {
 				return err
 			}
+			observability.Ledger().RecordDispute("split")
 		}
 		return nil
 	})

@@ -30,6 +30,7 @@ import (
 	"nidaw-backend/internal/modules/ledger/application/services"
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/shared/integrations/payments"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // ============================================================================
@@ -130,6 +131,7 @@ func (j *TopupJob) openCheckout(ctx context.Context, req *entities.TopupRequest)
 			continue
 		}
 		phone, email := topupContact(req)
+		started := time.Now()
 		chk, err := gw.CreateCheckout(ctx, &payments.CheckoutRequest{
 			AmountETBSantim: req.Amount.Cents(),
 			Currency:        req.Amount.Currency(),
@@ -140,6 +142,9 @@ func (j *TopupJob) openCheckout(ctx context.Context, req *entities.TopupRequest)
 			ReturnURL:       j.cfg.ReturnURLTmpl,
 			Metadata:        map[string]string{"user_id": req.UserID.String(), "topup_id": req.TopupID.String()},
 		})
+		// Phase I Step 2: rail health metrics (throughput + latency p95).
+		observability.Ledger().RecordProviderResult(name, err == nil)
+		observability.Ledger().ObserveDuration("checkout_create", started, err)
 		if err != nil {
 			lastErr = fmt.Errorf("%s checkout: %w", name, err)
 			j.log.Warn("topup job: provider unavailable, trying fallback",

@@ -15,10 +15,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"nidaw-backend/internal/modules/ledger/application/commands"
 	"nidaw-backend/internal/modules/ledger/domain/entities"
 	"nidaw-backend/internal/shared/integrations/payments"
+	"nidaw-backend/internal/shared/observability"
 )
 
 // GatewayResolver returns the adapter for one rail name ("telebirr",
@@ -81,7 +83,10 @@ func (b *TopupBridge) VerifyTopup(ctx context.Context, topup *entities.TopupRequ
 		ref = topup.TopupID.String()
 	}
 
+	stStart := time.Now()
 	st, err := gw.VerifyPayment(ctx, ref)
+	observability.Ledger().RecordProviderResult(string(topup.Provider), err == nil)
+	observability.Ledger().ObserveDuration("topup_verify", stStart, err)
 	if err != nil {
 		return false, "", fmt.Errorf("ledger/payments: verify %s ref %s: %w", topup.Provider, ref, err)
 	}
@@ -135,6 +140,7 @@ func (b *PayoutBridge) InitiatePayout(ctx context.Context, w *entities.Withdrawa
 	if err != nil {
 		return "", err
 	}
+	payProvider := payoutProviderFor(w.DestinationType)
 
 	req := &payments.PayoutRequest{
 		AmountSantim: w.Amount.Cents(),
@@ -160,7 +166,11 @@ func (b *PayoutBridge) InitiatePayout(ctx context.Context, w *entities.Withdrawa
 		}
 	}
 
+	resStart := time.Now()
 	res, err := gw.Payout(ctx, req)
+	// Phase I Step 2: rail throughput/latency for payouts.
+	observability.Ledger().RecordProviderResult(payProvider, err == nil)
+	observability.Ledger().ObserveDuration("payout_submit", resStart, err)
 	if err != nil {
 		return "", fmt.Errorf("ledger/payments: %s payout %s: %w", gw.Name(), w.WithdrawalID, err)
 	}
@@ -199,7 +209,10 @@ func PayoutStatusChecker(ctx context.Context, resolver GatewayResolver, w *entit
 	if w.ProviderReference == "" {
 		return payments.StatusProcessing, nil
 	}
+	stStart := time.Now()
 	st, err := gw.VerifyPayment(ctx, w.ProviderReference)
+	observability.Ledger().RecordProviderResult(payoutProviderFor(w.DestinationType), err == nil)
+	observability.Ledger().ObserveDuration("payout_verify", stStart, err)
 	if err != nil {
 		return "", err
 	}
