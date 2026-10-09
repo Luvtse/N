@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../../../../core/di/injection.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/repositories/safety_repository.dart';
 import '../bloc/ride_bloc.dart';
@@ -44,12 +46,6 @@ class SosSlideToConfirm extends StatelessWidget {
                       fontSize: 15,
                     ),
                   ),
-                  TweenAnimationBuilder<double>(
-                    key: ValueKey<String?>(null),
-                    tween: Tween<double>(begin: 0, end: 0),
-                    duration: Duration.zero,
-                    builder: (context, _, __) => const SizedBox.shrink(),
-                  ),
                   _DraggableSosThumb(
                     thumbSize: thumbSize,
                     maxDrag: maxDrag,
@@ -89,7 +85,7 @@ class _DraggableSosThumbState extends State<_DraggableSosThumb> {
     });
   }
 
-  void _handlePanEnd(DragEndDetails details) {
+  void _handlePanEnd() {
     final confirmed = _dx >= widget.maxDrag * 0.9;
     if (confirmed) {
       widget.onConfirmed();
@@ -104,7 +100,7 @@ class _DraggableSosThumbState extends State<_DraggableSosThumb> {
       left: 8 + _dx,
       child: GestureDetector(
         onHorizontalDragUpdate: _handlePanUpdate,
-        onHorizontalDragEnd: _handlePanEnd,
+        onHorizontalDragEnd: (_) => _handlePanEnd(),
         child: Container(
           width: widget.thumbSize,
           height: widget.thumbSize,
@@ -229,6 +225,28 @@ class ShareTripSheet extends StatefulWidget {
   final String rideId;
 
   const ShareTripSheet({super.key, required this.rideId});
+
+  /// Presents the share sheet above any surface that has RideBloc +
+  /// SafetyRepository in scope (tracking page uses this).
+  static Future<void> showInline(BuildContext context, {required String rideId}) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+        ),
+        child: RepositoryProvider<SafetyRepository>(
+          create: (_) => getIt<SafetyRepository>(),
+          child: ShareTripSheet(rideId: rideId),
+        ),
+      ),
+    );
+  }
 
   @override
   State<ShareTripSheet> createState() => _ShareTripSheetState();
@@ -383,9 +401,9 @@ class ShareAdapter {
   static Future<void> Function(String url) shareImpl = _systemShare;
 
   static Future<void> _systemShare(String url) async {
-    // Late binding avoids a hard platform-channel requirement at import time.
-    throw UnsupportedError(
-      'Share requires the share_plus plugin at runtime: $url',
-    );
+    // share_plus v7 API. Throws naturally when no platform handler is
+    // registered, which _share's catch block converts into a copy-friendly
+    // SnackBar fallback.
+    await Share.share(url);
   }
 }

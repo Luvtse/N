@@ -117,6 +117,7 @@ void _registerNetworkLayer() {
         'WS_BASE_URL',
         defaultValue: 'ws://localhost:8080/ws',
       ),
+      eventBus: getIt<EventBus>(),
     ),
   );
 }
