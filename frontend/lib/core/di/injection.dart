@@ -14,6 +14,7 @@ import '../../features/auth/domain/usecases/register_usecase.dart';
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/auth/presentation/bloc/legal_consent_bloc.dart';
 import '../../features/nidus/data/repositories/ride_repository.dart';
+import '../../features/nidus/data/repositories/safety_repository.dart';
 import '../../features/nidus/domain/usecases/request_ride_usecase.dart';
 import '../../features/nidus/domain/usecases/get_ride_status_usecase.dart';
 import '../../features/nidus/presentation/bloc/ride_bloc.dart';
@@ -110,7 +111,14 @@ void _registerNetworkLayer() {
   );
 
   // WebSocket Client (singleton)
-  getIt.registerLazySingleton<WebSocketClient>(() => WebSocketClient());
+  getIt.registerLazySingleton<WebSocketClient>(
+    () => WebSocketClient(
+      baseUrl: String.fromEnvironment(
+        'WS_BASE_URL',
+        defaultValue: 'ws://localhost:8080/ws',
+      ),
+    ),
+  );
 }
 
 // ============================================================================
@@ -134,6 +142,14 @@ void _registerRepositories() {
   // Ride Repository
   getIt.registerLazySingleton<RideRepository>(
     () => RideRepositoryImpl(
+      apiClient: getIt<ApiClient>(),
+      webSocketClient: getIt<WebSocketClient>(),
+    ),
+  );
+
+  // Safety Repository (SOS, trip sharing, trusted contacts)
+  getIt.registerLazySingleton<SafetyRepository>(
+    () => SafetyRepositoryImpl(
       apiClient: getIt<ApiClient>(),
       webSocketClient: getIt<WebSocketClient>(),
     ),
@@ -194,6 +210,7 @@ void _registerBlocs() {
       rideRepository: getIt<RideRepository>(),
       requestRideUseCase: getIt<RequestRideUseCase>(),
       getRideStatusUseCase: getIt<GetRideStatusUseCase>(),
+      safetyRepository: getIt<SafetyRepository>(),
     ),
   );
 
