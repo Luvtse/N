@@ -1,11 +1,12 @@
-import '../../data/repositories/ride_repository.dart';
+import 'dart:math' as math;
+
 import '../../data/repositories/ride_repository.dart';
 
 /// Use case for requesting a new ride
 class RequestRideUseCase {
   final RideRepository _rideRepository;
 
-  RequestRideUseCase(this._rideRepository);
+  const RequestRideUseCase(this._rideRepository);
 
   /// Execute the ride request
   ///
@@ -66,7 +67,7 @@ class RequestRideUseCase {
 
     // Request ride from repository
     try {
-      final ride = await _rideRepository.requestRide(
+      return await _rideRepository.requestRide(
         pickupLat: pickupLat,
         pickupLng: pickupLng,
         dropoffLat: dropoffLat,
@@ -76,8 +77,9 @@ class RequestRideUseCase {
         rideType: rideType,
         paymentMethodId: paymentMethodId,
       );
-
-      return ride;
+    } on Exception {
+      // Preserve coded failures (PAYMENT_FAILED, NO_DRIVERS, ...) for the Bloc.
+      rethrow;
     } catch (e) {
       throw Exception('Failed to request ride: ${e.toString()}');
     }
@@ -149,6 +151,3 @@ class RequestRideUseCase {
     return degrees * math.pi / 180;
   }
 }
-
-// Import dart:math for math functions
-import 'dart:math' as math;

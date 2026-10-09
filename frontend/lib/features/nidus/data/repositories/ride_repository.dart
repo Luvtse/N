@@ -53,6 +53,29 @@ abstract class RideRepository {
 
   /// Unsubscribe from ride updates
   void unsubscribeFromRideUpdates(String rideId);
+
+  /// Get the rider's currently active (non-terminal) ride, if any
+  Future<Ride?> getActiveRide();
+
+  /// Cancel a ride with full result semantics (fee + error code).
+  ///
+  /// Preferred over [cancelRide] for flows that must surface cancellation
+  /// fees or react to specific failure codes (e.g. INVALID_TRANSITION).
+  Future<CancelRideResult> cancelRideWithResult(
+    String rideId, {
+    String? reason,
+  });
+
+  /// Rate a completed ride with full result semantics (error code).
+  ///
+  /// Preferred over [rateRide] for flows that must distinguish
+  /// ALREADY_RATED / TIP_TOO_LARGE / TIP_SETTLEMENT_FAILED.
+  Future<RateRideResult> rateRideWithResult(
+    String rideId,
+    int rating, {
+    String? review,
+    double? tip,
+  });
 }
 
 // ============================================================================
@@ -295,6 +318,13 @@ class RideStatusUpdate {
   final double? driverLng;
   final DateTime timestamp;
 
+  /// Who initiated a cancellation: 'rider', 'driver', or 'system'.
+  /// Null for non-cancellation updates.
+  final String? cancelledBy;
+
+  /// Optional human-readable cancellation reason from the backend event.
+  final String? cancelReason;
+
   const RideStatusUpdate({
     required this.rideId,
     required this.status,
@@ -302,6 +332,8 @@ class RideStatusUpdate {
     this.driverLat,
     this.driverLng,
     required this.timestamp,
+    this.cancelledBy,
+    this.cancelReason,
   });
 
   factory RideStatusUpdate.fromJson(Map<String, dynamic> json) {
@@ -318,8 +350,77 @@ class RideStatusUpdate {
           ? (json['driver_lng'] as num).toDouble()
           : null,
       timestamp: DateTime.parse(json['timestamp'] as String),
+      cancelledBy: json['cancelled_by'] as String?,
+      cancelReason: json['reason'] as String?,
     );
   }
+}
+
+// ============================================================================
+// CANCEL / RATE RESULTS
+// ============================================================================
+
+/// Result of a cancellation attempt, including fee transparency data.
+class CancelRideResult {
+  final bool success;
+  final String? errorCode;
+  final String? message;
+
+  /// Fee charged for cancelling, in currency units (0 when free window).
+  final double cancellationFee;
+  final String currency;
+
+  const CancelRideResult._({
+    required this.success,
+    this.errorCode,
+    this.message,
+    this.cancellationFee = 0,
+    this.currency = 'ETB',
+  });
+
+  const CancelRideResult.cancelled({
+    this.cancellationFee = 0,
+    this.currency = 'ETB',
+  })  : success = true,
+        errorCode = null,
+        message = null;
+
+  const CancelRideResult.failure({
+    required this.errorCode,
+    required this.message,
+  })  : success = false,
+        cancellationFee = 0,
+        currency = 'ETB';
+
+  /// True when the driver (not the rider) ended the ride — fee should be waived.
+  bool get wasDriverCancelled => errorCode == 'DRIVER_CANCELLED';
+}
+
+/// Result of a rating attempt with coded failures surfaced by the backend.
+class RateRideResult {
+  final bool success;
+  final String? errorCode;
+  final String? message;
+
+  const RateRideResult._({
+    required this.success,
+    this.errorCode,
+    this.message,
+  });
+
+  const RateRideResult.rated()
+      : success = true,
+        errorCode = null,
+        message = null;
+
+  const RateRideResult.failure({
+    required this.errorCode,
+    required this.message,
+  }) : success = false;
+
+  bool get alreadyRated => errorCode == 'ALREADY_RATED';
+  bool get tipTooLarge => errorCode == 'TIP_TOO_LARGE';
+  bool get tipSettlementFailed => errorCode == 'TIP_SETTLEMENT_FAILED';
 }
 
 // ============================================================================
@@ -533,6 +634,97 @@ class RideRepositoryImpl implements RideRepository {
     if (controller != null) {
       controller.close();
       _webSocketClient.unsubscribe('ride:$rideId');
+    }
+  }
+
+  // ==========================================================================
+  // ACTIVE RIDE / RESULT-BASED CANCEL & RATE
+  // ==========================================================================
+
+  @override
+  Future<Ride?> getActiveRide() async {
+    try {
+      final response =
+          await _apiClient.get('/api/v1/nidus/rides/active');
+      final data = response.data;
+      if (data == null) return null;
+      return Ride.fromJson(data as Map<String, dynamic>);
+    } on ApiException catch (e) {
+      // 404 simply means "no active ride" — not an error worth surfacing.
+      if (e.statusCode == 404) return null;
+      debugPrint('Failed to get active ride: $e');
+      return null;
+    } catch (e) {
+      debugPrint('Failed to get active ride: $e');
+      return null;
+    }
+  }
+
+  @override
+  Future<CancelRideResult> cancelRideWithResult(
+    String rideId, {
+    String? reason,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/api/v1/nidus/rides/$rideId/cancel',
+        data: {'reason': reason},
+      );
+
+      final data = response.data;
+      double fee = 0;
+      String currency = 'ETB';
+      if (data is Map<String, dynamic>) {
+        fee = data['cancellation_fee'] != null
+            ? (data['cancellation_fee'] as num).toDouble()
+            : 0;
+        currency = data['currency'] as String? ?? 'ETB';
+      }
+
+      return CancelRideResult.cancelled(
+        cancellationFee: fee,
+        currency: currency,
+      );
+    } on ApiException catch (e) {
+      return CancelRideResult.failure(
+        errorCode: e.errorCode ?? 'CANCEL_FAILED',
+        message: e.message,
+      );
+    } catch (e) {
+      return CancelRideResult.failure(
+        errorCode: 'NETWORK_ERROR',
+        message: 'Failed to cancel ride: ${e.toString()}',
+      );
+    }
+  }
+
+  @override
+  Future<RateRideResult> rateRideWithResult(
+    String rideId,
+    int rating, {
+    String? review,
+    double? tip,
+  }) async {
+    try {
+      await _apiClient.post(
+        '/api/v1/nidus/rides/$rideId/rate',
+        data: {
+          'rating': rating,
+          'review': review,
+          'tip': tip,
+        },
+      );
+      return const RateRideResult.rated();
+    } on ApiException catch (e) {
+      return RateRideResult.failure(
+        errorCode: e.errorCode ?? 'RATE_FAILED',
+        message: e.message,
+      );
+    } catch (e) {
+      return RateRideResult.failure(
+        errorCode: 'NETWORK_ERROR',
+        message: 'Failed to rate ride: ${e.toString()}',
+      );
     }
   }
 
