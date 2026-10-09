@@ -27,6 +27,7 @@ import (
 	nidusevents "nidaw-backend/internal/modules/nidus/domain/events"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+	"nidaw-backend/internal/shared/observability"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -278,6 +279,7 @@ func (h *AcceptRideHandler) Execute(ctx context.Context, cmd *AcceptRideCommand)
 	if tag.RowsAffected() == 0 {
 		return nil, ErrInvalidTransition // lost the race to another driver
 	}
+	observability.Nidus().RecordMatch("manual")
 
 	// Mark the driver busy so the matching engine stops offering them rides.
 	if _, err := h.db.Exec(ctx,
@@ -500,6 +502,16 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		return nil, err
 	}
 
+	// Observability parity with ledger Phase E/F/G workers: completion volume
+	// plus which settlement path was taken (inline publish vs durable outbox).
+	nm := observability.Nidus()
+	nm.RidesCompletedTotal.Inc()
+	if settled {
+		nm.RecordSettlement("settled")
+	} else {
+		nm.RecordSettlement("queued")
+	}
+
 	// Free the driver for the next match.
 	if _, err := h.db.Exec(ctx,
 		`UPDATE drivers SET status = 'available', total_rides = total_rides + 1, updated_at = NOW()
@@ -575,10 +587,14 @@ func (h *CancelRideHandler) Execute(ctx context.Context, cmd *CancelRideCommand)
 	}
 
 	now := time.Now().UTC()
+	reason := cmd.Reason
+	if reason == "" {
+		reason = "no reason provided"
+	}
 	tag, err := h.db.Exec(ctx, `
-		UPDATE rides SET status = 'cancelled', updated_at = $2
+		UPDATE rides SET status = 'cancelled', cancel_reason = $3, updated_at = $2
 		 WHERE id = $1 AND status IN ('requested','searching','matched','driver_en_route')`,
-		ride.ID, now)
+		ride.ID, now, reason)
 	if err != nil {
 		return nil, err
 	}
@@ -597,10 +613,6 @@ func (h *CancelRideHandler) Execute(ctx context.Context, cmd *CancelRideCommand)
 
 	ride.Status = entities.RideStatusCancelled
 
-	reason := cmd.Reason
-	if reason == "" {
-		reason = "no reason provided"
-	}
 	ev := &nidusevents.RideCancelled{
 		RideID: ride.ID, UserID: ride.UserID, DriverID: ride.DriverID,
 		Reason: reason, CancelledBy: actor,

@@ -63,6 +63,14 @@ type Claims struct {
 	Type     TokenType `json:"type"`
 }
 
+// IsAccessToken reports whether these claims carry an access-token credential.
+// Entry points that need defense-in-depth against refresh/other token classes
+// (e.g., the WebSocket hub) should assert this explicitly rather than relying
+// solely on which Validate* helper was called upstream.
+func (c *Claims) IsAccessToken() bool {
+	return c != nil && c.Type == AccessToken
+}
+
 // TokenPair holds both access and refresh tokens
 type TokenPair struct {
 	AccessToken  string    `json:"access_token"`

@@ -293,6 +293,73 @@ func (l *LedgerMetrics) RecordDrift(corrected bool) {
 	l.BalanceDriftTotal.WithLabelValues(c).Inc()
 }
 
+// ============================================================================
+// NIDUS (Ride) Metrics
+// ============================================================================
+
+// NidusMetrics backs ride-hailing operational counters so the auto-matching
+// worker has observability parity with the ledger Phase E/F/G jobs
+// (matches_per_tick drives the "matching stall" Grafana panel and alerts).
+type NidusMetrics struct {
+	MatchesTotal       *prometheus.CounterVec // labels: source (automatch|manual)
+	TicksTotal         *prometheus.CounterVec // labels: result (ok|error)
+	SettlementsTotal   *prometheus.CounterVec // labels: outcome (settled|queued|failed)
+	RidesCompletedTotal prometheus.Counter
+}
+
+var (
+	nidusOnce sync.Once
+	nidusM    *NidusMetrics
+)
+
+// Nidus returns the shared Nidus collector set (singleton).
+func Nidus() *NidusMetrics {
+	nidusOnce.Do(func() {
+		r := Registry()
+		m := &NidusMetrics{
+			MatchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Namespace: "nidus",
+				Name:      "matches_total",
+				Help:      "Ride-driver assignments by source (automatch or manual accept).",
+			}, []string{"source"}),
+			TicksTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Namespace: "nidus",
+				Name:      "matcher_ticks_total",
+				Help:      "Auto-matcher passes by result (ok or error).",
+			}, []string{"result"}),
+			SettlementsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Namespace: "nidus",
+				Name:      "settlements_total",
+				Help:      "Ride settlement outcomes (settled inline, queued to outbox, failed).",
+			}, []string{"outcome"}),
+			RidesCompletedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+				Namespace: "nidus",
+				Name:      "rides_completed_total",
+				Help:      "Total rides transitioned to completed.",
+			}),
+		}
+		r.MustRegister(m.MatchesTotal, m.TicksTotal, m.SettlementsTotal, m.RidesCompletedTotal)
+		nidusM = m
+	})
+	return nidusM
+}
+
+// RecordMatch counts one successful driver assignment ("automatch" or
+// "manual").
+func (n *NidusMetrics) RecordMatch(source string) {
+	n.MatchesTotal.WithLabelValues(source).Inc()
+}
+
+// RecordTick counts one auto-matcher pass, tagged by outcome.
+func (n *NidusMetrics) RecordTick(result string) {
+	n.TicksTotal.WithLabelValues(result).Inc()
+}
+
+// RecordSettlement counts a ride-settlement outcome for the completion flow.
+func (n *NidusMetrics) RecordSettlement(outcome string) {
+	n.SettlementsTotal.WithLabelValues(outcome).Inc()
+}
+
 // SetProviderDown flips the health gauge for a rail (1 = circuit tripped).
 // Any provider reporting 1 for 5m fires the PagerDuty ProviderDown alert.
 func (l *LedgerMetrics) SetProviderDown(provider string, down bool) {
