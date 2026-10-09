@@ -23,11 +23,35 @@ import (
 
 // RideHandler handles all ride-related HTTP requests
 type RideHandler struct {
-	requestRideCmd *commands.RequestRideHandler
-	getRideQuery   *queries.GetRideQuery
-	listRidesQuery *queries.ListRidesQuery
-	matchingEngine *services.MatchingEngine
-	pricingService *services.PricingService
+	requestRideCmd  *commands.RequestRideHandler
+	getRideQuery    *queries.GetRideQuery
+	listRidesQuery  *queries.ListRidesQuery
+	matchingEngine  *services.MatchingEngine
+	pricingService  *services.PricingService
+	cancelRideCmd   *commands.CancelRideHandler
+	rateRideCmd     *commands.RateRideHandler
+	acceptRideCmd   *commands.AcceptRideHandler
+	startRideCmd    *commands.StartRideHandler
+	completeRideCmd *commands.CompleteRideHandler
+}
+
+// LifecycleCommands bundles the driver-side + terminal transitions built in
+// the router (they need DB/bus/pricing wiring not stored on RideHandler).
+type LifecycleCommands struct {
+	Accept   *commands.AcceptRideHandler
+	Start    *commands.StartRideHandler
+	Complete *commands.CompleteRideHandler
+	Cancel   *commands.CancelRideHandler
+	Rate     *commands.RateRideHandler
+}
+
+// SetLifecycle wires the lifecycle command handlers into this HTTP handler.
+func (h *RideHandler) SetLifecycle(lc LifecycleCommands) {
+	h.acceptRideCmd = lc.Accept
+	h.startRideCmd = lc.Start
+	h.completeRideCmd = lc.Complete
+	h.cancelRideCmd = lc.Cancel
+	h.rateRideCmd = lc.Rate
 }
 
 // NewRideHandler creates a new ride handler
@@ -66,46 +90,46 @@ type RequestRideRequest struct {
 
 // RideResponse is the JSON response for ride endpoints
 type RideResponse struct {
-	ID              uuid.UUID     `json:"id"`
-	UserID          uuid.UUID     `json:"user_id"`
-	DriverID        *uuid.UUID    `json:"driver_id,omitempty"`
-	PickupLat       float64       `json:"pickup_lat"`
-	PickupLng       float64       `json:"pickup_lng"`
-	DropoffLat      float64       `json:"dropoff_lat"`
-	DropoffLng      float64       `json:"dropoff_lng"`
-	PickupAddress   string        `json:"pickup_address,omitempty"`
-	DropoffAddress  string        `json:"dropoff_address,omitempty"`
-	RideType        string        `json:"ride_type"`
-	Status          string        `json:"status"`
-	FareAmount      *float64      `json:"fare_amount,omitempty"`
-	Currency        string        `json:"currency"`
-	DistanceKm      *float64      `json:"distance_km,omitempty"`
-	DurationMinutes *int          `json:"duration_minutes,omitempty"`
-	Driver          *DriverInfo   `json:"driver,omitempty"`
-	RequestedAt     time.Time     `json:"requested_at"`
-	MatchedAt       *time.Time    `json:"matched_at,omitempty"`
-	CompletedAt     *time.Time    `json:"completed_at,omitempty"`
+	ID              uuid.UUID   `json:"id"`
+	UserID          uuid.UUID   `json:"user_id"`
+	DriverID        *uuid.UUID  `json:"driver_id,omitempty"`
+	PickupLat       float64     `json:"pickup_lat"`
+	PickupLng       float64     `json:"pickup_lng"`
+	DropoffLat      float64     `json:"dropoff_lat"`
+	DropoffLng      float64     `json:"dropoff_lng"`
+	PickupAddress   string      `json:"pickup_address,omitempty"`
+	DropoffAddress  string      `json:"dropoff_address,omitempty"`
+	RideType        string      `json:"ride_type"`
+	Status          string      `json:"status"`
+	FareAmount      *float64    `json:"fare_amount,omitempty"`
+	Currency        string      `json:"currency"`
+	DistanceKm      *float64    `json:"distance_km,omitempty"`
+	DurationMinutes *int        `json:"duration_minutes,omitempty"`
+	Driver          *DriverInfo `json:"driver,omitempty"`
+	RequestedAt     time.Time   `json:"requested_at"`
+	MatchedAt       *time.Time  `json:"matched_at,omitempty"`
+	CompletedAt     *time.Time  `json:"completed_at,omitempty"`
 }
 
 // DriverInfo contains driver details for a ride response
 type DriverInfo struct {
-	ID            uuid.UUID `json:"id"`
-	Name          string    `json:"name"`
-	Rating        float64   `json:"rating"`
-	VehicleType   string    `json:"vehicle_type"`
-	VehiclePlate  string    `json:"vehicle_plate"`
-	CurrentLat    float64   `json:"current_lat"`
-	CurrentLng    float64   `json:"current_lng"`
-	ETAMinutes    int       `json:"eta_minutes"`
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	Rating       float64   `json:"rating"`
+	VehicleType  string    `json:"vehicle_type"`
+	VehiclePlate string    `json:"vehicle_plate"`
+	CurrentLat   float64   `json:"current_lat"`
+	CurrentLng   float64   `json:"current_lng"`
+	ETAMinutes   int       `json:"eta_minutes"`
 }
 
 // ListRidesResponse wraps a list of rides with pagination
 type ListRidesResponse struct {
-	Rides      []RideResponse `json:"rides"`
-	Total      int            `json:"total"`
-	Limit      int            `json:"limit"`
-	Offset     int            `json:"offset"`
-	HasMore    bool           `json:"has_more"`
+	Rides   []RideResponse `json:"rides"`
+	Total   int            `json:"total"`
+	Limit   int            `json:"limit"`
+	Offset  int            `json:"offset"`
+	HasMore bool           `json:"has_more"`
 }
 
 // CancelRideRequest is the JSON body for POST /rides/:id/cancel
@@ -115,8 +139,8 @@ type CancelRideRequest struct {
 
 // RateRideRequest is the JSON body for POST /rides/:id/rate
 type RateRideRequest struct {
-	Rating int    `json:"rating"`
-	Review string `json:"review,omitempty"`
+	Rating int     `json:"rating"`
+	Review string  `json:"review,omitempty"`
 	Tip    float64 `json:"tip,omitempty"`
 }
 
@@ -273,6 +297,7 @@ func (h *RideHandler) ListRides(w http.ResponseWriter, r *http.Request) {
 }
 
 // CancelRide handles POST /api/v1/nidus/rides/{rideID}/cancel
+// (rider or the matched driver; identity derived from the JWT subject).
 func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -282,8 +307,7 @@ func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rideIDStr := chi.URLParam(r, "rideID")
-	rideID, err := uuid.Parse(rideIDStr)
+	rideID, err := uuid.Parse(chi.URLParam(r, "rideID"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ID", "invalid ride ID format")
 		return
@@ -292,15 +316,26 @@ func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
 	var req CancelRideRequest
 	_ = json.NewDecoder(r.Body).Decode(&req) // Optional body
 
-	// TODO: Implement CancelRideCommand
-	// For now, return not implemented
-	writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "cancel ride not yet implemented")
-	_ = userID
-	_ = rideID
-	_ = req
+	if h.cancelRideCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "cancel ride not yet wired")
+		return
+	}
+	ride, err := h.cancelRideCmd.Execute(ctx, &commands.CancelRideCommand{
+		UserID: userID,
+		RideID: rideID,
+		Reason: req.Reason,
+	})
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRideResponse(ride))
 }
 
-// RateRide handles POST /api/v1/nidus/rides/{rideID}/rate
+// RateRide handles POST /api/v1/nidus/rides/{rideID}/rate (rider only).
+// Tips are settled through the ledger TipSettler port; a tip that fails to
+// settle returns 409 so the client can retry idempotently.
 func (h *RideHandler) RateRide(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -310,8 +345,7 @@ func (h *RideHandler) RateRide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rideIDStr := chi.URLParam(r, "rideID")
-	rideID, err := uuid.Parse(rideIDStr)
+	rideID, err := uuid.Parse(chi.URLParam(r, "rideID"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ID", "invalid ride ID format")
 		return
@@ -328,12 +362,246 @@ func (h *RideHandler) RateRide(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "rating must be between 1 and 5")
 		return
 	}
+	if req.Tip < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "tip must not be negative")
+		return
+	}
 
-	// TODO: Implement RateRideCommand
-	writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "rate ride not yet implemented")
-	_ = userID
-	_ = rideID
-	_ = req
+	if h.rateRideCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "rate ride not yet wired")
+		return
+	}
+	ride, err := h.rateRideCmd.Execute(ctx, &commands.RateRideCommand{
+		UserID:   userID,
+		RideID:   rideID,
+		Rating:   req.Rating,
+		Review:   req.Review,
+		TipCents: int64(req.Tip*100 + 0.5), // float ETB -> santim, rounded once here
+	})
+	if err != nil {
+		status, code, msg := mapRateError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRideResponse(ride))
+}
+
+// mapRateError extends the lifecycle mapping with rate/tip-specific cases.
+func mapRateError(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, commands.ErrAlreadyRated):
+		return http.StatusConflict, "ALREADY_RATED", "ride has already been rated"
+	case errors.Is(err, commands.ErrTipTooLarge):
+		return http.StatusBadRequest, "TIP_TOO_LARGE", "tip must be between 0 and the fare amount"
+	default:
+		if tipFail := unwrapTipFailure(err); tipFail != nil {
+			return http.StatusConflict, "TIP_SETTLEMENT_FAILED", tipFail.Error()
+		}
+		return mapLifecycleError(err)
+	}
+}
+
+// mapLifecycleError translates domain sentinels into coded HTTP responses
+// (Phase B/B8: no internal details leak to the client).
+func mapLifecycleError(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, commands.ErrRideNotFound):
+		return http.StatusNotFound, "NOT_FOUND", "ride not found"
+	case errors.Is(err, commands.ErrForbidden):
+		return http.StatusForbidden, "FORBIDDEN", "you are not permitted to perform this action on this ride"
+	case errors.Is(err, commands.ErrInvalidTransition):
+		return http.StatusConflict, "INVALID_TRANSITION", "ride is not in a state that allows this action"
+	case errors.Is(err, commands.ErrDriverUnavailable):
+		return http.StatusConflict, "DRIVER_UNAVAILABLE", "driver is not online-and-available"
+	case errors.Is(err, commands.ErrAlreadyRated):
+		return http.StatusConflict, "ALREADY_RATED", "ride has already been rated"
+	case errors.Is(err, commands.ErrTipTooLarge):
+		return http.StatusBadRequest, "TIP_TOO_LARGE", "tip must be between 0 and the fare amount"
+	case errors.Is(err, commands.ErrFareCalcFailed):
+		return http.StatusInternalServerError, "FARE_CALC_FAILED", "final fare calculation failed"
+	default:
+		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, body interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func parseRideID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	rideID, err := uuid.Parse(chi.URLParam(r, "rideID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "invalid ride ID format")
+		return uuid.Nil, false
+	}
+	return rideID, true
+}
+
+func unwrapTipFailure(err error) error {
+	// RateRide wraps tip failures as "rating saved, tip settlement failed: %w".
+	const marker = "tip settlement failed:"
+	msg := err.Error()
+	idx := indexOf(msg, marker)
+	if idx < 0 {
+		return nil
+	}
+	reason := msg[idx+len(marker):]
+	if reason == "" {
+		reason = "ledger unavailable"
+	}
+	return errors.New("rating saved, but the tip could not be settled (" + reason + "); retry the tip")
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+// ============================================================================
+// DRIVER-SIDE LIFECYCLE ENDPOINTS
+// ============================================================================
+
+// AcceptRide handles POST /api/v1/nidus/rides/{rideID}/accept (driver).
+func (h *RideHandler) AcceptRide(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	rideID, ok := parseRideID(w, r)
+	if !ok {
+		return
+	}
+	if h.acceptRideCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "accept ride not yet wired")
+		return
+	}
+	ride, err := h.acceptRideCmd.Execute(r.Context(), &commands.AcceptRideCommand{
+		DriverUserID: userID,
+		RideID:       rideID,
+	})
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRideResponse(ride))
+}
+
+// StartRide handles POST /api/v1/nidus/rides/{rideID}/start (driver).
+func (h *RideHandler) StartRide(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	rideID, ok := parseRideID(w, r)
+	if !ok {
+		return
+	}
+	if h.startRideCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "start ride not yet wired")
+		return
+	}
+	ride, err := h.startRideCmd.Execute(r.Context(), &commands.StartRideCommand{
+		DriverUserID: userID,
+		RideID:       rideID,
+	})
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRideResponse(ride))
+}
+
+// CompleteRideRequest carries optional actual-trip metrics reported by the
+// driver app's GPS breadcrumbs after the trip ends.
+type CompleteRideRequest struct {
+	ActualDistanceKm  *float64 `json:"actual_distance_km,omitempty"`
+	ActualDurationMin *int     `json:"actual_duration_min,omitempty"`
+}
+
+// CompleteRideResponse reports the settled money breakdown.
+type CompleteRideResponse struct {
+	RideID           uuid.UUID `json:"ride_id"`
+	Status           string    `json:"status"`
+	FinalFare        float64   `json:"final_fare"`
+	PlatformFee      float64   `json:"platform_fee"`
+	DriverEarnings   float64   `json:"driver_earnings"`
+	Tip              float64   `json:"tip"`
+	SettlementQueued bool      `json:"settlement_queued"` // true => outbox will retry broker publish
+}
+
+// CompleteRide handles POST /api/v1/nidus/rides/{rideID}/complete (driver).
+// A broker outage at completion time is NOT an error for the client: the ride
+// is durably completed and the settlement outbox guarantees eventual ledger
+// processing (HTTP 200 with settlement_queued=true).
+func (h *RideHandler) CompleteRide(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	rideID, ok := parseRideID(w, r)
+	if !ok {
+		return
+	}
+	var req CompleteRideRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+			return
+		}
+	}
+	if h.completeRideCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "complete ride not yet wired")
+		return
+	}
+	cmd := &commands.CompleteRideCommand{
+		DriverUserID: userID,
+		RideID:       rideID,
+	}
+	if req.ActualDistanceKm != nil && *req.ActualDistanceKm > 0 {
+		cmd.ActualDistanceKm = *req.ActualDistanceKm
+	}
+	if req.ActualDurationMin != nil && *req.ActualDurationMin > 0 {
+		cmd.ActualDurationMin = *req.ActualDurationMin
+	}
+
+	res, err := h.completeRideCmd.Execute(r.Context(), cmd)
+	if errors.Is(err, commands.ErrSettlementFallback) && res != nil {
+		writeJSON(w, http.StatusOK, CompleteRideResponse{
+			RideID:           res.RideID,
+			Status:           string(entities.RideStatusCompleted),
+			FinalFare:        res.FinalFare,
+			PlatformFee:      res.PlatformFee,
+			DriverEarnings:   res.DriverEarnings,
+			Tip:              res.Tip,
+			SettlementQueued: true,
+		})
+		return
+	}
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, CompleteRideResponse{
+		RideID:           res.RideID,
+		Status:           string(entities.RideStatusCompleted),
+		FinalFare:        res.FinalFare,
+		PlatformFee:      res.PlatformFee,
+		DriverEarnings:   res.DriverEarnings,
+		Tip:              res.Tip,
+		SettlementQueued: !res.Settled,
+	})
 }
 
 // ============================================================================
@@ -368,21 +636,21 @@ func validateRideRequest(req *RequestRideRequest) error {
 
 func toRideResponse(ride *entities.Ride) RideResponse {
 	resp := RideResponse{
-		ID:              ride.ID,
-		UserID:          ride.UserID,
-		DriverID:        ride.DriverID,
-		PickupLat:       ride.PickupLat,
-		PickupLng:       ride.PickupLng,
-		DropoffLat:      ride.DropoffLat,
-		DropoffLng:      ride.DropoffLng,
-		PickupAddress:   ride.PickupAddress,
-		DropoffAddress:  ride.DropoffAddress,
-		RideType:        ride.RideType,
-		Status:          string(ride.Status),
-		Currency:        ride.Currency,
-		RequestedAt:     ride.RequestedAt,
-		MatchedAt:       ride.MatchedAt,
-		CompletedAt:     ride.CompletedAt,
+		ID:             ride.ID,
+		UserID:         ride.UserID,
+		DriverID:       ride.DriverID,
+		PickupLat:      ride.PickupLat,
+		PickupLng:      ride.PickupLng,
+		DropoffLat:     ride.DropoffLat,
+		DropoffLng:     ride.DropoffLng,
+		PickupAddress:  ride.PickupAddress,
+		DropoffAddress: ride.DropoffAddress,
+		RideType:       ride.RideType,
+		Status:         string(ride.Status),
+		Currency:       ride.Currency,
+		RequestedAt:    ride.RequestedAt,
+		MatchedAt:      ride.MatchedAt,
+		CompletedAt:    ride.CompletedAt,
 	}
 
 	if ride.FareAmount > 0 {
