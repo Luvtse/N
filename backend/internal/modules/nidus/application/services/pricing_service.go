@@ -79,11 +79,11 @@ func DefaultPricingConfig() *PricingConfig {
 			RideTypeWheelchair: 0.35,
 		},
 		MinimumFare: map[RideType]int64{
-			RideTypeStandard:   500, // $5.00
+			RideTypeStandard:   500,  // $5.00
 			RideTypePremium:    1500, // $15.00
-			RideTypeElectric:   600, // $6.00
-			RideTypeShared:     350, // $3.50
-			RideTypeWheelchair: 600, // $6.00
+			RideTypeElectric:   600,  // $6.00
+			RideTypeShared:     350,  // $3.50
+			RideTypeWheelchair: 600,  // $6.00
 		},
 		MaxSurgeMultiplier: 3.5,
 		DefaultCurrency:    "USD",
@@ -92,19 +92,19 @@ func DefaultPricingConfig() *PricingConfig {
 
 // FareEstimate contains the full fare breakdown
 type FareEstimate struct {
-	RideType         RideType  `json:"ride_type"`
-	BaseFare         int64     `json:"base_fare"`          // in cents
-	DistanceFare     int64     `json:"distance_fare"`      // in cents
-	TimeFare         int64     `json:"time_fare"`          // in cents
-	Subtotal         int64     `json:"subtotal"`           // in cents
-	SurgeMultiplier  float64   `json:"surge_multiplier"`
-	SurgeAmount      int64     `json:"surge_amount"`       // in cents
-	TotalFare        int64     `json:"total_fare"`         // in cents
-	Currency         string    `json:"currency"`
-	DistanceKm       float64   `json:"distance_km"`
-	DurationMinutes  int       `json:"duration_minutes"`
-	EstimatedPickup  int       `json:"estimated_pickup_minutes"`
-	CalculatedAt     time.Time `json:"calculated_at"`
+	RideType        RideType  `json:"ride_type"`
+	BaseFare        int64     `json:"base_fare"`     // in cents
+	DistanceFare    int64     `json:"distance_fare"` // in cents
+	TimeFare        int64     `json:"time_fare"`     // in cents
+	Subtotal        int64     `json:"subtotal"`      // in cents
+	SurgeMultiplier float64   `json:"surge_multiplier"`
+	SurgeAmount     int64     `json:"surge_amount"` // in cents
+	TotalFare       int64     `json:"total_fare"`   // in cents
+	Currency        string    `json:"currency"`
+	DistanceKm      float64   `json:"distance_km"`
+	DurationMinutes int       `json:"duration_minutes"`
+	EstimatedPickup int       `json:"estimated_pickup_minutes"`
+	CalculatedAt    time.Time `json:"calculated_at"`
 }
 
 // SurgeInfo contains information about current surge pricing
@@ -150,7 +150,7 @@ func (s *PricingService) CalculateFare(
 
 	// Calculate distance (Haversine formula)
 	distanceKm := haversineDistance(pickupLat, pickupLng, dropoffLat, dropoffLng)
-	
+
 	// Apply road distance factor (roads are longer than straight-line)
 	roadDistanceKm := distanceKm * 1.3
 
@@ -201,19 +201,19 @@ func (s *PricingService) CalculateFare(
 	}
 
 	return &FareEstimate{
-		RideType:         rideType,
-		BaseFare:         baseFare,
-		DistanceFare:     distanceFare,
-		TimeFare:         timeFare,
-		Subtotal:         subtotal,
-		SurgeMultiplier:  surgeInfo.Multiplier,
-		SurgeAmount:      surgeAmount,
-		TotalFare:        totalFare,
-		Currency:         s.config.DefaultCurrency,
-		DistanceKm:       math.Round(roadDistanceKm*100) / 100,
-		DurationMinutes:  durationMinutes,
-		EstimatedPickup:  s.estimatePickupTime(ctx, pickupLat, pickupLng),
-		CalculatedAt:     time.Now(),
+		RideType:        rideType,
+		BaseFare:        baseFare,
+		DistanceFare:    distanceFare,
+		TimeFare:        timeFare,
+		Subtotal:        subtotal,
+		SurgeMultiplier: surgeInfo.Multiplier,
+		SurgeAmount:     surgeAmount,
+		TotalFare:       totalFare,
+		Currency:        s.config.DefaultCurrency,
+		DistanceKm:      math.Round(roadDistanceKm*100) / 100,
+		DurationMinutes: durationMinutes,
+		EstimatedPickup: s.estimatePickupTime(ctx, pickupLat, pickupLng),
+		CalculatedAt:    time.Now(),
 	}, nil
 }
 

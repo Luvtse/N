@@ -69,10 +69,10 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 
 	// Validate sort field to prevent SQL injection
 	validSortFields := map[string]bool{
-		"requested_at":  true,
-		"completed_at":  true,
-		"fare_amount":   true,
-		"created_at":    true,
+		"requested_at": true,
+		"completed_at": true,
+		"fare_amount":  true,
+		"created_at":   true,
 	}
 	if !validSortFields[params.SortBy] {
 		params.SortBy = "requested_at"
@@ -228,11 +228,11 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	if matchedAt.Valid {
 		t := matchedAt.Time
 		ride.MatchedAt = &t
-		}
+	}
 	if completedAt.Valid {
 		t := completedAt.Time
 		ride.CompletedAt = &t
-		}
+	}
 	if rating.Valid {
 		ride.Rating = int(rating.Int32)
 	}

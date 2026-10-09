@@ -66,12 +66,12 @@ func NewRideHandler(
 	pricingService *services.PricingService,
 ) *RideHandler {
 	return &RideHandler{
-		db:              db,
-		requestRideCmd:  requestRideCmd,
-		getRideQuery:    getRideQuery,
-		listRidesQuery:  listRidesQuery,
-		matchingEngine:  matchingEngine,
-		pricingService:  pricingService,
+		db:             db,
+		requestRideCmd: requestRideCmd,
+		getRideQuery:   getRideQuery,
+		listRidesQuery: listRidesQuery,
+		matchingEngine: matchingEngine,
+		pricingService: pricingService,
 	}
 }
 
