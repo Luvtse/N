@@ -21,6 +21,8 @@ const (
 	TxTypeRideDebit TransactionType = "ride_debit"
 	// TxTypeRideCreditHeld — driver credited into held balance (escrow).
 	TxTypeRideCreditHeld TransactionType = "ride_credit_held"
+	// TxTypeTip — rider-paid gratuity settled straight to driver available.
+	TxTypeTip TransactionType = "tip"
 	// TxTypeEscrowRelease — held -> available migration once the 72h window passes.
 	TxTypeEscrowRelease TransactionType = "escrow_release"
 	// TxTypeRefund — funds returned to rider (dispute / no-show).
@@ -41,6 +43,7 @@ var allTxTypes = map[TransactionType]bool{
 	TxTypeTopup:              true,
 	TxTypeRideDebit:          true,
 	TxTypeRideCreditHeld:     true,
+	TxTypeTip:                true,
 	TxTypeEscrowRelease:      true,
 	TxTypeRefund:             true,
 	TxTypeWithdrawalDebit:    true,
