@@ -191,10 +191,9 @@ void _registerBlocs() {
   // Ride BLoC (factory - new instance per ride screen)
   getIt.registerFactory<RideBloc>(
     () => RideBloc(
-      eventBus: getIt<EventBus>(),
+      rideRepository: getIt<RideRepository>(),
       requestRideUseCase: getIt<RequestRideUseCase>(),
       getRideStatusUseCase: getIt<GetRideStatusUseCase>(),
-      webSocketClient: getIt<WebSocketClient>(),
     ),
   );
 

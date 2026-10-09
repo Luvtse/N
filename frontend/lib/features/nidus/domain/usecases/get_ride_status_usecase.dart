@@ -1,11 +1,10 @@
 import '../../data/repositories/ride_repository.dart';
-import '../../data/repositories/ride_repository.dart';
 
 /// Use case for getting ride status
 class GetRideStatusUseCase {
   final RideRepository _rideRepository;
 
-  GetRideStatusUseCase(this._rideRepository);
+  const GetRideStatusUseCase(this._rideRepository);
 
   /// Execute the use case
   ///
