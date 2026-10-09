@@ -13,6 +13,7 @@ import '../../features/nidus/presentation/bloc/ride_bloc.dart';
 import '../../features/nidus/presentation/pages/ride_request_page.dart';
 import '../../features/nidus/presentation/pages/ride_tracking_page.dart';
 import '../../features/nidus/presentation/pages/ride_history_page.dart';
+import '../../features/nidus/presentation/pages/safety_toolkit_page.dart';
 import '../../features/haven/presentation/pages/hotel_search_page.dart';
 import '../../features/haven/presentation/pages/hotel_detail_page.dart';
 import '../../features/haven/presentation/pages/booking_page.dart';
@@ -37,6 +38,7 @@ class RouteNames {
   static const String rideRequest = 'rideRequest';
   static const String rideTracking = 'rideTracking';
   static const String rideHistory = 'rideHistory';
+  static const String safetyToolkit = 'safetyToolkit';
   static const String hotelSearch = 'hotelSearch';
   static const String hotelDetail = 'hotelDetail';
   static const String booking = 'booking';
@@ -204,6 +206,14 @@ class AppRouter {
             path: '/nidus/history',
             name: RouteNames.rideHistory,
             builder: (context, state) => const RideHistoryPage(),
+          ),
+          GoRoute(
+            path: '/nidus/safety',
+            name: RouteNames.safetyToolkit,
+            builder: (context, state) => BlocProvider(
+              create: (_) => _rideBlocFactory(),
+              child: const SafetyToolkitPage(),
+            ),
           ),
 
           // ==================================================================

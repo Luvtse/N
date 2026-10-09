@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -104,7 +106,7 @@ class _RateRideSheetState extends State<RateRideSheet> {
       await Future.any<void>(<Future<void>>[
         bloc.stream
             .first((state) =>
-                state is RideRated && state.rideId == widget.rideId ||
+                (state is RideRated && state.rideId == widget.rideId) ||
                 state is RideError)
             .then<void>((state) {
           if (state is RideError) {
