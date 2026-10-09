@@ -115,6 +115,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 	driverHandler := nidusHttp.NewDriverHandler(
 		deps.MatchingEngine,
 		deps.CacheService,
+		deps.DB, // availability toggles persist driver status
 	)
 
 	estimateHandler := nidusHttp.NewEstimateHandler(

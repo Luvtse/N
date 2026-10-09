@@ -1,31 +1,57 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/services"
 	"nidaw-backend/internal/shared/auth"
+	"nidaw-backend/internal/shared/database"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
+var ErrNotDriver = errors.New("no driver profile for this account")
+
 type DriverHandler struct {
 	matchingEngine *services.MatchingEngine
 	cacheService   CacheService
+	db             *database.Postgres
 }
 
 func NewDriverHandler(
 	matchingEngine *services.MatchingEngine,
 	cacheService CacheService,
+	db ...*database.Postgres,
 ) *DriverHandler {
-	return &DriverHandler{
+	h := &DriverHandler{
 		matchingEngine: matchingEngine,
 		cacheService:   cacheService,
 	}
+	if len(db) > 0 {
+		h.db = db[0]
+	}
+	return h
+}
+
+// resolveDriverID maps an authenticated user ID to their driver profile ID.
+// Both the Go side (availability toggles) and SQL side need this translation
+// because drivers are keyed by their own PK while auth tokens carry user IDs.
+func (h *DriverHandler) resolveDriverID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	if h.db == nil || !h.db.IsReady() {
+		return uuid.Nil, errors.New("database unavailable")
+	}
+	var driverID uuid.UUID
+	err := h.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id = $1`, userID).Scan(&driverID)
+	if err != nil {
+		return uuid.Nil, ErrNotDriver
+	}
+	return driverID, nil
 }
 
 type DriverResponse struct {
@@ -145,6 +171,11 @@ func (h *DriverHandler) GetDriver(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GoOnline handles POST /api/v1/nidus/drivers/online.
+// Flips the driver profile to 'available' so the matching engine starts
+// offering rides, and seeds the location cache with the reported position.
+// A driver mid-trip ('on_trip') is never knocked offline by a stray toggle:
+// the UPDATE is conditioned on non-active statuses only.
 func (h *DriverHandler) GoOnline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -154,26 +185,57 @@ func (h *DriverHandler) GoOnline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Body is optional: drivers may toggle online without a fresh fix.
 	var req struct {
-		Lat float64 `json:"lat"`
-		Lng float64 `json:"lng"`
+		Lat *float64 `json:"lat"`
+		Lng *float64 `json:"lng"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+			return
+		}
+	}
+
+	driverID, err := h.resolveDriverID(ctx, userID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "NOT_A_DRIVER", "no driver profile for this account")
 		return
 	}
 
-	// TODO: Implement GoOnline command
-	_ = userID
-	_ = req
+	tag, err := h.db.Exec(ctx, `
+		UPDATE drivers
+		   SET status = 'available', updated_at = NOW()
+		 WHERE id = $1 AND status IN ('offline', 'available', 'busy')`,
+		driverID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update availability")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Driver is on_trip/inactive/suspended — report current effective state.
+		h.writeStatus(w, ctx, driverID, http.StatusConflict, "DRIVER_NOT_TOGGLEABLE")
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status": "online",
-	})
+	// Seed the fleet cache so the auto-matcher can score this driver now.
+	if req.Lat != nil && req.Lng != nil &&
+		*req.Lat >= -90 && *req.Lat <= 90 && *req.Lng >= -180 && *req.Lng <= 180 {
+		_ = h.cacheService.UpdateDriverLocation(ctx, &DriverLocation{
+			DriverID:  driverID.String(),
+			Latitude:  *req.Lat,
+			Longitude: *req.Lng,
+			Timestamp: time.Now().Unix(),
+			Status:    "available",
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "available"})
 }
 
+// GoOffline handles POST /api/v1/nidus/drivers/offline.
+// Refuses while the driver holds an active ride (matched/en-route/in_progress)
+// to prevent orphaning a rider mid-service; otherwise flips to 'offline'.
 func (h *DriverHandler) GoOffline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -183,14 +245,43 @@ func (h *DriverHandler) GoOffline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement GoOffline command
-	_ = userID
+	driverID, err := h.resolveDriverID(ctx, userID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "NOT_A_DRIVER", "no driver profile for this account")
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"status": "offline",
-	})
+	var active bool
+	if err := h.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM rides
+			 WHERE driver_id = $1
+			   AND status IN ('matched', 'driver_en_route', 'in_progress')
+		)`, driverID).Scan(&active); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to check active rides")
+		return
+	}
+	if active {
+		writeError(w, http.StatusConflict, "RIDE_IN_PROGRESS", "complete or cancel your active ride before going offline")
+		return
+	}
+
+	if _, err := h.db.Exec(ctx,
+		`UPDATE drivers SET status = 'offline', updated_at = NOW() WHERE id = $1`,
+		driverID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update availability")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "offline"})
+}
+
+// writeStatus reports the driver's current DB status; used when a toggle was
+// rejected by the conditional UPDATE guard.
+func (h *DriverHandler) writeStatus(w http.ResponseWriter, ctx context.Context, driverID uuid.UUID, status int, code string) {
+	var cur string
+	_ = h.db.QueryRow(ctx, `SELECT status FROM drivers WHERE id = $1`, driverID).Scan(&cur)
+	writeError(w, status, code, "availability unchanged; current status: "+cur)
 }
 
 func (h *DriverHandler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
