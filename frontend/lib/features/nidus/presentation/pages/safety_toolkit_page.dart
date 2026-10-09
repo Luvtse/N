@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/di/injection.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../data/repositories/safety_repository.dart';
 import '../bloc/ride_bloc.dart';
 import '../widgets/safety_widgets.dart';
 
@@ -44,6 +47,21 @@ class SafetyToolkitPage extends StatelessWidget {
     return null;
   }
 
+  /// Live coordinates for the SOS payload. The tracking page keeps a driver
+  /// position on matched/en-route states; fall back to (0, 0) only when no
+  /// location has been received yet — the backend treats that as "use last
+  /// known rider ping" rather than rejecting the alert.
+  static List<double> _liveLocation(BuildContext context) {
+    final state = context.read<RideBloc>().state;
+    if (state is DriverMatched) {
+      return [state.driver.currentLat, state.driver.currentLng];
+    }
+    if (state is DriverEnRoute) {
+      return [state.driver.currentLat, state.driver.currentLng];
+    }
+    return const [0.0, 0.0];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -72,9 +90,57 @@ class SafetyToolkitPage extends StatelessWidget {
               }
               showModalBottomSheet<void>(
                 context: context,
-                isScrollControlled: true,
-                backgroundColor: Colors.transparent,
-                builder: (_) => const SosCountdownOverlay(),
+                backgroundColor: Colors.white,
+                shape: const RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                builder: (sheetContext) => Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Emergency SOS',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Slide to alert emergency contacts with your live '
+                        'location. You will have 5 seconds to cancel before '
+                        'it fires.',
+                        style: TextStyle(color: Colors.black54, fontSize: 14),
+                      ),
+                      const SizedBox(height: 20),
+                      SosSlideToConfirm(
+                        onConfirmed: () {
+                          final bloc =
+                              Navigator.of(sheetContext).context != context
+                                  ? context.read<RideBloc>()
+                                  : context.read<RideBloc>();
+                          final location = _liveLocation(context);
+                          bloc.add(StartSosCountdown(
+                            rideId: rideId,
+                            lat: location[0],
+                            lng: location[1],
+                          ));
+                          Navigator.of(sheetContext).pop();
+                          showModalBottomSheet<void>(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (_) => const SosCountdownOverlay(),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
               );
             },
           ),
@@ -103,7 +169,10 @@ class SafetyToolkitPage extends StatelessWidget {
                   padding: EdgeInsets.only(
                     bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
                   ),
-                  child: ShareTripSheet(rideId: rideId),
+                  child: RepositoryProvider<SafetyRepository>(
+                    create: (_) => getIt<SafetyRepository>(),
+                    child: ShareTripSheet(rideId: rideId),
+                  ),
                 ),
               );
             },

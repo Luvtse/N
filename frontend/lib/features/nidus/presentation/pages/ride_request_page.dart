@@ -6,6 +6,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
 import '../widgets/ride_type_selector.dart';
 import '../widgets/location_input.dart';
+import '../widgets/payment_method_selector.dart';
 
 class RideRequestPage extends StatefulWidget {
   const RideRequestPage({super.key});
@@ -24,6 +25,7 @@ class _RideRequestPageState extends State<RideRequestPage> {
   double _dropoffLng = -73.9851;
   
   String _selectedRideType = 'standard';
+  String? _selectedPaymentMethodId;
 
   @override
   void dispose() {
@@ -146,6 +148,16 @@ class _RideRequestPageState extends State<RideRequestPage> {
                                     dropoffLng: _dropoffLng,
                                   ),
                                 );
+                          },
+                        ),
+
+                        const SizedBox(height: 24),
+
+                        // Payment method selection
+                        PaymentMethodSelector(
+                          selectedPaymentMethodId: _selectedPaymentMethodId,
+                          onChanged: (methodId) {
+                            setState(() => _selectedPaymentMethodId = methodId);
                           },
                         ),
 
@@ -455,6 +467,7 @@ class _RideRequestPageState extends State<RideRequestPage> {
             pickupAddress: _pickupController.text,
             dropoffAddress: _dropoffController.text,
             rideType: _selectedRideType,
+            paymentMethodId: _selectedPaymentMethodId,
           ),
         );
   }
