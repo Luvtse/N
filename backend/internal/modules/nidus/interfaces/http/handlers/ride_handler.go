@@ -12,6 +12,7 @@ import (
 	"nidaw-backend/internal/modules/nidus/application/services"
 	"nidaw-backend/internal/modules/nidus/domain/entities"
 	"nidaw-backend/internal/shared/auth"
+	"nidaw-backend/internal/shared/database"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ import (
 
 // RideHandler handles all ride-related HTTP requests
 type RideHandler struct {
+	db              *database.Postgres
 	requestRideCmd  *commands.RequestRideHandler
 	getRideQuery    *queries.GetRideQuery
 	listRidesQuery  *queries.ListRidesQuery
@@ -56,6 +58,7 @@ func (h *RideHandler) SetLifecycle(lc LifecycleCommands) {
 
 // NewRideHandler creates a new ride handler
 func NewRideHandler(
+	db *database.Postgres,
 	requestRideCmd *commands.RequestRideHandler,
 	getRideQuery *queries.GetRideQuery,
 	listRidesQuery *queries.ListRidesQuery,
@@ -63,11 +66,12 @@ func NewRideHandler(
 	pricingService *services.PricingService,
 ) *RideHandler {
 	return &RideHandler{
-		requestRideCmd: requestRideCmd,
-		getRideQuery:   getRideQuery,
-		listRidesQuery: listRidesQuery,
-		matchingEngine: matchingEngine,
-		pricingService: pricingService,
+		db:              db,
+		requestRideCmd:  requestRideCmd,
+		getRideQuery:    getRideQuery,
+		listRidesQuery:  listRidesQuery,
+		matchingEngine:  matchingEngine,
+		pricingService:  pricingService,
 	}
 }
 
@@ -601,6 +605,86 @@ func (h *RideHandler) CompleteRide(w http.ResponseWriter, r *http.Request) {
 		DriverEarnings:   res.DriverEarnings,
 		Tip:              res.Tip,
 		SettlementQueued: !res.Settled,
+	})
+}
+
+// ============================================================================
+// DRIVER OFFER FEED
+// ============================================================================
+
+// PendingRideOffer is one row of the driver-side offer feed: an unassigned
+// ride that online drivers can claim via POST /rides/{rideID}/accept.
+type PendingRideOffer struct {
+	RideID         uuid.UUID `json:"ride_id"`
+	PickupLat      float64   `json:"pickup_lat"`
+	PickupLng      float64   `json:"pickup_lng"`
+	DropoffLat     float64   `json:"dropoff_lat"`
+	DropoffLng     float64   `json:"dropoff_lng"`
+	PickupAddress  string    `json:"pickup_address,omitempty"`
+	DropoffAddress string    `json:"dropoff_address,omitempty"`
+	RideType       string    `json:"ride_type"`
+	EstimatedFare  *float64  `json:"estimated_fare,omitempty"`
+	Currency       string    `json:"currency"`
+	Status         string    `json:"status"`
+	RequestedAt    time.Time `json:"requested_at"`
+}
+
+// PendingRides handles GET /api/v1/nidus/drivers/pending-rides (driver).
+// Returns rides still awaiting assignment (requested/searching with no
+// driver), newest first. Identity comes from the JWT subject; the driver's
+// profile must exist (403 otherwise). Acceptance races are resolved by the
+// race-guarded UPDATE inside AcceptRideHandler — this feed is advisory.
+func (h *RideHandler) PendingRides(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userID, ok := auth.GetUserIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	var driverID uuid.UUID
+	err := h.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id = $1`, userID).Scan(&driverID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "NOT_A_DRIVER", "no driver profile for this account")
+		return
+	}
+
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil && n > 0 && n <= 50 {
+			limit = n
+		}
+	}
+
+	rows, err := h.db.Query(ctx, `
+		SELECT id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+		       COALESCE(pickup_address, ''), COALESCE(dropoff_address, ''),
+		       ride_type, fare_amount, currency, status, requested_at
+		  FROM rides
+		 WHERE status IN ('requested', 'searching') AND driver_id IS NULL
+		 ORDER BY requested_at DESC
+		 LIMIT $1`, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch pending rides")
+		return
+	}
+	defer rows.Close()
+
+	offers := make([]PendingRideOffer, 0, limit)
+	for rows.Next() {
+		var o PendingRideOffer
+		var fare *float64
+		if err := rows.Scan(&o.RideID, &o.PickupLat, &o.PickupLng, &o.DropoffLat, &o.DropoffLng,
+			&o.PickupAddress, &o.DropoffAddress, &o.RideType, &fare, &o.Currency, &o.Status, &o.RequestedAt); err != nil {
+			continue
+		}
+		o.EstimatedFare = fare
+		offers = append(offers, o)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rides": offers,
+		"total": len(offers),
 	})
 }
 
