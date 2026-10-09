@@ -151,6 +151,35 @@ class ClearCurrentRide extends RideEvent {
   const ClearCurrentRide();
 }
 
+/// Begin the SOS pre-alarm countdown. The rider gets [RideBloc.sosCountdownSeconds]
+/// to back out before emergency services / trusted contacts are notified.
+class StartSosCountdown extends RideEvent {
+  final String rideId;
+  final double lat;
+  final double lng;
+  final String? message;
+
+  const StartSosCountdown({
+    required this.rideId,
+    required this.lat,
+    required this.lng,
+    this.message,
+  });
+
+  @override
+  List<Object?> get props => [rideId, lat, lng, message];
+}
+
+/// Abort an in-progress SOS countdown (false alarm / accidental hold).
+class CancelSosCountdown extends RideEvent {
+  const CancelSosCountdown();
+}
+
+/// Escalate immediately — skip the remaining countdown and fire the SOS now.
+class ConfirmSos extends RideEvent {
+  const ConfirmSos();
+}
+
 // ============================================================================
 // STATES
 // ============================================================================
@@ -405,16 +434,19 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     return (hash % 10000).toString().padLeft(4, '0');
   }
 
+  /// Pending SOS details captured when the countdown starts, fired on expiry
+  /// or on [ConfirmSos]. Null when no countdown is running.
+  StartSosCountdown? _pendingSos;
+
   RideBloc({
     required RideRepository rideRepository,
     required RequestRideUseCase requestRideUseCase,
     required GetRideStatusUseCase getRideStatusUseCase,
-    SafetyRepository? safetyRepository,
+    required SafetyRepository safetyRepository,
   })  : _rideRepository = rideRepository,
         _requestRideUseCase = requestRideUseCase,
         _getRideStatusUseCase = getRideStatusUseCase,
-        _safetyRepository =
-            safetyRepository ?? NoopSafetyRepository(),
+        _safetyRepository = safetyRepository,
         super(const RideInitial()) {
     on<RequestRide>(_onRequestRide);
     on<LoadRide>(_onLoadRide);
@@ -722,7 +754,101 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     ClearCurrentRide event,
     Emitter<RideState> emit,
   ) {
+    _sosCountdownTimer?.cancel();
+    _sosCountdownTimer = null;
+    _pendingSos = null;
+    _sosActive = false;
+    _sosCountdownRemaining = 0;
     emit(const RideInitial());
+  }
+
+  // ==========================================================================
+  // SAFETY / SOS HANDLERS
+  // ==========================================================================
+
+  /// Starts the pre-alarm countdown. The UI polls [sosCountdownRemaining]
+  /// (updated once per second) while [isSosActive] is true; when the timer
+  /// expires the SOS fires automatically unless cancelled.
+  void _onStartSosCountdown(
+    StartSosCountdown event,
+    Emitter<RideState> emit,
+  ) {
+    // Ignore re-entrant starts while a countdown or dispatch is in flight.
+    if (_sosActive) return;
+
+    _pendingSos = event;
+    _sosActive = true;
+    _sosCountdownRemaining = sosCountdownSeconds;
+
+    _sosCountdownTimer?.cancel();
+    _sosCountdownTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (timer) async {
+        _sosCountdownRemaining -= 1;
+        if (_sosCountdownRemaining <= 0) {
+          timer.cancel();
+          await _dispatchSos(emit);
+        }
+      },
+    );
+  }
+
+  /// Aborts an in-flight countdown (false alarm). If the SOS has already been
+  /// dispatched this is a no-op — disqualification happens server-side.
+  void _onCancelSosCountdown(
+    CancelSosCountdown event,
+    Emitter<RideState> emit,
+  ) {
+    _sosCountdownTimer?.cancel();
+    _sosCountdownTimer = null;
+    _pendingSos = null;
+    _sosActive = false;
+    _sosCountdownRemaining = 0;
+  }
+
+  /// Skips the remainder of the countdown and fires immediately.
+  Future<void> _onConfirmSos(
+    ConfirmSos event,
+    Emitter<RideState> emit,
+  ) async {
+    if (_pendingSos == null) return;
+    _sosCountdownTimer?.cancel();
+    _sosCountdownTimer = null;
+    await _dispatchSos(emit);
+  }
+
+  /// Posts the SOS to the safety backend. Deliberately does NOT emit ride
+  /// states — safety runs on side-channel getters so it can never clobber
+  /// the active ride state (tracking map, ETA card, etc.).
+  Future<void> _dispatchSos(Emitter<RideState> emit) async {
+    final pending = _pendingSos;
+    _sosCountdownTimer?.cancel();
+    _sosCountdownTimer = null;
+    _pendingSos = null;
+    _sosCountdownRemaining = 0;
+
+    if (pending == null) {
+      _sosActive = false;
+      return;
+    }
+
+    try {
+      final result = await _safetyRepository.triggerSos(
+        rideId: pending.rideId,
+        lat: pending.lat,
+        lng: pending.lng,
+        message: pending.message,
+      );
+      // On failure the flow stays "active" so the UI can show retry options;
+      // on success the incident id is retrievable via the repository layer.
+      _sosActive = !result.success;
+      if (!result.success) {
+        debugPrint('SOS dispatch failed: ${result.errorCode} ${result.message}');
+      }
+    } catch (e) {
+      _sosActive = false;
+      debugPrint('SOS dispatch threw: $e');
+    }
   }
 
   // ==========================================================================
@@ -891,6 +1017,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   Future<void> close() async {
     await _rideUpdateSubscription?.cancel();
     _etaUpdateTimer?.cancel();
+    _sosCountdownTimer?.cancel();
     return super.close();
   }
 }

@@ -240,8 +240,8 @@ class SafetyRepositoryImpl implements SafetyRepository {
         },
       );
 
-      final data = response.data;
-      return SosResult.triggered(incidentId: data?['incident_id'] as String?);
+      final payload = _unwrap(response.data);
+      return SosResult.triggered(incidentId: payload?['incident_id'] as String?);
     } on ApiException catch (e) {
       return SosResult.failure(
         errorCode: e.errorCode ?? 'SOS_FAILED',
@@ -266,14 +266,14 @@ class SafetyRepositoryImpl implements SafetyRepository {
         data: {'ride_id': rideId, 'label': label},
       );
 
-      final data = response.data;
-      if (data == null) {
+      final payload = _unwrap(response.data);
+      if (payload == null) {
         return const ShareLinkResult.failure(
           errorCode: 'EMPTY_RESPONSE',
           message: 'Server returned no share link',
         );
       }
-      return ShareLinkResult.created(link: SharedTripLink.fromJson(data));
+      return ShareLinkResult.created(link: SharedTripLink.fromJson(payload));
     } on ApiException catch (e) {
       return ShareLinkResult.failure(
         errorCode: e.errorCode ?? 'SHARE_FAILED',
@@ -295,11 +295,12 @@ class SafetyRepositoryImpl implements SafetyRepository {
         queryParameters: {'ride_id': rideId},
       );
 
-      final data = response.data;
-      final links = data?['links'];
+      final payload = _unwrap(response.data);
+      final links = payload?['links'];
       if (links is List) {
         return links
-            .map((l) => SharedTripLink.fromJson(l as Map<String, dynamic>))
+            .whereType<Map<String, dynamic>>()
+            .map(SharedTripLink.fromJson)
             .toList();
       }
       return const [];
@@ -327,11 +328,12 @@ class SafetyRepositoryImpl implements SafetyRepository {
         '$_base/contacts',
       );
 
-      final data = response.data;
-      final contacts = data?['contacts'];
+      final payload = _unwrap(response.data);
+      final contacts = payload?['contacts'];
       if (contacts is List) {
         return contacts
-            .map((c) => TrustedContact.fromJson(c as Map<String, dynamic>))
+            .whereType<Map<String, dynamic>>()
+            .map(TrustedContact.fromJson)
             .toList();
       }
       return const [];
@@ -356,11 +358,11 @@ class SafetyRepositoryImpl implements SafetyRepository {
       },
     );
 
-    final data = response.data;
-    if (data == null) {
-      throw const SosFailure('EMPTY_RESPONSE', 'Server returned no contact');
+    final payload = _unwrap(response.data);
+    if (payload == null) {
+      throw const SafetyFailure('EMPTY_RESPONSE', 'Server returned no contact');
     }
-    return TrustedContact.fromJson(data);
+    return TrustedContact.fromJson(payload);
   }
 
   @override
@@ -432,16 +434,25 @@ class SafetyRepositoryImpl implements SafetyRepository {
   }
 
   Map<String, dynamic>? _decodeMessage(dynamic message) {
-    if (message is Map<String, dynamic>) return message;
+    if (message is Map<String, dynamic>) return _unwrap(message);
     if (message is String) {
       try {
         final decoded = jsonDecode(message);
-        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map<String, dynamic>) return _unwrap(decoded);
       } catch (e) {
         debugPrint('Shared trip payload not valid JSON: $e');
       }
     }
     return null;
+  }
+
+  /// Unwraps the gateway's `{data: {...}}` envelope when present, returning
+  /// the inner map; otherwise passes the map through unchanged.
+  Map<String, dynamic>? _unwrap(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final data = json['data'];
+    if (data is Map<String, dynamic>) return data;
+    return json;
   }
 
   // ==========================================================================
@@ -457,12 +468,93 @@ class SafetyRepositoryImpl implements SafetyRepository {
 }
 
 /// Thrown by [SafetyRepositoryImpl.addTrustedContact] on unrecoverable errors.
-class SosFailure implements Exception {
+class SafetyFailure implements Exception {
   final String code;
   final String message;
 
-  const SosFailure(this.code, this.message);
+  const SafetyFailure(this.code, this.message);
 
   @override
-  String toString() => 'SosFailure($code): $message';
+  String toString() => 'SafetyFailure($code): $message';
+}
+
+// ============================================================================
+// TEST / PREVIEW DOUBLE
+// ============================================================================
+
+/// No-op implementation used in widget tests and Flutter previews where the
+/// safety backend is unavailable. All reads return empty results; all writes
+/// report success so UI flows can be exercised end-to-end offline.
+class NoopSafetyRepository implements SafetyRepository {
+  const NoopSafetyRepository();
+
+  @override
+  Future<SosResult> triggerSos({
+    required String rideId,
+    required double lat,
+    required double lng,
+    String? message,
+  }) async {
+    return const SosResult.triggered(incidentId: 'noop-incident');
+  }
+
+  @override
+  Future<ShareLinkResult> createShareLink({
+    required String rideId,
+    required String label,
+  }) async {
+    return ShareLinkResult.created(
+      link: SharedTripLink(
+        id: 'noop-link',
+        rideId: rideId,
+        label: label,
+        token: 'noop-token',
+        createdAt: DateTime.now(),
+      ),
+    );
+  }
+
+  @override
+  Future<List<SharedTripLink>> listActiveShareLinks(String rideId) async =>
+      const [];
+
+  @override
+  Future<bool> revokeShareLink(String linkId) async => true;
+
+  @override
+  Future<List<TrustedContact>> listTrustedContacts() async => const [];
+
+  @override
+  Future<TrustedContact> addTrustedContact({
+    required String name,
+    required String phone,
+    bool autoNotify = true,
+  }) async {
+    return TrustedContact(
+      id: 'noop-contact',
+      name: name,
+      phone: phone,
+      autoNotify: autoNotify,
+    );
+  }
+
+  @override
+  Future<bool> removeTrustedContact(String contactId) async => true;
+
+  @override
+  Future<bool> updateTrustedContact(
+    String contactId, {
+    String? name,
+    String? phone,
+    bool? autoNotify,
+  }) async {
+    return true;
+  }
+
+  @override
+  Stream<SharedTripLocation> subscribeToSharedTrip(String linkToken) =>
+      const Stream<SharedTripLocation>.empty();
+
+  @override
+  void unsubscribeFromSharedTrip(String linkToken) {}
 }
