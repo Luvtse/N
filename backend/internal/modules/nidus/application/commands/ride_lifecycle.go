@@ -17,6 +17,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -75,9 +76,11 @@ type lifecycleBase struct {
 // loadRide fetches a ride with its current state. Returns ErrRideNotFound for
 // unknown ids so handlers can answer 404 without leaking existence details.
 func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entities.Ride, error) {
+	// DriverID is *uuid.UUID on the entity; scan it directly so an unmatched ride
+	// (SQL NULL) normalises to a nil pointer.
 	var r entities.Ride
 	err := b.db.QueryRow(ctx, `
-		SELECT id, user_id, COALESCE(driver_id, '00000000-0000-0000-0000-000000000000'::uuid),
+		SELECT id, user_id, driver_id,
 		       pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 		       COALESCE(pickup_address, ''), COALESCE(dropoff_address, ''),
 		       ride_type, status,
@@ -101,14 +104,16 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	if err != nil {
 		return nil, err
 	}
-	// Re-normalise the sentinel back to nil-if-unmatched.
-	if r.DriverID == uuid.Nil {
-		r.DriverID = nil
-	} else {
-		d := r.DriverID
-		r.DriverID = &d
-	}
 	return &r, nil
+}
+
+// unmarshalPayload decodes a persisted settlement outbox payload.
+func unmarshalPayload(raw []byte) (map[string]interface{}, error) {
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // resolveDriverID maps an authenticated JWT subject (user id) to its driver
@@ -158,6 +163,7 @@ type settlementRecord struct {
 	EventID         uuid.UUID
 	RideID          uuid.UUID
 	DriverUserID    uuid.UUID // ledger identity of the driver (drivers.user_id)
+	Currency        string    // ISO currency code carried on the event payload
 	Payload         map[string]interface{}
 	DirectPublished bool
 	PublishedAt     *time.Time
@@ -476,6 +482,7 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		EventID:      ride.ID, // deterministic: one settlement per ride, ever
 		RideID:       ride.ID,
 		DriverUserID: driverUserID,
+		Currency:     ride.Currency,
 		Payload:      payload,
 	}
 
@@ -545,7 +552,7 @@ func (h *CancelRideHandler) Execute(ctx context.Context, cmd *CancelRideCommand)
 		return nil, err
 	}
 
-actor := ""
+	actor := ""
 	switch {
 	case ride.UserID == cmd.UserID:
 		actor = "rider"

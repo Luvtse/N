@@ -44,6 +44,7 @@ CREATE TABLE ledger_transactions (
         'topup',                 -- fiat on-ramp credit
         'ride_debit',            -- rider charged for completed ride
         'ride_credit_held',      -- driver credited into held (escrow)
+        'tip',                   -- rider gratuity settled to driver available
         'escrow_release',        -- held -> available migration (driver leg)
         'refund',                -- back to rider (dispute/no-show)
         'withdrawal_debit',      -- payout initiated
