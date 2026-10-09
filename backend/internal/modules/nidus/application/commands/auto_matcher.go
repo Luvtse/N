@@ -9,6 +9,7 @@ import (
 	nidusevents "nidaw-backend/internal/modules/nidus/domain/events"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+	"nidaw-backend/internal/shared/observability"
 
 	"go.uber.org/zap"
 )
@@ -97,6 +98,7 @@ func (a *AutoMatcher) Tick(ctx context.Context) {
 		 ORDER BY requested_at ASC
 		 LIMIT $1`, a.cfg.Batch)
 	if err != nil {
+		observability.Nidus().RecordTick("error")
 		a.log.Warn("automatch: failed to scan pending rides", zap.Error(err))
 		return
 	}
@@ -114,6 +116,7 @@ func (a *AutoMatcher) Tick(ctx context.Context) {
 		pending = append(pending, &r)
 	}
 	rows.Close()
+	observability.Nidus().RecordTick("ok")
 
 	for _, ride := range pending {
 		if ctx.Err() != nil {
@@ -159,6 +162,11 @@ func (a *AutoMatcher) tryMatch(ctx context.Context, ride *entities.Ride) {
 	if tag.RowsAffected() == 0 {
 		return // lost the race to another replica or a manual accept
 	}
+
+	// Observability parity with ledger Phase E/F/G workers: one counter per
+	// successful automated assignment (Grafana "matching stall" panel divides
+	// this by matcher_ticks_total).
+	observability.Nidus().RecordMatch("automatch")
 
 	// Mark the driver busy so they are not offered a second ride concurrently.
 	if _, err := a.db.Exec(ctx,

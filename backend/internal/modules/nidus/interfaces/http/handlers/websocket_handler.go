@@ -173,6 +173,17 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Defense-in-depth (audit follow-up): the Kong gateway enforces access-token
+	// type upstream, but a direct/pod-network connection must not accept any
+	// other credential class. Claims.Type is already pinned to AccessToken by
+	// ValidateAccessToken; assert it again here so a future refactor of the
+	// auth service cannot silently widen this entry point (e.g., accepting
+	// refresh tokens for long-lived streams).
+	if !claims.IsAccessToken() {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+
 	// Echo back the negotiated subprotocol when the client used one, per RFC 6455
 	// (gorilla/websocket responds with the first offered protocol automatically
 	// only if we don't filter; keep "nidaw-auth.*" out of the response list).
