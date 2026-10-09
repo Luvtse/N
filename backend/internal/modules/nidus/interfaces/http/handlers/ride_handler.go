@@ -300,6 +300,46 @@ func (h *RideHandler) ListRides(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetActiveRide handles GET /api/v1/nidus/drivers/active-ride.
+// Returns the single non-terminal ride currently assigned to the calling
+// driver's account. The driver app uses this on cold start / crash recovery
+// to rehydrate its active-ride screen. 404 ACTIVE_RIDE_NOT_FOUND when the
+// driver holds no live assignment.
+func (h *RideHandler) GetActiveRide(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userID, ok := auth.GetUserIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	var driverID uuid.UUID
+	if err := h.db.QueryRow(ctx, `SELECT id FROM drivers WHERE user_id = $1`, userID).Scan(&driverID); err != nil {
+		writeError(w, http.StatusForbidden, "NOT_A_DRIVER", "no driver profile for this account")
+		return
+	}
+
+	var rideID uuid.UUID
+	err := h.db.QueryRow(ctx, `
+		SELECT id FROM rides
+		 WHERE driver_id = $1
+		   AND status IN ('matched', 'driver_en_route', 'in_progress')
+		 ORDER BY requested_at DESC
+		 LIMIT 1`, driverID).Scan(&rideID)
+	if err != nil {
+		// No rows => no active ride; other errors stay server-side only.
+		writeError(w, http.StatusNotFound, "ACTIVE_RIDE_NOT_FOUND", "no active ride for this driver")
+		return
+	}
+
+	ride, err := h.getRideQuery.Execute(ctx, userID, rideID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch active ride")
+		return
+	}
+	writeJSON(w, http.StatusOK, toRideResponse(ride))
+}
+
 // CancelRide handles POST /api/v1/nidus/rides/{rideID}/cancel
 // (rider or the matched driver; identity derived from the JWT subject).
 func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
