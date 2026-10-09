@@ -325,6 +325,9 @@ class RideStatusUpdate {
   /// Optional human-readable cancellation reason from the backend event.
   final String? cancelReason;
 
+  /// Live ETA in minutes pushed by the matching / ETA services, when present.
+  final int? etaMinutes;
+
   const RideStatusUpdate({
     required this.rideId,
     required this.status,
@@ -334,24 +337,52 @@ class RideStatusUpdate {
     required this.timestamp,
     this.cancelledBy,
     this.cancelReason,
+    this.etaMinutes,
   });
 
   factory RideStatusUpdate.fromJson(Map<String, dynamic> json) {
+    // The WS bridge may deliver either a bare payload or one wrapped in an
+    // envelope ({type/event, data:{...}}); unwrap defensively so neither
+    // shape crashes the parser.
+    var payload = json;
+    final data = json['data'];
+    if (data is Map<String, dynamic>) {
+      payload = data;
+    }
+
+    DriverInfo? parseDriver(Map<String, dynamic>? raw) {
+      if (raw == null) return null;
+      try {
+        return DriverInfo.fromJson(raw);
+      } catch (e) {
+        debugPrint('Failed to parse driver payload: $e');
+        return null;
+      }
+    }
+
+    final driverJson = payload['driver'];
+    final timestampRaw = payload['timestamp'];
+
     return RideStatusUpdate(
-      rideId: json['ride_id'] as String,
-      status: json['status'] as String,
-      driver: json['driver'] != null
-          ? DriverInfo.fromJson(json['driver'] as Map<String, dynamic>)
+      rideId: (payload['ride_id'] ?? payload['id']) as String,
+      status: payload['status'] as String,
+      driver: parseDriver(driverJson is Map<String, dynamic>
+          ? driverJson
+          : null),
+      driverLat: payload['driver_lat'] != null
+          ? (payload['driver_lat'] as num).toDouble()
           : null,
-      driverLat: json['driver_lat'] != null
-          ? (json['driver_lat'] as num).toDouble()
+      driverLng: payload['driver_lng'] != null
+          ? (payload['driver_lng'] as num).toDouble()
           : null,
-      driverLng: json['driver_lng'] != null
-          ? (json['driver_lng'] as num).toDouble()
+      timestamp: timestampRaw is String
+          ? DateTime.tryParse(timestampRaw) ?? DateTime.now()
+          : DateTime.now(),
+      cancelledBy: payload['cancelled_by'] as String?,
+      cancelReason: payload['reason'] as String?,
+      etaMinutes: payload['eta_minutes'] is num
+          ? (payload['eta_minutes'] as num).toInt()
           : null,
-      timestamp: DateTime.parse(json['timestamp'] as String),
-      cancelledBy: json['cancelled_by'] as String?,
-      cancelReason: json['reason'] as String?,
     );
   }
 }
@@ -457,7 +488,7 @@ class RideRepositoryImpl implements RideRepository {
     String? paymentMethodId,
   }) async {
     try {
-      final response = await _apiClient.post(
+      final response = await _apiClient.post<Map<String, dynamic>>(
         '/api/v1/nidus/rides',
         data: {
           'pickup_lat': pickupLat,
@@ -471,13 +502,37 @@ class RideRepositoryImpl implements RideRepository {
         },
       );
 
-      final data = response.data as Map<String, dynamic>;
+      final body = response.data;
+      if (body == null) {
+        return const RideResult.failure(
+          error: 'Server returned an empty response',
+          errorCode: 'EMPTY_RESPONSE',
+        );
+      }
+
+      // Unwrap a possible {"data": {...}} envelope and accept both the ride
+      // id key spellings emitted by the handler.
+      var data = body;
+      final inner = body['data'];
+      if (inner is Map<String, dynamic>) data = inner;
+
+      final rideId = (data['ride_id'] ?? data['id']) as String?;
+      final status = data['status'] as String?;
+      final fareRaw = data['fare'] ?? data['fare_amount'];
+      final etaRaw = data['eta'] ?? data['eta_minutes'];
+
+      if (rideId == null || fareRaw is! num) {
+        return RideResult.failure(
+          error: 'Unexpected ride response shape: ${body.toString()}',
+          errorCode: 'INVALID_RESPONSE',
+        );
+      }
 
       return RideResult.success(
-        rideId: data['ride_id'] as String,
-        status: data['status'] as String,
-        fare: (data['fare'] as num).toDouble(),
-        eta: data['eta'] as int,
+        rideId: rideId,
+        status: status ?? 'requested',
+        fare: fareRaw.toDouble(),
+        eta: etaRaw is num ? etaRaw.toInt() : 0,
       );
     } on ApiException catch (e) {
       return RideResult.failure(
@@ -614,12 +669,25 @@ class RideRepositoryImpl implements RideRepository {
     final controller = StreamController<RideStatusUpdate>.broadcast();
     _subscriptions[rideId] = controller;
 
-    // Subscribe to WebSocket
+    // Subscribe to WebSocket. The hub delivers decoded maps whose payload
+    // lives under `data` (see ws_bridge wire shape), so unwrap before parsing.
     _webSocketClient.subscribe('ride:$rideId', (message) {
       try {
-        final data = jsonDecode(message) as Map<String, dynamic>;
-        final update = RideStatusUpdate.fromJson(data);
-        controller.add(update);
+        final Map<String, dynamic>? envelope;
+        if (message is Map<String, dynamic>) {
+          envelope = message;
+        } else if (message is String) {
+          final decoded = jsonDecode(message);
+          envelope = decoded is Map<String, dynamic> ? decoded : null;
+        } else {
+          envelope = null;
+        }
+        if (envelope == null) return;
+
+        final inner = envelope['data'];
+        final payload = inner is Map<String, dynamic> ? inner : envelope;
+
+        controller.add(RideStatusUpdate.fromJson(payload));
       } catch (e) {
         debugPrint('Failed to parse ride update: $e');
       }
@@ -666,20 +734,21 @@ class RideRepositoryImpl implements RideRepository {
     String? reason,
   }) async {
     try {
-      final response = await _apiClient.post(
+      final response = await _apiClient.post<Map<String, dynamic>>(
         '/api/v1/nidus/rides/$rideId/cancel',
         data: {'reason': reason},
       );
 
-      final data = response.data;
+      // The handler returns the full RideResponse; fee fields are additive
+      // and default to zero when the backend does not send them yet.
+      var data = response.data ?? const <String, dynamic>{};
+      final inner = data['data'];
+      if (inner is Map<String, dynamic>) data = inner;
+
       double fee = 0;
-      String currency = 'ETB';
-      if (data is Map<String, dynamic>) {
-        fee = data['cancellation_fee'] != null
-            ? (data['cancellation_fee'] as num).toDouble()
-            : 0;
-        currency = data['currency'] as String? ?? 'ETB';
-      }
+      final feeRaw = data['cancellation_fee'] ?? data['cancel_fee'];
+      if (feeRaw is num) fee = feeRaw.toDouble();
+      final currency = data['currency'] as String? ?? 'ETB';
 
       return CancelRideResult.cancelled(
         cancellationFee: fee,
