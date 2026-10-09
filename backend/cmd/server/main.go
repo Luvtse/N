@@ -16,9 +16,11 @@ import (
 	ledgerhttp "nidaw-backend/internal/modules/ledger/interfaces/http"
 	legalsvc "nidaw-backend/internal/modules/legal/application/services"
 	legalhttp "nidaw-backend/internal/modules/legal/interfaces/http"
+	niduscmds "nidaw-backend/internal/modules/nidus/application/commands"
 	nidusservices "nidaw-backend/internal/modules/nidus/application/services"
 	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
+	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	sharedcache "nidaw-backend/internal/shared/cache"
 	"nidaw-backend/internal/shared/config"
@@ -163,7 +165,9 @@ func main() {
 		legalhttp.NewConsentHandler(consentService),
 		legalhttp.NewAdminHandler(db),
 		authService)
-	r.Mount("/", nidushttp.NewRouter(&nidushttp.Dependencies{
+	// Nidus ride module router. Tip settlement is wired only when the ledger
+	// is enabled; otherwise rated tips fail explicitly (never silently lost).
+	nidusDeps := &nidushttp.Dependencies{
 		DB:             db,
 		EventBus:       eventBus,
 		Logger:         logger,
@@ -173,7 +177,28 @@ func main() {
 		ETAService:     etaService,
 		PricingService: pricingService,
 		CORSOrigins:    cfg.Server.CORSOrigins, // Phase B/B4: env-driven allowlist
-	}))
+	}
+	if ledgerComps != nil {
+		nidusDeps.TipSettler = nidushandlers.NewLedgerTipSettler(ledgerComps.Deps.Ledger)
+	}
+	r.Mount("/", nidushttp.NewRouter(nidusDeps))
+
+	// Ride lifecycle durability workers (Nidus):
+	//  - AutoMatcher closes the dead-code matching gap: every tick it assigns
+	//    the best available driver to unassigned rides (race-guarded UPDATE,
+	//    multi-replica safe).
+	//  - SettlementOutbox re-publishes ride_completed_events rows whose broker
+	//    publish failed at completion time, guaranteeing the ledger eventually
+	//    settles every completed ride.
+	ctxRideWorkers, stopRideWorkers := context.WithCancel(context.Background())
+	defer stopRideWorkers()
+	autoMatcher := niduscmds.NewAutoMatcher(db, matchingEngine, eventBus, niduscmds.AutoMatchConfig{}, logger)
+	go autoMatcher.Run(ctxRideWorkers)
+	settlementOutbox := niduscmds.NewSettlementOutbox(db, eventBus, 30*time.Second)
+	go settlementOutbox.Run(ctxRideWorkers)
+	logger.Info("Nidus ride lifecycle workers online",
+		zap.String("auto_matcher", "5s cadence"),
+		zap.String("settlement_outbox", "30s cadence"))
 
 	// Phase D Step 6: ledger REST surface behind JWT auth.
 	if ledgerComps != nil {

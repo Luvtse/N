@@ -17,7 +17,7 @@ import (
 // ============================================================================
 
 var (
-	ErrRideNotFound    = errors.New("ride not found")
+	ErrRideNotFound     = errors.New("ride not found")
 	ErrRideAccessDenied = errors.New("access denied to this ride")
 )
 
@@ -125,15 +125,15 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	if matchedAt.Valid {
 		t := matchedAt.Time
 		ride.MatchedAt = &t
-		}
+	}
 	if startedAt.Valid {
 		t := startedAt.Time
 		ride.StartedAt = &t
-		}
+	}
 	if completedAt.Valid {
 		t := completedAt.Time
 		ride.CompletedAt = &t
-		}
+	}
 	if rating.Valid {
 		ride.Rating = int(rating.Int32)
 	}

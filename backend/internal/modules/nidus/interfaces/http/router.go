@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/commands"
+	niduscmds "nidaw-backend/internal/modules/nidus/application/commands"
 	"nidaw-backend/internal/modules/nidus/application/queries"
 	"nidaw-backend/internal/modules/nidus/application/services"
 	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
@@ -34,7 +35,8 @@ type Dependencies struct {
 	MatchingEngine *services.MatchingEngine
 	ETAService     *services.ETAService
 	PricingService *services.PricingService
-	CORSOrigins    []string // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
+	TipSettler     niduscmds.TipSettler // ledger-backed tip settlement (nil => tips rejected)
+	CORSOrigins    []string             // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
 }
 
 // CacheService interface for driver location caching. DriverLocation is an
@@ -88,13 +90,27 @@ func NewRouter(deps *Dependencies) http.Handler {
 	// ========================================================================
 	// INITIALIZE HANDLERS
 	// ========================================================================
+	// Ride lifecycle commands (state machine: requested -> ... -> completed).
+	rateRideCmd := commands.NewRateRideHandler(deps.DB, deps.EventBus)
+	if deps.TipSettler != nil {
+		rateRideCmd.SetTipSettler(deps.TipSettler)
+	}
+
 	rideHandler := nidusHttp.NewRideHandler(
+		deps.DB,
 		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService),
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
 		deps.PricingService,
 	)
+	rideHandler.SetLifecycle(nidusHttp.LifecycleCommands{
+		Accept:   commands.NewAcceptRideHandler(deps.DB, deps.EventBus, deps.MatchingEngine, deps.PricingService),
+		Start:    commands.NewStartRideHandler(deps.DB, deps.EventBus),
+		Complete: commands.NewCompleteRideHandler(deps.DB, deps.EventBus, deps.PricingService),
+		Cancel:   commands.NewCancelRideHandler(deps.DB, deps.EventBus),
+		Rate:     rateRideCmd,
+	})
 
 	driverHandler := nidusHttp.NewDriverHandler(
 		deps.MatchingEngine,
@@ -153,6 +169,12 @@ func NewRouter(deps *Dependencies) http.Handler {
 				r.Post("/", rideHandler.RequestRide)
 				r.Get("/", rideHandler.ListRides)
 				r.Get("/{rideID}", rideHandler.GetRide)
+				// Driver-side lifecycle transitions (state machine guarded;
+				// identity derived from the JWT subject, never the request body).
+				r.Post("/{rideID}/accept", rideHandler.AcceptRide)
+				r.Post("/{rideID}/start", rideHandler.StartRide)
+				r.Post("/{rideID}/complete", rideHandler.CompleteRide)
+				// Rider-side terminal actions.
 				r.Post("/{rideID}/cancel", rideHandler.CancelRide)
 				r.Post("/{rideID}/rate", rideHandler.RateRide)
 			})
@@ -162,6 +184,9 @@ func NewRouter(deps *Dependencies) http.Handler {
 			// ====================================================================
 			r.Route("/nidus/drivers", func(r chi.Router) {
 				r.Get("/nearby", driverHandler.GetNearbyDrivers)
+				// Driver offer feed: unassigned rides available for acceptance.
+				// Registered before /{driverID} so the literal path wins.
+				r.Get("/pending-rides", rideHandler.PendingRides)
 				r.Get("/{driverID}", driverHandler.GetDriver)
 			})
 

@@ -12,19 +12,19 @@ import (
 
 const (
 	// Ride events
-	RideRequestedType    = "ride.requested"
-	RideMatchedType      = "ride.matched"
-	RideStartedType      = "ride.started"
-	RideCompletedType    = "ride.completed"
-	RideCancelledType    = "ride.cancelled"
-	RideRatedType        = "ride.rated"
+	RideRequestedType = "ride.requested"
+	RideMatchedType   = "ride.matched"
+	RideStartedType   = "ride.started"
+	RideCompletedType = "ride.completed"
+	RideCancelledType = "ride.cancelled"
+	RideRatedType     = "ride.rated"
 
 	// Driver events
-	DriverOnlineType     = "driver.online"
-	DriverOfflineType    = "driver.offline"
-	DriverLocationType   = "driver.location_updated"
-	DriverAcceptedType   = "driver.accepted_ride"
-	DriverDeclinedType   = "driver.declined_ride"
+	DriverOnlineType   = "driver.online"
+	DriverOfflineType  = "driver.offline"
+	DriverLocationType = "driver.location_updated"
+	DriverAcceptedType = "driver.accepted_ride"
+	DriverDeclinedType = "driver.declined_ride"
 
 	// Payment events
 	PaymentProcessedType = "payment.processed"
@@ -93,27 +93,27 @@ type RideRequested struct {
 // ToEvent converts to base Event
 func (e *RideRequested) ToEvent() *Event {
 	return NewEvent(RideRequestedType, map[string]interface{}{
-		"ride_id":            e.RideID,
-		"user_id":            e.UserID,
-		"pickup_lat":         e.PickupLat,
-		"pickup_lng":         e.PickupLng,
-		"dropoff_lat":        e.DropoffLat,
-		"dropoff_lng":        e.DropoffLng,
-		"ride_type":          e.RideType,
-		"fare_amount":        e.FareAmount,
-		"currency":           e.Currency,
-		"distance_km":        e.DistanceKm,
-		"estimated_pickup":   e.EstimatedPickup,
+		"ride_id":          e.RideID,
+		"user_id":          e.UserID,
+		"pickup_lat":       e.PickupLat,
+		"pickup_lng":       e.PickupLng,
+		"dropoff_lat":      e.DropoffLat,
+		"dropoff_lng":      e.DropoffLng,
+		"ride_type":        e.RideType,
+		"fare_amount":      e.FareAmount,
+		"currency":         e.Currency,
+		"distance_km":      e.DistanceKm,
+		"estimated_pickup": e.EstimatedPickup,
 	})
 }
 
 // RideMatched is emitted when a driver is matched
 type RideMatched struct {
-	RideID    uuid.UUID `json:"ride_id"`
-	DriverID  uuid.UUID `json:"driver_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	ETAMinutes int      `json:"eta_minutes"`
-	FareAmount float64  `json:"fare_amount"`
+	RideID     uuid.UUID `json:"ride_id"`
+	DriverID   uuid.UUID `json:"driver_id"`
+	UserID     uuid.UUID `json:"user_id"`
+	ETAMinutes int       `json:"eta_minutes"`
+	FareAmount float64   `json:"fare_amount"`
 }
 
 func (e *RideMatched) ToEvent() *Event {
@@ -143,36 +143,36 @@ func (e *RideStarted) ToEvent() *Event {
 
 // RideCompleted is emitted when a ride ends
 type RideCompleted struct {
-	RideID          uuid.UUID `json:"ride_id"`
-	DriverID        uuid.UUID `json:"driver_id"`
-	UserID          uuid.UUID `json:"user_id"`
-	ActualDistance  float64   `json:"actual_distance_km"`
-	ActualDuration  int       `json:"actual_duration_minutes"`
-	FinalFare       float64   `json:"final_fare"`
-	DriverEarnings  float64   `json:"driver_earnings"`
-	PlatformFee     float64   `json:"platform_fee"`
+	RideID         uuid.UUID `json:"ride_id"`
+	DriverID       uuid.UUID `json:"driver_id"`
+	UserID         uuid.UUID `json:"user_id"`
+	ActualDistance float64   `json:"actual_distance_km"`
+	ActualDuration int       `json:"actual_duration_minutes"`
+	FinalFare      float64   `json:"final_fare"`
+	DriverEarnings float64   `json:"driver_earnings"`
+	PlatformFee    float64   `json:"platform_fee"`
 }
 
 func (e *RideCompleted) ToEvent() *Event {
 	return NewEvent(RideCompletedType, map[string]interface{}{
-		"ride_id":           e.RideID,
-		"driver_id":         e.DriverID,
-		"user_id":           e.UserID,
-		"actual_distance":   e.ActualDistance,
-		"actual_duration":   e.ActualDuration,
-		"final_fare":        e.FinalFare,
-		"driver_earnings":   e.DriverEarnings,
-		"platform_fee":      e.PlatformFee,
+		"ride_id":         e.RideID,
+		"driver_id":       e.DriverID,
+		"user_id":         e.UserID,
+		"actual_distance": e.ActualDistance,
+		"actual_duration": e.ActualDuration,
+		"final_fare":      e.FinalFare,
+		"driver_earnings": e.DriverEarnings,
+		"platform_fee":    e.PlatformFee,
 	})
 }
 
 // RideCancelled is emitted when a ride is cancelled
 type RideCancelled struct {
-	RideID   uuid.UUID `json:"ride_id"`
-	UserID   uuid.UUID `json:"user_id"`
-	DriverID *uuid.UUID `json:"driver_id,omitempty"`
-	Reason   string    `json:"reason"`
-	CancelledBy string `json:"cancelled_by"` // "rider" or "driver"
+	RideID      uuid.UUID  `json:"ride_id"`
+	UserID      uuid.UUID  `json:"user_id"`
+	DriverID    *uuid.UUID `json:"driver_id,omitempty"`
+	Reason      string     `json:"reason"`
+	CancelledBy string     `json:"cancelled_by"` // "rider" or "driver"
 }
 
 func (e *RideCancelled) ToEvent() *Event {

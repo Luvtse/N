@@ -15,11 +15,11 @@ import (
 type DriverStatus string
 
 const (
-	DriverStatusOffline  DriverStatus = "offline"
+	DriverStatusOffline   DriverStatus = "offline"
 	DriverStatusAvailable DriverStatus = "available"
-	DriverStatusBusy     DriverStatus = "busy"
-	DriverStatusOnTrip   DriverStatus = "on_trip"
-	DriverStatusInactive DriverStatus = "inactive"
+	DriverStatusBusy      DriverStatus = "busy"
+	DriverStatusOnTrip    DriverStatus = "on_trip"
+	DriverStatusInactive  DriverStatus = "inactive"
 	DriverStatusSuspended DriverStatus = "suspended"
 )
 
@@ -46,12 +46,12 @@ func (s DriverStatus) IsActive() bool {
 type VehicleType string
 
 const (
-	VehicleTypeSedan     VehicleType = "sedan"
-	VehicleTypeSUV       VehicleType = "suv"
-	VehicleTypeVan       VehicleType = "van"
-	VehicleTypeLuxury    VehicleType = "luxury"
-	VehicleTypeElectric  VehicleType = "electric"
-	VehicleTypeHybrid    VehicleType = "hybrid"
+	VehicleTypeSedan      VehicleType = "sedan"
+	VehicleTypeSUV        VehicleType = "suv"
+	VehicleTypeVan        VehicleType = "van"
+	VehicleTypeLuxury     VehicleType = "luxury"
+	VehicleTypeElectric   VehicleType = "electric"
+	VehicleTypeHybrid     VehicleType = "hybrid"
 	VehicleTypeMotorcycle VehicleType = "motorcycle"
 )
 
@@ -80,10 +80,10 @@ type Driver struct {
 	TotalEarnings  float64 `json:"total_earnings" db:"total_earnings"`
 
 	// Current State
-	Status      DriverStatus `json:"status" db:"status"`
-	CurrentLat  float64      `json:"current_lat" db:"current_lat"`
-	CurrentLng  float64      `json:"current_lng" db:"current_lng"`
-	LastLocationUpdate time.Time `json:"last_location_update" db:"last_location_update"`
+	Status             DriverStatus `json:"status" db:"status"`
+	CurrentLat         float64      `json:"current_lat" db:"current_lat"`
+	CurrentLng         float64      `json:"current_lng" db:"current_lng"`
+	LastLocationUpdate time.Time    `json:"last_location_update" db:"last_location_update"`
 
 	// Vehicle Info
 	VehicleType  VehicleType `json:"vehicle_type" db:"vehicle_type"`
@@ -207,14 +207,14 @@ func (d *Driver) IsNearby(lat, lng, radiusKm float64) bool {
 // ============================================================================
 
 var (
-	ErrDriverNotVerified    = errors.New("driver has not completed verification")
-	ErrDriverSuspended      = errors.New("driver account is suspended")
-	ErrDriverInactive       = errors.New("driver account is inactive")
-	ErrDriverRatingTooLow   = errors.New("driver rating is too low to go online")
-	ErrDriverAlreadyOnline  = errors.New("driver is already online")
-	ErrDriverOnTrip         = errors.New("driver is currently on a trip")
-	ErrDriverNotAvailable   = errors.New("driver is not available")
-	ErrDriverNotOnTrip      = errors.New("driver is not on a trip")
+	ErrDriverNotVerified   = errors.New("driver has not completed verification")
+	ErrDriverSuspended     = errors.New("driver account is suspended")
+	ErrDriverInactive      = errors.New("driver account is inactive")
+	ErrDriverRatingTooLow  = errors.New("driver rating is too low to go online")
+	ErrDriverAlreadyOnline = errors.New("driver is already online")
+	ErrDriverOnTrip        = errors.New("driver is currently on a trip")
+	ErrDriverNotAvailable  = errors.New("driver is not available")
+	ErrDriverNotOnTrip     = errors.New("driver is not on a trip")
 )
 
 // ============================================================================
@@ -242,9 +242,9 @@ func degreesToRadians(deg float64) float64 {
 }
 
 // Import math functions
-func sin(x float64) float64     { return mathSin(x) }
-func cos(x float64) float64     { return mathCos(x) }
-func sqrt(x float64) float64    { return mathSqrt(x) }
+func sin(x float64) float64      { return mathSin(x) }
+func cos(x float64) float64      { return mathCos(x) }
+func sqrt(x float64) float64     { return mathSqrt(x) }
 func atan2(y, x float64) float64 { return mathAtan2(y, x) }
 
 // These will be replaced by actual math imports in real code

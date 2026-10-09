@@ -164,8 +164,20 @@ func NewPostgres(cfg *Config, logger *zap.Logger) (*Postgres, error) {
 // QUERY METHODS (Context-aware, with timeouts)
 // ============================================================================
 
+// ErrDatabaseClosed is returned by query methods when the client was never
+// initialized (nil pool/config), e.g. in unit tests using a zero-value
+// Postgres to simulate an unreachable database. It prevents nil-pointer
+// panics from propagating through background workers.
+var ErrDatabaseClosed = errors.New("database client not initialized")
+
+// ready reports whether the pool and config are usable.
+func (p *Postgres) ready() bool { return p != nil && p.pool != nil && p.config != nil }
+
 // Query executes a query that returns multiple rows
 func (p *Postgres) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
+	if !p.ready() {
+		return nil, fmt.Errorf("%w: %v", ErrQueryFailed, ErrDatabaseClosed)
+	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.QueryTimeout)
 	defer cancel()
 
@@ -181,8 +193,13 @@ func (p *Postgres) Query(ctx context.Context, sql string, args ...interface{}) (
 	return rows, nil
 }
 
-// QueryRow executes a query that returns a single row
+// QueryRow executes a query that returns a single row.
+// When the client is uninitialized it returns a row whose Scan yields an
+// error rather than panicking, so background workers stay crash-safe.
 func (p *Postgres) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	if !p.ready() {
+		return errRow{err: fmt.Errorf("%w: %v", ErrQueryFailed, ErrDatabaseClosed)}
+	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.QueryTimeout)
 	// Note: cancel is called when the row is scanned or context expires
 	_ = cancel
@@ -190,8 +207,16 @@ func (p *Postgres) QueryRow(ctx context.Context, sql string, args ...interface{}
 	return p.pool.QueryRow(ctx, sql, args...)
 }
 
+// errRow is a pgx.Row that always fails to scan.
+type errRow struct{ err error }
+
+func (e errRow) Scan(dest ...any) error { return e.err }
+
 // Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE)
 func (p *Postgres) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	if !p.ready() {
+		return pgconn.CommandTag{}, fmt.Errorf("%w: %v", ErrQueryFailed, ErrDatabaseClosed)
+	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.QueryTimeout)
 	defer cancel()
 
@@ -219,6 +244,9 @@ type Tx struct {
 
 // Begin starts a new transaction
 func (p *Postgres) Begin(ctx context.Context) (*Tx, error) {
+	if !p.ready() {
+		return nil, fmt.Errorf("%w: %v", ErrTransactionFailed, ErrDatabaseClosed)
+	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.QueryTimeout)
 	defer cancel()
 

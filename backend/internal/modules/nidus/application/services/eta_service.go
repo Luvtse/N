@@ -14,13 +14,13 @@ import (
 
 // ETAPrediction contains the estimated time of arrival and related metrics
 type ETAPrediction struct {
-	DistanceKm       float64   `json:"distance_km"`
-	DurationMinutes  int       `json:"duration_minutes"`
-	Confidence       float64   `json:"confidence"` // 0.0 to 1.0
-	TrafficFactor    float64   `json:"traffic_factor"`
-	WeatherFactor    float64   `json:"weather_factor"`
-	TimeOfDayFactor  float64   `json:"time_of_day_factor"`
-	CalculatedAt     time.Time `json:"calculated_at"`
+	DistanceKm      float64   `json:"distance_km"`
+	DurationMinutes int       `json:"duration_minutes"`
+	Confidence      float64   `json:"confidence"` // 0.0 to 1.0
+	TrafficFactor   float64   `json:"traffic_factor"`
+	WeatherFactor   float64   `json:"weather_factor"`
+	TimeOfDayFactor float64   `json:"time_of_day_factor"`
+	CalculatedAt    time.Time `json:"calculated_at"`
 }
 
 // ============================================================================

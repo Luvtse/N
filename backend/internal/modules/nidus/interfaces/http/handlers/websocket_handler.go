@@ -15,14 +15,14 @@ import (
 )
 
 type WebSocketHandler struct {
-	upgrader    websocket.Upgrader
-	authService *auth.Service
+	upgrader       websocket.Upgrader
+	authService    *auth.Service
 	allowedOrigins []string // Phase B/B6: env-driven origin allowlist (CORS_ORIGINS)
-	clients     map[*Client]bool
-	broadcast   chan Message
-	register    chan *Client
-	unregister  chan *Client
-	mu          sync.RWMutex
+	clients        map[*Client]bool
+	broadcast      chan Message
+	register       chan *Client
+	unregister     chan *Client
+	mu             sync.RWMutex
 }
 
 // isAllowedOrigin implements the Phase B/B6 CheckOrigin policy.

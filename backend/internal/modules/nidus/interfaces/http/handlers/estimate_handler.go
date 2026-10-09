@@ -42,17 +42,17 @@ type EstimateResponse struct {
 
 // FareEstimateResponse contains a single fare estimate
 type FareEstimateResponse struct {
-	RideType              string  `json:"ride_type"`
-	BaseFare              float64 `json:"base_fare"`
-	DistanceFare          float64 `json:"distance_fare"`
-	TimeFare              float64 `json:"time_fare"`
-	Subtotal              float64 `json:"subtotal"`
-	SurgeMultiplier       float64 `json:"surge_multiplier"`
-	TotalFare             float64 `json:"total_fare"`
-	Currency              string  `json:"currency"`
-	DistanceKm            float64 `json:"distance_km"`
-	DurationMinutes       int     `json:"duration_minutes"`
-	EstimatedPickupMinutes int    `json:"estimated_pickup_minutes"`
+	RideType               string  `json:"ride_type"`
+	BaseFare               float64 `json:"base_fare"`
+	DistanceFare           float64 `json:"distance_fare"`
+	TimeFare               float64 `json:"time_fare"`
+	Subtotal               float64 `json:"subtotal"`
+	SurgeMultiplier        float64 `json:"surge_multiplier"`
+	TotalFare              float64 `json:"total_fare"`
+	Currency               string  `json:"currency"`
+	DistanceKm             float64 `json:"distance_km"`
+	DurationMinutes        int     `json:"duration_minutes"`
+	EstimatedPickupMinutes int     `json:"estimated_pickup_minutes"`
 }
 
 // ============================================================================
@@ -93,16 +93,16 @@ func (h *EstimateHandler) EstimateFare(w http.ResponseWriter, r *http.Request) {
 
 	for _, estimate := range estimates {
 		response.Estimates = append(response.Estimates, FareEstimateResponse{
-			RideType:              string(estimate.RideType),
-			BaseFare:              float64(estimate.BaseFare) / 100, // cents to dollars
-			DistanceFare:          float64(estimate.DistanceFare) / 100,
-			TimeFare:              float64(estimate.TimeFare) / 100,
-			Subtotal:              float64(estimate.Subtotal) / 100,
-			SurgeMultiplier:       estimate.SurgeMultiplier,
-			TotalFare:             float64(estimate.TotalFare) / 100,
-			Currency:              estimate.Currency,
-			DistanceKm:            estimate.DistanceKm,
-			DurationMinutes:       estimate.DurationMinutes,
+			RideType:               string(estimate.RideType),
+			BaseFare:               float64(estimate.BaseFare) / 100, // cents to dollars
+			DistanceFare:           float64(estimate.DistanceFare) / 100,
+			TimeFare:               float64(estimate.TimeFare) / 100,
+			Subtotal:               float64(estimate.Subtotal) / 100,
+			SurgeMultiplier:        estimate.SurgeMultiplier,
+			TotalFare:              float64(estimate.TotalFare) / 100,
+			Currency:               estimate.Currency,
+			DistanceKm:             estimate.DistanceKm,
+			DurationMinutes:        estimate.DurationMinutes,
 			EstimatedPickupMinutes: estimate.EstimatedPickup,
 		})
 	}

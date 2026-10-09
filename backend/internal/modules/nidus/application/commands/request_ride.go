@@ -19,12 +19,12 @@ import (
 // ============================================================================
 
 var (
-	ErrNoDriversAvailable    = errors.New("no drivers available nearby")
-	ErrInvalidPaymentMethod  = errors.New("invalid payment method")
-	ErrPaymentFailed         = errors.New("payment processing failed")
-	ErrInvalidLocation       = errors.New("invalid pickup or dropoff location")
-	ErrRideCreationFailed    = errors.New("failed to create ride")
-	ErrSamePickupAndDropoff  = errors.New("pickup and dropoff locations must be different")
+	ErrNoDriversAvailable   = errors.New("no drivers available nearby")
+	ErrInvalidPaymentMethod = errors.New("invalid payment method")
+	ErrPaymentFailed        = errors.New("payment processing failed")
+	ErrInvalidLocation      = errors.New("invalid pickup or dropoff location")
+	ErrRideCreationFailed   = errors.New("failed to create ride")
+	ErrSamePickupAndDropoff = errors.New("pickup and dropoff locations must be different")
 )
 
 // ============================================================================
@@ -172,7 +172,7 @@ func (h *RequestRideHandler) validateCommand(cmd *RequestRideCommand) error {
 
 	// Validate ride type
 	validTypes := map[string]bool{
-		"":                        true,
+		"":                                  true,
 		string(services.RideTypeStandard):   true,
 		string(services.RideTypePremium):    true,
 		string(services.RideTypeElectric):   true,
@@ -239,20 +239,20 @@ func (h *RequestRideHandler) publishRideRequestedEvent(
 	event := eventbus.Event{
 		Type: "ride.requested",
 		Payload: map[string]interface{}{
-			"ride_id":           ride.ID,
-			"user_id":           ride.UserID,
-			"pickup_lat":        ride.PickupLat,
-			"pickup_lng":        ride.PickupLng,
-			"dropoff_lat":       ride.DropoffLat,
-			"dropoff_lng":       ride.DropoffLng,
-			"ride_type":         ride.RideType,
-			"fare_amount":       ride.FareAmount,
-			"currency":          ride.Currency,
-			"distance_km":       ride.DistanceKm,
-			"duration_minutes":  ride.DurationMinutes,
-			"surge_multiplier":  fareEstimate.SurgeMultiplier,
-			"base_fare":         float64(fareEstimate.BaseFare) / 100.0,
-			"estimated_pickup":  fareEstimate.EstimatedPickup,
+			"ride_id":          ride.ID,
+			"user_id":          ride.UserID,
+			"pickup_lat":       ride.PickupLat,
+			"pickup_lng":       ride.PickupLng,
+			"dropoff_lat":      ride.DropoffLat,
+			"dropoff_lng":      ride.DropoffLng,
+			"ride_type":        ride.RideType,
+			"fare_amount":      ride.FareAmount,
+			"currency":         ride.Currency,
+			"distance_km":      ride.DistanceKm,
+			"duration_minutes": ride.DurationMinutes,
+			"surge_multiplier": fareEstimate.SurgeMultiplier,
+			"base_fare":        float64(fareEstimate.BaseFare) / 100.0,
+			"estimated_pickup": fareEstimate.EstimatedPickup,
 		},
 		Timestamp: time.Now().Unix(),
 	}
