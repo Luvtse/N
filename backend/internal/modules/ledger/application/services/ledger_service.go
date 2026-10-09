@@ -64,19 +64,48 @@ type CreditOptions struct {
 }
 
 // Credit adds funds to a user's available (or held) bucket atomically.
+// A negative_lock account rejects new credits: the optimistic top-up path
+// (Phase E Step 3) must not let a locked user stack fresh pending credits on
+// top of an outstanding claw-back debt. Repayment runs through
+// RepayNegativeLock / ClearNegativeLock instead.
 func (s *LedgerService) Credit(
 	ctx context.Context, userIDs uuid.UUID, amount valueobjects.Money,
 	txType valueobjects.TransactionType, toHeld bool, opts CreditOptions,
 ) (*entities.LedgerTransaction, error) {
 	start := time.Now()
-	led, err := s.credit(ctx, userIDs, amount, txType, toHeld, opts)
+	// Gate: a user sitting in negative_lock (failed-topup claw-back) cannot
+	// receive new ordinary credits until the debt is repaid — this blocks
+	// stacking fresh optimistic top-ups on an outstanding balance and keeps
+	// "new rides blocked until repaid" enforceable at the ledger core.
+	// Compensating internal flows (reversals, escrow releases, refunds) call
+	// the unexported credit path directly and are unaffected.
+	if bal, err := s.bals.Get(ctx, userIDs); err == nil &&
+		bal.Status == entities.BalanceStatusNegativeLock {
+		recordLedgerMetrics("credit", nil, start, ErrAccountLocked)
+		return nil, ErrAccountLocked
+	}
+	led, err := s.credit(ctx, userIDs, amount, txType, toHeld, false, opts)
 	recordLedgerMetrics("credit", led, start, err)
+	return led, err
+}
+
+// RepayNegativeLock credits funds toward clearing a negative_lock balance.
+// Unlike Credit, it bypasses the negative_lock gate so repayment/top-up
+// confirmation can restore solvency; the lock lifts automatically once the
+// total covers the debt.
+func (s *LedgerService) RepayNegativeLock(
+	ctx context.Context, userID uuid.UUID, amount valueobjects.Money,
+	txType valueobjects.TransactionType, opts CreditOptions,
+) (*entities.LedgerTransaction, error) {
+	start := time.Now()
+	led, err := s.credit(ctx, userID, amount, txType, false, true, opts)
+	recordLedgerMetrics("repayment", led, start, err)
 	return led, err
 }
 
 func (s *LedgerService) credit(
 	ctx context.Context, userIDs uuid.UUID, amount valueobjects.Money,
-	txType valueobjects.TransactionType, toHeld bool, opts CreditOptions,
+	txType valueobjects.TransactionType, toHeld bool, allowRepayment bool, opts CreditOptions,
 ) (*entities.LedgerTransaction, error) {
 	if !amount.IsPositive() {
 		return nil, errors.New("ledger: credit amount must be positive")
@@ -103,8 +132,10 @@ func (s *LedgerService) credit(
 		if bal.Status == entities.BalanceStatusFrozenReview || bal.Status == entities.BalanceStatusClosed {
 			return ErrAccountLocked
 		}
-		// negative_lock blocks new rides/spends; repayment must still be able to
-		// credit the account (the service lifts the lock once funds cover the debt).
+		// A negative_lock account may still receive compensating credits that
+		// reduce its debt (e.g. failed-payout reversal, Phase E Step 4). The lock
+		// is lifted below once the total covers the debt; new ordinary top-ups
+		// are rejected by Credit's allowRepayment=false gate before reaching here.
 		negLockRepay := bal.Status == entities.BalanceStatusNegativeLock
 		if err := bal.ApplyCredit(amount, toHeld); err != nil {
 			return err

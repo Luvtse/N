@@ -15,6 +15,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -62,7 +64,27 @@ type fakeUow struct {
 	txs      *fakeTxRepo
 	snap     *snapshot
 	txActive bool
-	failNext error // one-shot injected failure (failure-injection tests)
+	owner    string // goroutine id of the running WithTx (see goid())
+	failNext error  // one-shot injected failure (failure-injection tests)
+
+	// opMu serialises whole operations so concurrent callers interleave like
+	// row-locked transactions instead of silently interleaving reads/stale
+	// writes (mirrors SELECT ... FOR UPDATE queueing in Postgres).
+	opMu sync.Mutex
+}
+
+// goid returns the current goroutine id (parsed from runtime.Stack). Used by
+// the fake UoW to distinguish same-goroutine transaction nesting (allowed,
+// savepoint-style) from cross-goroutine re-entrancy (rejected).
+func goid() string {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	// "goroutine 12 [running]..." -> "12"
+	s := strings.TrimPrefix(string(buf[:n]), "goroutine ")
+	if i := strings.IndexByte(s, ' '); i > 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 func newFakeStack() (*fakeUow, *fakeBalanceRepo, *fakeTxRepo) {
@@ -77,12 +99,31 @@ func newFakeStack() (*fakeUow, *fakeBalanceRepo, *fakeTxRepo) {
 var errRolledBackMarker = errors.New("fake: rollback requested")
 
 func (u *fakeUow) WithTx(_ context.Context, fn func(tx DBTx) error) error {
+	// Serialise whole operations: concurrent callers queue like transactions
+	// waiting on FOR UPDATE row locks instead of tripping the nesting guard.
+	// Goroutine-local tracking (gID via goid()) lets a nested WithTx issued by
+	// the SAME goroutine join the outer transaction (savepoint semantics),
+	// while cross-goroutine re-entrancy still fails loudly.
+	u.opMu.Lock()
+	defer u.opMu.Unlock()
+
+	g := goid()
 	u.mu.Lock()
 	if u.txActive {
+		if u.owner == g {
+			// Nested WithTx from the running operation joins the outer
+			// transaction: no fresh snapshot, and an inner error simply
+			// propagates so the OUTER op decides to roll back — mirroring
+			// how Postgres behaves when the app aborts the whole unit of
+			// work after a failed savepoint block.
+			u.mu.Unlock()
+			return fn(&fakeTx{owner: u})
+		}
 		u.mu.Unlock()
 		return errors.New("fake: nested transactions unsupported")
 	}
 	u.txActive = true
+	u.owner = g
 	u.snap = &snapshot{balances: cloneBalances(u.bals.bals)}
 	injected := u.failNext
 	u.failNext = nil
@@ -97,16 +138,17 @@ func (u *fakeUow) WithTx(_ context.Context, fn func(tx DBTx) error) error {
 
 	u.mu.Lock()
 	u.txActive = false
+	u.owner = ""
 	if fnErr != nil {
 		u.bals.bals = u.snap.balances // ROLLBACK cached balances
 		u.txs.rollback()              // ROLLBACK appended txs + indexes
 		for id := range u.txs.lockedBy {
 			delete(u.txs.lockedBy, id) // aborted transaction releases row locks
 		}
+		u.snap = nil
 	} else {
 		u.txs.commit() // COMMIT: flush staged inserts
 	}
-	u.snap = nil
 	u.mu.Unlock()
 	return fnErr
 }
@@ -243,13 +285,19 @@ func (r *fakeTxRepo) Insert(_ context.Context, _ DBTx, t *entities.LedgerTransac
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// (user_id, prev_hash) uniqueness => fork detection, mirrors the DB index.
-	for _, h := range r.order[t.UserID] {
-		if h.Equal(t.TxHash) {
-			continue
-		}
+	// Committed rows AND in-flight staged rows are considered, so two
+	// transactions appending to the same chain head collide exactly like the
+	// unique index would in Postgres.
+	checkFork := func(existing *entities.LedgerTransaction) bool {
+		return existing.UserID == t.UserID && existing.PrevHash.Equal(t.PrevHash) && !existing.TxHash.Equal(t.TxHash)
 	}
 	for _, existing := range r.txs {
-		if existing.UserID == t.UserID && existing.PrevHash.Equal(t.PrevHash) && !existing.TxHash.Equal(t.TxHash) {
+		if checkFork(existing) {
+			return errors.New("fake: chain fork — duplicate (user_id, prev_hash)")
+		}
+	}
+	for _, staged := range r.pendTxs {
+		if checkFork(staged) {
 			return errors.New("fake: chain fork — duplicate (user_id, prev_hash)")
 		}
 	}
