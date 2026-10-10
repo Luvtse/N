@@ -58,8 +58,8 @@ class MapTileProvider {
 
   // In-memory LRU of recently fetched tiles — the "last-known-good" tier that
   // survives even when the Hive box is not configured.
-  final LinkedHashMap<String, Uint8List> _lastKnownGood =
-      LinkedHashMap<String, Uint8List>();
+  final Map<String, Uint8List> _lastKnownGood =
+      Map<String, Uint8List>();
   static const int _maxLastKnownGood = 256;
 
   MapTileProvider({
@@ -118,7 +118,7 @@ class MapTileProvider {
   /// when every tier failed — callers must treat null as "render nothing for
   /// this tile", never as an exception.
   Future<Uint8List?> getTile(TileCoords coords) async {
-    final key = coords.toKey().storageKey;
+    final tileKey = coords.toKey().storageKey;
 
     // Tier 1 & 2: live mirrors in declared order.
     for (final mirror in mirrors) {
@@ -130,25 +130,28 @@ class MapTileProvider {
             .replaceAll('{s}', 'a'));
         if (bytes != null && bytes.isNotEmpty) {
           _onSuccess(mirror.name);
-          await _cacheTile(key, bytes);
-          _rememberLastKnownGood(key, bytes);
+          await _cacheTile(tileKey, bytes);
+          _rememberLastKnownGood(tileKey, bytes);
           return bytes;
         }
-      } catch (e, s) {
-        debugPrint('MapTileProvider: ${mirror.name} failed for $key: $e');
-        developer.log('${mirror.name} failure', name: 'map.tiles', error: e, stackTrace: s);
+      } catch (e, st) {
+        developer.log(
+            '${mirror.name} failure for $key',
+            name: 'map.tiles',
+            error: e,
+            stackTrace: st);
       }
     }
 
     // Tier 3: Hive cache keyed by z/x/y.
-    final cached = await _readCachedTile(key);
+    final cached = await _readCachedTile(tileKey);
     if (cached != null) {
       _onCacheHit();
       return cached;
     }
 
     // Tier 4: last-known-good in-memory copy.
-    final lkg = _lastKnownGood[key];
+    final lkg = _lastKnownGood[tileKey];
     if (lkg != null) {
       _onCacheHit();
       return lkg;
