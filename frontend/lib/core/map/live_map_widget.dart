@@ -122,8 +122,10 @@ class LiveMapWidget extends StatefulWidget {
   /// global). When null a private default-chain provider is created.
   final MapTileProvider? tileProvider;
 
-  /// Imperative handle exposed to callers for driver animation / route-fit.
-  final void Function(MapController controller)? onControllerReady;
+  /// Imperative access: pass a `GlobalKey<LiveMapWidgetState>` here and call
+  /// `key.currentState?.moveTo(...)` / `.fitBounds(...)` from the caller for
+  /// driver animation and route-fit.
+  final Key? mapKey;
 
   const LiveMapWidget({
     super.key,
@@ -138,7 +140,7 @@ class LiveMapWidget extends StatefulWidget {
     this.recenterTarget,
     this.onPickupPinDragged,
     this.tileProvider,
-    this.onControllerReady,
+    this.mapKey,
   });
 
   @override
@@ -168,9 +170,6 @@ class LiveMapWidgetState extends State<LiveMapWidget> {
     }
     _healthSub = _provider.health.listen((h) {
       if (mounted) setState(() => _lastHealth = h);
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onControllerReady?.call(_mapController);
     });
   }
 
@@ -344,16 +343,17 @@ class LiveMapWidgetState extends State<LiveMapWidget> {
               ? _DraggablePickupPin(
                   marker: m,
                   onDragUpdate: (globalPosition) {
-                    final local = _mapController.size == null
-                        ? globalPosition
-                        : globalPosition - _mapGlobalOrigin();
-                    final latLng = _mapController.camera.offsetToLatlng(local);
-                    if (latLng != null) {
-                      setState(() {
-                        _dragging = true;
-                        _dragPreview = latLng;
-                      });
-                    }
+                    final box = context.findRenderObject() as RenderBox?;
+                    if (box == null) return;
+                    final local = box.globalToLocal(globalPosition);
+                    final latLng = _mapController.camera.pointToLatLng(
+                      local,
+                      _mapCameraZoom(),
+                    );
+                    setState(() {
+                      _dragging = true;
+                      _dragPreview = latLng;
+                    });
                   },
                   onDragEnd: () {
                     final preview = _dragPreview;
@@ -371,11 +371,6 @@ class LiveMapWidgetState extends State<LiveMapWidget> {
       );
     }
     return result;
-  }
-
-  Offset _mapGlobalOrigin() {
-    final box = context.findRenderObject() as RenderBox?;
-    return box?.localToGlobal(Offset.zero) ?? Offset.zero;
   }
 
   Widget _pinFor(MapMarkerModel m) {

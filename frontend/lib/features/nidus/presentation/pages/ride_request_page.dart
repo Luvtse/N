@@ -1,13 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
 
+import '../../../../core/location/device_location_service.dart';
+import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
-import '../widgets/ride_type_selector.dart';
 import '../widgets/location_input.dart';
+import '../widgets/location_permission_gate.dart';
 import '../widgets/payment_method_selector.dart';
+import '../widgets/ride_type_selector.dart';
 
+/// Request surface, rebuilt on the Foundation substrate:
+/// - map region is [LiveMapWidget] (OSM tiles via the fallback chain), not the
+///   deleted placeholder stub or the duplicate home page;
+/// - pickup comes from a real GPS fix ([DeviceLocationService]) or a
+///   long-press-drag of the map pin — never hardcoded demo coordinates;
+/// - the map + pickup field sit inside [LocationPermissionGate] so a denied
+///   permission shows the gate instead of blanking the screen, while the
+///   destination input stays usable.
 class RideRequestPage extends StatefulWidget {
   const RideRequestPage({super.key});
 
@@ -15,24 +27,123 @@ class RideRequestPage extends StatefulWidget {
   State<RideRequestPage> createState() => _RideRequestPageState();
 }
 
-class _RideRequestPageState extends State<RideRequestPage> {
-  final _pickupController = TextEditingController();
-  final _dropoffController = TextEditingController();
-  
-  double _pickupLat = 40.7128;
-  double _pickupLng = -74.0060;
-  double _dropoffLat = 40.7589;
-  double _dropoffLng = -73.9851;
-  
+class _RideRequestPageState extends State<RideRequestPage>
+    with WidgetsBindingObserver {
+  static const double _defaultZoom = 15.0;
+
+  /// Fallback camera center when GPS is unavailable. This is deliberately NOT
+  /// a fabricated pickup location: no pin drops and both fields stay in their
+  /// honest "unavailable" state until a real fix arrives. It only positions
+  /// the camera so the map is not stuck at 0,0 in the ocean.
+  static final LatLng _cameraFallback = LatLng(9.03, 38.74);
+
+  final DeviceLocationService _locationService = const DeviceLocationService();
+  final GlobalKey<LiveMapWidgetState> _mapKey =
+      GlobalKey<LiveMapWidgetState>();
+
+  LocationFieldValue _pickup = const LocationFieldValue.empty();
+  LocationFieldValue _dropoff = const LocationFieldValue.empty();
+
+  bool _pickupLocating = false;
+  bool _gpsUnavailableBanner = false;
   String _selectedRideType = 'standard';
   String? _selectedPaymentMethodId;
 
+  LatLng get _cameraCenter => _pickup.hasCoordinates
+      ? LatLng(_pickup.lat!, _pickup.lng!)
+      : _cameraFallback;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Paint an instant pin from the last-known position before the first
+    // fresh fix arrives (§1.2 requirement).
+    _seedFromLastKnown();
+    _acquirePickup();
+  }
+
   @override
   void dispose() {
-    _pickupController.dispose();
-    _dropoffController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning from OS settings / re-enabling GPS: refresh the pin.
+    if (state == AppLifecycleState.resumed && !_pickup.hasCoordinates) {
+      _acquirePickup();
+    }
+  }
+
+  Future<void> _seedFromLastKnown() async {
+    final result = await _locationService.getLastKnownPosition();
+    if (!mounted) return;
+    if (result is LocationGranted) {
+      setState(() {
+        _pickup = LocationFieldValue(
+          display: 'Current location (approximate)',
+          lat: result.latitude,
+          lng: result.longitude,
+        );
+      });
+      _fitCameraToPoints();
+    }
+  }
+
+  /// Real GPS read for the pickup pin. On denial the surrounding
+  /// [LocationPermissionGate] owns the UI; on service-disabled/timeout we show
+  /// the honest "unavailable" banner and keep manual pin-drag available.
+  Future<void> _acquirePickup() async {
+    setState(() => _pickupLocating = true);
+    final result = await _locationService.getCurrentPosition();
+    if (!mounted) return;
+    setState(() {
+      _pickupLocating = false;
+      if (result is LocationGranted) {
+        _pickup = LocationFieldValue(
+          display: 'Current location',
+          lat: result.latitude,
+          lng: result.longitude,
+        );
+        _gpsUnavailableBanner = false;
+      } else if (result is LocationServiceDisabled || result is LocationTimeout) {
+        _gpsUnavailableBanner = true;
+      }
+      // Permission states are rendered by the gate itself.
+    });
+    if (_pickup.hasCoordinates) _fitCameraToPoints();
+  }
+
+  void _onPickupPinDragged(LatLng point) {
+    setState(() {
+      _pickup = LocationFieldValue(
+        // Reverse geocoding (§1.3) replaces this label once the provider
+        // chain answers; until then the label is honest about what it is.
+        display: 'Pinned location',
+        lat: point.latitude,
+        lng: point.longitude,
+      );
+      _gpsUnavailableBanner = false;
+    });
+  }
+
+  void _fitCameraToPoints() {
+    final points = <LatLng>[
+      if (_pickup.hasCoordinates) LatLng(_pickup.lat!, _pickup.lng!),
+      if (_dropoff.hasCoordinates) LatLng(_dropoff.lat!, _dropoff.lng!),
+    ];
+    final map = _mapKey.currentState;
+    if (map == null) return;
+    if (points.length >= 2) {
+      map.fitBounds(points, paddingDp: 80);
+    } else if (points.length == 1) {
+      map.moveTo(points.first);
+    }
+  }
+
+  bool get _canRequest => _pickup.hasCoordinates && _dropoff.hasCoordinates;
 
   @override
   Widget build(BuildContext context) {
@@ -52,10 +163,56 @@ class _RideRequestPageState extends State<RideRequestPage> {
         builder: (context, state) {
           return Column(
             children: [
-              // Map placeholder
-              _buildMapSection(),
-
-              // Bottom sheet with inputs
+              SizedBox(
+                height: 280,
+                child: Stack(
+                  children: [
+                    // The map + pickup pin are gated: denied permission shows
+                    // the rationale card here, but everything below (dropoff,
+                    // ride types, payment) remains fully usable.
+                    Positioned.fill(
+                      child: LocationPermissionGate(
+                        child: LiveMapWidget(
+                          key: _mapKey,
+                          initialCenter: _cameraCenter,
+                          initialZoom: _defaultZoom,
+                          interactionMode: MapInteractionMode.full,
+                          showRecenterFab: true,
+                          followUserLocation: true,
+                          recenterTarget: _pickup.hasCoordinates
+                              ? LatLng(_pickup.lat!, _pickup.lng!)
+                              : null,
+                          markers: [
+                            if (_pickup.hasCoordinates)
+                              MapMarkerModel(
+                                id: 'pickup',
+                                position: LatLng(_pickup.lat!, _pickup.lng!),
+                                kind: MapMarkerKind.pickup,
+                                label: 'Pickup',
+                              ),
+                            if (_dropoff.hasCoordinates)
+                              MapMarkerModel(
+                                id: 'dropoff',
+                                position: LatLng(_dropoff.lat!, _dropoff.lng!),
+                                kind: MapMarkerKind.dropoff,
+                                label: 'Dropoff',
+                              ),
+                          ],
+                          onPickupPinDragged: _onPickupPinDragged,
+                          onCameraIdle: (_) {},
+                        ),
+                      ),
+                    ),
+                    if (_gpsUnavailableBanner)
+                      Positioned(
+                        left: 12,
+                        right: 12,
+                        bottom: 12,
+                        child: _GpsUnavailableBanner(onRetry: _acquirePickup),
+                      ),
+                  ],
+                ),
+              ),
               Expanded(
                 child: Container(
                   decoration: const BoxDecoration(
@@ -77,7 +234,6 @@ class _RideRequestPageState extends State<RideRequestPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // Title
                         const Text(
                           'Where to?',
                           style: TextStyle(
@@ -88,20 +244,21 @@ class _RideRequestPageState extends State<RideRequestPage> {
                         ),
                         const SizedBox(height: 24),
 
-                        // Pickup location
                         LocationInput(
-                          controller: _pickupController,
                           label: 'Pickup location',
                           icon: Icons.circle,
                           iconColor: AppColors.success,
-                          onChanged: (value) {
-                            // TODO: Geocode address to coordinates
-                          },
+                          value: _pickup,
+                          locating: _pickupLocating,
+                          hint: _gpsUnavailableBanner
+                              ? 'Current location (unavailable) — drag the pin'
+                              : 'Use current location or drag the pin',
+                          onTapField: _openPickupSheetPlaceholder,
+                          onUseCurrentLocation: _acquirePickup,
                         ),
 
                         const SizedBox(height: 12),
 
-                        // Connector line
                         Container(
                           margin: const EdgeInsets.only(left: 28),
                           height: 20,
@@ -111,20 +268,17 @@ class _RideRequestPageState extends State<RideRequestPage> {
 
                         const SizedBox(height: 12),
 
-                        // Dropoff location
                         LocationInput(
-                          controller: _dropoffController,
                           label: 'Dropoff location',
                           icon: Icons.circle,
                           iconColor: AppColors.error,
-                          onChanged: (value) {
-                            // TODO: Geocode address to coordinates
-                          },
+                          value: _dropoff,
+                          hint: 'Search a place',
+                          onTapField: _openDropoffSheetPlaceholder,
                         ),
 
                         const SizedBox(height: 32),
 
-                        // Ride type selector
                         const Text(
                           'Choose ride type',
                           style: TextStyle(
@@ -139,21 +293,21 @@ class _RideRequestPageState extends State<RideRequestPage> {
                           selectedType: _selectedRideType,
                           onTypeSelected: (type) {
                             setState(() => _selectedRideType = type);
-                            // Get fare estimate for selected type
-                            context.read<RideBloc>().add(
-                                  GetFareEstimate(
-                                    pickupLat: _pickupLat,
-                                    pickupLng: _pickupLng,
-                                    dropoffLat: _dropoffLat,
-                                    dropoffLng: _dropoffLng,
-                                  ),
-                                );
+                            if (_canRequest) {
+                              context.read<RideBloc>().add(
+                                    GetFareEstimate(
+                                      pickupLat: _pickup.lat!,
+                                      pickupLng: _pickup.lng!,
+                                      dropoffLat: _dropoff.lat!,
+                                      dropoffLng: _dropoff.lng!,
+                                    ),
+                                  );
+                            }
                           },
                         ),
 
                         const SizedBox(height: 24),
 
-                        // Payment method selection
                         PaymentMethodSelector(
                           selectedPaymentMethodId: _selectedPaymentMethodId,
                           onChanged: (methodId) {
@@ -163,13 +317,11 @@ class _RideRequestPageState extends State<RideRequestPage> {
 
                         const SizedBox(height: 24),
 
-                        // Fare estimate
-                        if (state is FareEstimateLoaded)
+                        if (state is FareEstimateLoaded && _canRequest)
                           _buildFareEstimate(state.estimate),
 
                         const SizedBox(height: 24),
 
-                        // Request button
                         _buildRequestButton(state),
 
                         if (state is RideLoading) ...[
@@ -197,104 +349,23 @@ class _RideRequestPageState extends State<RideRequestPage> {
     );
   }
 
-  Widget _buildMapSection() {
-    return Container(
-      height: 280,
-      decoration: BoxDecoration(
-        color: Colors.grey[200],
-        image: const DecorationImage(
-          image: AssetImage('assets/images/map_placeholder.png'),
-          fit: BoxFit.cover,
-        ),
-      ),
-      child: Stack(
-        children: [
-          // Map placeholder
-          const Center(
-            child: Icon(
-              Icons.map,
-              size: 64,
-              color: Colors.grey,
-            ),
-          ),
-
-          // Pickup marker
-          Positioned(
-            top: 100,
-            left: 120,
-            child: _buildMapMarker(
-              icon: Icons.circle,
-              color: AppColors.success,
-              label: 'Pickup',
-            ),
-          ),
-
-          // Dropoff marker
-          Positioned(
-            bottom: 80,
-            right: 100,
-            child: _buildMapMarker(
-              icon: Icons.circle,
-              color: AppColors.error,
-              label: 'Dropoff',
-            ),
-          ),
-
-          // Route line (simplified)
-          CustomPaint(
-            size: const Size(200, 150),
-            painter: RoutePainter(),
-          ),
-        ],
+  /// Tap targets until §1.3 ships place_autocomplete_sheet.dart; they explain
+  /// the real flow instead of accepting free text that could never be
+  /// geocoded. Replaced by sheet-openers in the geocoding step.
+  void _openPickupSheetPlaceholder() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Place search arrives with the geocoding release — '
+            'use GPS or drag the pin for now.'),
       ),
     );
   }
 
-  Widget _buildMapMarker({
-    required IconData icon,
-    required Color color,
-    required String label,
-  }) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: color.withOpacity(0.4),
-                blurRadius: 8,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: Icon(icon, color: Colors.white, size: 16),
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 4,
-              ),
-            ],
-          ),
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-        ),
-      ],
+  void _openDropoffSheetPlaceholder() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Place search arrives with the geocoding release.'),
+      ),
     );
   }
 
@@ -387,13 +458,11 @@ class _RideRequestPageState extends State<RideRequestPage> {
 
   Widget _buildRequestButton(RideState state) {
     final isLoading = state is RideLoading;
-    final hasLocations = _pickupController.text.isNotEmpty && 
-                         _dropoffController.text.isNotEmpty;
 
     return SizedBox(
       height: 56,
       child: ElevatedButton(
-        onPressed: isLoading || !hasLocations ? null : _requestRide,
+        onPressed: isLoading || !_canRequest ? null : _requestRide,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
@@ -411,14 +480,14 @@ class _RideRequestPageState extends State<RideRequestPage> {
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
-            : const Row(
+            : Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.directions_car, size: 20),
-                  SizedBox(width: 8),
+                  const Icon(Icons.directions_car, size: 20),
+                  const SizedBox(width: 8),
                   Text(
-                    'Request Ride',
-                    style: TextStyle(
+                    _canRequest ? 'Request Ride' : 'Set pickup & dropoff',
+                    style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
@@ -458,14 +527,15 @@ class _RideRequestPageState extends State<RideRequestPage> {
   }
 
   void _requestRide() {
+    if (!_canRequest) return;
     context.read<RideBloc>().add(
           RequestRide(
-            pickupLat: _pickupLat,
-            pickupLng: _pickupLng,
-            dropoffLat: _dropoffLat,
-            dropoffLng: _dropoffLng,
-            pickupAddress: _pickupController.text,
-            dropoffAddress: _dropoffController.text,
+            pickupLat: _pickup.lat!,
+            pickupLng: _pickup.lng!,
+            dropoffLat: _dropoff.lat!,
+            dropoffLng: _dropoff.lng!,
+            pickupAddress: _pickup.display,
+            dropoffAddress: _dropoff.display,
             rideType: _selectedRideType,
             paymentMethodId: _selectedPaymentMethodId,
           ),
@@ -479,27 +549,43 @@ class _RideRequestPageState extends State<RideRequestPage> {
   }
 }
 
-/// Custom painter for route line
-class RoutePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.primary.withOpacity(0.5)
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke;
+/// Honest "GPS unavailable" strip with retry — shown when the service is off
+/// or the fix timed out, never replacing the map with a blank area.
+class _GpsUnavailableBanner extends StatelessWidget {
+  final VoidCallback onRetry;
 
-    final path = Path();
-    path.moveTo(0, size.height);
-    path.quadraticBezierTo(
-      size.width / 2,
-      size.height / 2,
-      size.width,
-      0,
+  const _GpsUnavailableBanner({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.warning,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.gps_off, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'GPS unavailable — drag the pickup pin to set your location.',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text(
+                'Retry',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
-
-    canvas.drawPath(path, paint);
   }
-
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }

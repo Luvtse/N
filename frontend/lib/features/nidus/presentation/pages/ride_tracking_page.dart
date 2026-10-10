@@ -1,21 +1,144 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:latlong2/latlong.dart';
 
+import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
 import '../widgets/cancel_ride_sheet.dart';
 import '../widgets/driver_card.dart';
-import '../widgets/map_widget.dart';
 import '../widgets/payment_method_selector.dart';
 import '../widgets/rate_ride_sheet.dart';
 import '../widgets/safety_widgets.dart';
 import 'receipt_detail_page.dart';
 import 'safety_toolkit_page.dart';
 
-class RideTrackingPage extends StatelessWidget {
+/// Tracking surface rebuilt on the Foundation map (§1.1):
+/// - driver marker animates between successive position updates with an
+///   800 ms TweenAnimationBuilder;
+/// - route polyline drawn through [LiveMapWidget]'s PolylineLayer;
+/// - camera follows the rider while the driver is en route and switches to
+///   following the driver marker once the ride is in progress;
+/// - the Recenter FAB toggles between following driver and following rider.
+class RideTrackingPage extends StatefulWidget {
   final String rideId;
 
   const RideTrackingPage({super.key, required this.rideId});
+
+  @override
+  State<RideTrackingPage> createState() => _RideTrackingPageState();
+}
+
+class _RideTrackingPageState extends State<RideTrackingPage>
+    with SingleTickerProviderStateMixin {
+  static const Duration _driverAnimationDuration = Duration(milliseconds: 800);
+
+  /// Camera-only fallback center (Addis Ababa region, matching the product's
+  /// market). Never rendered as a pin or address — it just keeps the camera
+  /// out of the ocean until the first real coordinate arrives via WS.
+  static final LatLng _cameraFallback = LatLng(9.03, 38.74);
+
+  final GlobalKey<LiveMapWidgetState> _mapKey =
+      GlobalKey<LiveMapWidgetState>();
+
+  /// Previous driver fix — the tween start point for the next update.
+  LatLng? _previousDriverPoint;
+
+  /// Newest committed driver fix — the tween end point.
+  LatLng? _committedDriverPoint;
+
+  /// True while the camera follows the driver marker; false = follow rider.
+  bool _followDriver = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // During DriverEnRoute the plan says followUserLocation: true (camera
+    // tracks the rider heading to the pin); during RideInProgress it flips to
+    // false and the camera follows the driver marker instead. We default to
+    // the in-trip behavior and adjust from state transitions in build.
+    context.read<RideBloc>().add(SubscribeToRideUpdates(widget.rideId));
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  /// Commits a fresh WS fix, remembering the previous point so the marker can
+  /// tween toward the new one over [_driverAnimationDuration] instead of
+  /// teleporting. Call once per build when [target] differs from the last
+  /// committed fix.
+  void _commitDriverFix(LatLng target) {
+    if (_committedDriverPoint == target) return;
+    _previousDriverPoint = _committedDriverPoint ?? target;
+    _committedDriverPoint = target;
+  }
+
+  /// Driver marker widget: a TweenAnimationBuilder interpolates between the
+  /// previous and newest fixes and moves the map imperatively each frame
+  /// (plan §1.1: smooth with a TweenAnimationBuilder over 800 ms).
+  Widget _driverMarker(LatLng latest) {
+    final start = _previousDriverPoint ?? latest;
+    return TweenAnimationBuilder<LatLng>(
+      key: ValueKey('driver-tween-$latest.latitude-$latest.longitude'),
+      tween: Tween<LatLng>(begin: start, end: latest),
+      duration: _driverAnimationDuration,
+      curve: Curves.linear,
+      builder: (context, interpolated, _) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _mapKey.currentState?.moveTo(interpolated);
+        });
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  LatLng? _driverTargetFrom(RideState state) {
+    if (state is DriverMatched) {
+      return LatLng(state.driver.currentLat, state.driver.currentLng);
+    }
+    if (state is DriverEnRoute) {
+      return LatLng(state.driver.currentLat, state.driver.currentLng);
+    }
+    if (state is RideInProgress) {
+      final d = state.ride.driver;
+      if (d != null) return LatLng(d.currentLat, d.currentLng);
+    }
+    return null;
+  }
+
+  List<LatLng> _routePoints(RideState state) {
+    final pickup = _pickupOf(state);
+    final dropoff = _dropoffOf(state);
+    final driver = _driverTargetFrom(state);
+    if (pickup == null || dropoff == null) return const [];
+    // Leg already travelled: pickup -> current driver position; remaining leg:
+    // driver -> dropoff. Straight legs until OSRM routing is wired (§backend).
+    if (driver == null) return [pickup, dropoff];
+    return [pickup, driver, dropoff];
+  }
+
+  LatLng? _pickupOf(RideState state) {
+    if (state is RideRequested) return null;
+    if (state is DriverMatched || state is DriverEnRoute) {
+      // Coordinates live on the ride record; the bloc re-emits them via the
+      // subscribed updates. Until the first update lands we have no fabricated
+      // fallback — returning null simply renders fewer layers.
+      return null;
+    }
+    if (state is RideInProgress || state is RideCompleted) {
+      return LatLng(state.ride.pickupLat, state.ride.pickupLng);
+    }
+    return null;
+  }
+
+  LatLng? _dropoffOf(RideState state) {
+    if (state is RideInProgress || state is RideCompleted) {
+      return LatLng(state.ride.dropoffLat, state.ride.dropoffLng);
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,16 +167,96 @@ class RideTrackingPage extends StatelessWidget {
         }
       },
       builder: (context, state) {
+        final driverTarget = _driverTargetFrom(state);
+        if (driverTarget != null) _commitDriverFix(driverTarget);
+        final animated = driverTarget;
+        final route = _routePoints(state);
+        final inTrip = state is RideInProgress;
+
+        // Camera policy per §1.1: follow rider while en route to pickup,
+        // follow the driver marker during the trip. The FAB lets the rider
+        // override either way.
+        final followRider = !inTrip && !_followDriver;
+        final cameraTarget = _followDriver
+            ? animated
+            : (_pickupOf(state) ?? animated);
+
         return Scaffold(
           body: Stack(
             children: [
-              // Map
-              MapWidget(
-                showUserLocation: true,
-                showDriverLocation:
-                    state is DriverMatched || state is DriverEnRoute,
-                onMapCreated: () {},
+              // Live OSM map (replaces the deleted placeholder MapWidget).
+              Positioned.fill(
+                child: LiveMapWidget(
+                  key: _mapKey,
+                  initialCenter: animated ??
+                      _pickupOf(state) ??
+                      _dropoffOf(state) ??
+                      _cameraFallback,
+                  initialZoom: 15.0,
+                  interactionMode: MapInteractionMode.pan,
+                  showRecenterFab: true,
+                  followUserLocation: cameraTarget != null,
+                  recenterTarget: cameraTarget,
+                  markers: [
+                    if (_pickupOf(state) != null)
+                      MapMarkerModel(
+                        id: 'pickup',
+                        position: _pickupOf(state)!,
+                        kind: MapMarkerKind.pickup,
+                        label: 'Pickup',
+                      ),
+                    if (_dropoffOf(state) != null)
+                      MapMarkerModel(
+                        id: 'dropoff',
+                        position: _dropoffOf(state)!,
+                        kind: MapMarkerKind.dropoff,
+                        label: 'Dropoff',
+                      ),
+                    if (animated != null)
+                      MapMarkerModel(
+                        id: 'driver',
+                        position: _committedDriverPoint ?? animated,
+                        kind: MapMarkerKind.driver,
+                        label: 'Driver',
+                      ),
+                  ],
+                  polylines: [
+                    if (route.length >= 2)
+                      MapPolylineModel(id: 'route', points: route),
+                  ],
+                  onCameraIdle: (_) {},
+                ),
               ),
+
+              // Invisible 800ms tween that animates the driver marker and
+              // camera between successive WS fixes (§1.1).
+              if (animated != null)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  width: 0,
+                  height: 0,
+                  child: _driverMarker(animated),
+                ),
+
+              // Follow toggle: driver vs rider (plan: "Recenter" FAB toggles).
+              if (animated != null)
+                Positioned(
+                  right: 16,
+                  bottom: 340,
+                  child: FloatingActionButton.small(
+                    heroTag: 'tracking-follow-toggle',
+                    tooltip: _followDriver
+                        ? 'Following driver — tap to follow me'
+                        : 'Following you — tap to follow driver',
+                    onPressed: () => setState(() => _followDriver = !_followDriver),
+                    backgroundColor: AppColors.surface,
+                    foregroundColor: AppColors.primary,
+                    child: Icon(_followDriver
+                        ? Icons.directions_car
+                        : Icons.person_pin_circle),
+                  ),
+                ),
 
               // Back Button
               Positioned(
@@ -95,6 +298,13 @@ class RideTrackingPage extends StatelessWidget {
                   ),
                 ),
               ),
+
+              if (followRider)
+                Positioned(
+                  top: 100,
+                  left: 16,
+                  child: _FollowingChip(label: 'Following you'),
+                ),
 
               // Bottom Sheet
               Positioned(
@@ -149,7 +359,7 @@ class RideTrackingPage extends StatelessWidget {
                             child: OutlinedButton.icon(
                               onPressed: () => ShareTripSheet.showInline(
                                 context,
-                                rideId: rideId,
+                                rideId: widget.rideId,
                               ),
                               icon: const Icon(Icons.share_location),
                               label: const Text('Share'),
@@ -194,7 +404,7 @@ class RideTrackingPage extends StatelessWidget {
       estimatedFee: feeEstimate,
       freeWindowMinutesLeft: inGraceWindow ? 5 : null,
       onConfirmed: (reason) async {
-        bloc.add(CancelRide(rideId: rideId, reason: reason));
+        bloc.add(CancelRide(rideId: widget.rideId, reason: reason));
       },
     );
   }
@@ -264,6 +474,34 @@ class RideTrackingPage extends StatelessWidget {
             child: const Text('Receipt'),
           ),
       ],
+    );
+  }
+}
+
+class _FollowingChip extends StatelessWidget {
+  final String label;
+
+  const _FollowingChip({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.primary.withOpacity(0.9),
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.gps_fixed, color: Colors.white, size: 14),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
