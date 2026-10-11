@@ -174,17 +174,15 @@
         }
       },
       "ar_navigation": {
-        "enabled": true,
-        "rolloutPercentage": 50,
+        "enabled": false,
+        "rolloutPercentage": 0,
         "targeting": {
           "environments": [
-            "staging",
-            "production"
+            "development",
+            "staging"
           ],
           "regions": [
-            "US",
-            "EU",
-            "APAC"
+            "ET"
           ],
           "deviceTypes": [
             "ios",
@@ -195,7 +193,7 @@
           "owner": "mobile-team@nidaw.com",
           "created": "2026-04-01T00:00:00Z",
           "expires": null,
-          "description": "AR-powered navigation for rides",
+          "description": "AR-powered navigation for rides. Kill-switch: set enabled=false to force-off in every environment regardless of rollout/targeting (enforced by FeatureFlagService.isEnabled and the router's compile-time guard). Route /nidus/ar-nav/:rideId is registered but flag-gated; entry point on Tracking page only renders when this flag resolves true during DriverEnRoute.",
           "category": "experimental",
           "abTestId": "ar-nav-2026-q2"
         }
