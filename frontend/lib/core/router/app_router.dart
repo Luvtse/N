@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:go_router/go_router.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
+import 'package:hive/hive.dart';
 
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
@@ -32,6 +36,41 @@ import '../../features/profile/presentation/pages/settings_page.dart';
 import '../../features/profile/presentation/pages/consent_management_page.dart';
 import '../../features/wallet/presentation/bloc/wallet_bloc.dart';
 import '../../features/wallet/presentation/pages/wallet_page.dart';
+import '../../features/nidus/presentation/pages/ar_navigation_page.dart';
+import '../config/feature_flag_service.dart';
+import '../constants/app_constants.dart';
+
+/// Stable per-install identifier used for deterministic feature-flag rollout
+/// bucketing (see FeatureFlagService.isEnabled). Generated once on first
+/// access and persisted in the already-open 'settings' Hive box. A random
+/// UUID-like value — never a real device fingerprint — so it carries no PII;
+/// reinstalling re-rolls the bucket, which is acceptable for rollout gates.
+String? _cachedInstallId;
+Future<String?> _resolveInstallId() async {
+  if (_cachedInstallId != null) return _cachedInstallId;
+  try {
+    final box = Hive.box('settings');
+    var id = box.get('install_id') as String?;
+    if (id == null || id.isEmpty) {
+      id = _generateOpaqueId();
+      await box.put('install_id', id);
+    }
+    _cachedInstallId = id;
+    return id;
+  } catch (_) {
+    // Hive unavailable (tests, corrupted store): fall back to an in-memory
+    // id so flag evaluation stays stable for this session at worst.
+    final id = _generateOpaqueId();
+    _cachedInstallId = id;
+    return id;
+  }
+}
+
+String _generateOpaqueId() {
+  final rand = math.Random.secure();
+  final bytes = List<int>.generate(16, (_) => rand.nextInt(256));
+  return base64Url.encode(bytes).replaceAll('=', '');
+}
 
 // ============================================================================
 // ROUTE NAMES (for type-safe navigation)
@@ -44,6 +83,7 @@ class RouteNames {
   static const String onboarding = 'onboarding';
   static const String rideRequest = 'rideRequest';
   static const String rideTracking = 'rideTracking';
+  static const String rideArNavigation = 'rideArNavigation';
   static const String rideHistory = 'rideHistory';
   static const String safetyToolkit = 'safetyToolkit';
   static const String hotelSearch = 'hotelSearch';
@@ -207,6 +247,50 @@ class AppRouter {
               return BlocProvider(
                 create: (_) => _rideBlocFactory(),
                 child: RideTrackingPage(rideId: rideId),
+              );
+            },
+          ),
+          // AR walking navigation (§1.5): previously an unrouted orphan file.
+          // Double-gated: the compile-time kill switch
+          // (--dart-define=FEATURE_AR_NAVIGATION=false) AND the runtime
+          // `ar_navigation` flag from config/feature-flags/flags.json
+          // (enabled=true, rollout 50%, staging/production targeting). When
+          // either gate is off — or when the required destination query
+          // params are absent — we redirect back to tracking instead of
+          // rendering a dead-end screen. No fabricated coordinates: the
+          // caller (tracking page's "Walk to pickup (AR)" button) supplies
+          // the real pickup position from live ride state.
+          GoRoute(
+            path: '/nidus/ar-nav/:rideId',
+            name: RouteNames.rideArNavigation,
+            redirect: (context, state) async {
+              if (!AppConstants.enableARNavigation) {
+                return '/nidus/tracking/${state.pathParameters['rideId']}';
+              }
+              final flags = GetIt.instance<FeatureFlagService>();
+              final deviceId = await _resolveInstallId();
+              if (!flags.isEnabled('ar_navigation', deviceId: deviceId)) {
+                return '/nidus/tracking/${state.pathParameters['rideId']}';
+              }
+              final hasDestination =
+                  state.uri.queryParameters.containsKey('lat') &&
+                      state.uri.queryParameters.containsKey('lng');
+              if (!hasDestination) {
+                return '/nidus/tracking/${state.pathParameters['rideId']}';
+              }
+              return null;
+            },
+            builder: (context, state) {
+              final lat = double.parse(
+                  state.uri.queryParameters['lat'] ?? 'nan');
+              final lng = double.parse(
+                  state.uri.queryParameters['lng'] ?? 'nan');
+              final name = state.uri.queryParameters['name'] ??
+                  'Pickup point';
+              return ARNavigationPage(
+                destinationLat: lat,
+                destinationLng: lng,
+                destinationName: name,
               );
             },
           ),
