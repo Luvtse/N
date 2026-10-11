@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'core/di/injection.dart';
+import 'core/notifications/fcm_service.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/network/websocket_client.dart';
@@ -24,6 +25,13 @@ void main() async {
   // Initialize services
   await getIt<OfflineService>().initialize();
   await getIt<WebSocketClient>().connect();
+
+  // Push substrate (§1.4). initialize() requests permission (iOS + Android
+  // 13+), fetches the FCM token, registers it with the backend, and wires
+  // foreground/background/killed handlers. It returns false when permission
+  // is denied — in-app WS banner + inbox still work, so we do not block
+  // startup on it; failures are surfaced honestly via those channels.
+  await getIt<FcmService>().initialize();
 
   runApp(const NidawApp());
 }

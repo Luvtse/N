@@ -12,6 +12,7 @@ import '../../../../core/geocoding/geocoding_models.dart';
 import '../../../../core/geocoding/geocoding_service.dart';
 import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
+import '../../../../core/notifications/notification_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
 import '../widgets/location_input.dart';
@@ -203,6 +204,10 @@ class _RideRequestPageState extends State<RideRequestPage>
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           onPressed: () => context.pop(),
         ),
+        actions: [
+          // Notification inbox bell with live unread badge (§1.4).
+          _NotificationBell(),
+        ],
       ),
       body: BlocConsumer<RideBloc, RideState>(
         listener: _handleRideState,
@@ -699,6 +704,39 @@ class _GpsUnavailableBanner extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// App-bar bell with a live unread badge (§1.4 step 7). Subscribes to
+/// [NotificationService.unreadStream]; tapping opens the inbox route. The
+/// badge disappears entirely at zero — no fake "0" chip.
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell();
+
+  @override
+  Widget build(BuildContext context) {
+    final service = getIt<NotificationService>();
+    return StreamBuilder<int>(
+      stream: service.unreadStream,
+      initialData: service.unreadCount,
+      builder: (context, snapshot) {
+        final unread = snapshot.data ?? 0;
+        return IconButton(
+          icon: Badge(
+            isLabelVisible: unread > 0,
+            label: Text(unread > 99 ? '99+' : '$unread'),
+            child: const Icon(
+              Icons.notifications_outlined,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          tooltip: unread > 0
+              ? 'Notifications ($unread unread)'
+              : 'Notifications',
+          onPressed: () => context.go('/nidus/notifications'),
+        );
+      },
     );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -16,6 +18,9 @@ import '../../features/nidus/presentation/pages/ride_history_page.dart';
 import '../../features/nidus/presentation/pages/notification_inbox_page.dart';
 import '../../features/nidus/presentation/pages/safety_toolkit_page.dart';
 import '../../features/nidus/presentation/widgets/in_app_notification_banner.dart';
+import '../notifications/fcm_service.dart';
+import '../notifications/notification_router.dart';
+import '../notifications/notification_service.dart';
 import '../../features/haven/presentation/pages/hotel_search_page.dart';
 import '../../features/haven/presentation/pages/hotel_detail_page.dart';
 import '../../features/haven/presentation/pages/booking_page.dart';
@@ -347,9 +352,22 @@ class _AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<_AppShell> {
+  StreamSubscription<AuthState>? _authBindSub;
+
   @override
   void initState() {
     super.initState();
+    // Bind the notification hub to the signed-in user (§1.4): WS topic
+    // subscription + inbox unread count follow auth state; logout unbinds so
+    // stale rows never surface for the next user.
+    final authBloc = getIt<AuthBloc>();
+    final notifications = getIt<NotificationService>();
+    void apply(AuthState s) => notifications.bindUser(
+          s is AuthAuthenticated ? s.user.id : null,
+        );
+    apply(authBloc.state);
+    _authBindSub = authBloc.stream.listen(apply);
+
     // Route taps on notification surfaces (banner/tray/killed-launch) through
     // the single router (§1.4 step 5).
     getIt<FcmService>().taps.listen((tap) {
@@ -360,6 +378,12 @@ class _AppShellState extends State<_AppShell> {
               : null);
       if (location != null) context.go(location);
     });
+  }
+
+  @override
+  void dispose() {
+    _authBindSub?.cancel();
+    super.dispose();
   }
 
   @override
