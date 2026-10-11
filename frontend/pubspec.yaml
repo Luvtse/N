@@ -61,6 +61,11 @@ dependencies:
   firebase_analytics: ^10.8.0
   firebase_crashlytics: ^3.4.9
 
+  # Notifications (§1.4): FCM + local notification display for backgrounded
+  # pushes, and package_info_plus to stamp app_version on token registration.
+  flutter_local_notifications: ^16.3.2
+  package_info_plus: ^5.0.1
+
   # AR & Voice
   ar_flutter_plugin: ^0.7.3
   speech_to_text: ^6.5.1
