@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'package:dio/dio.dart';
 
+import '../config/feature_flag_service.dart';
 import '../geocoding/device_geocoding_adapter.dart';
 import '../geocoding/geocoding_cache.dart';
 import '../geocoding/geocoding_rate_limiter.dart';
@@ -119,6 +120,14 @@ Future<void> _registerCoreServices() async {
   getIt.registerLazySingleton<MapTileProvider>(
     () => MapTileProvider.defaultChain(),
   );
+
+  // Feature flags (Global Rule 6): client-side view of the canonical
+  // config/feature-flags/flags.json bundled as an app asset. Loads once at
+  // boot; a missing or malformed file degrades every flag to disabled —
+  // never an accidental ON. The router consults this for gated surfaces
+  // such as /nidus/ar-nav/:rideId.
+  final featureFlags = await FeatureFlagService.load();
+  getIt.registerLazySingleton<FeatureFlagService>(() => featureFlags);
 
   // Event Bus (cross-feature communication)
   getIt.registerLazySingleton<EventBus>(() => EventBus());

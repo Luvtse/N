@@ -203,8 +203,21 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 
 	h.register <- client
 
-	go client.writePump()
-	go client.readPump()
+	// Notifications module online hint (§1.4): fired after the socket is
+	// registered so the refcounted registry never sees a phantom disconnect.
+	if fn := wsOnConnect; fn != nil {
+		fn(client.userID)
+	}
+	onDisconnect := wsOnDisconnect
+	go func() {
+		defer func() {
+			if fn := onDisconnect; fn != nil {
+				fn(client.userID)
+			}
+		}()
+		go client.writePump()
+		client.readPump()
+	}()
 }
 
 func (c *Client) readPump() {
@@ -317,6 +330,53 @@ func (c *Client) writePump() {
 			}
 		}
 	}
+}
+
+// OnConnect is an optional hook invoked with the authenticated user ID when a
+// socket finishes upgrading. cmd/server/main.go uses it to keep the
+// notifications module's online hint in sync. Must be set before serving.
+var wsOnConnect func(userID uuid.UUID)
+var wsOnDisconnect func(userID uuid.UUID)
+
+// SetConnectionHooks installs the connect/disconnect observers (nil-safe;
+// re-installing replaces the previous pair). Called once at boot.
+func SetConnectionHooks(onConnect, onDisconnect func(userID uuid.UUID)) {
+	wsOnConnect = onConnect
+	wsOnDisconnect = onDisconnect
+}
+
+// BroadcastToTopic delivers a payload to every client subscribed to topic.
+// It satisfies the notifications module's InAppBroadcaster port. The "topic"
+// key inside payload is authoritative for routing (see run()); callers should
+// also set it for clarity. Returns nil unless the hub itself is nil — the WS
+// frame is a live hint, never a delivery guarantee (the DB row is).
+func (h *WebSocketHandler) BroadcastToTopic(topic string, payload map[string]interface{}) error {
+	if h == nil {
+		return nil
+	}
+	msg := Message{Type: "notification_inbox", Timestamp: time.Now().Unix()}
+	if p, ok := payload["payload"].(map[string]interface{}); ok {
+		// Caller already wrapped: pass through, ensuring topic is set.
+		p["topic"] = topic
+		msg.Payload = p
+		if t, ok := payload["type"].(string); ok && t != "" {
+			msg.Type = t
+		}
+	} else {
+		copied := make(map[string]interface{}, len(payload)+1)
+		for k, v := range payload {
+			copied[k] = v
+		}
+		copied["topic"] = topic
+		msg.Payload = copied
+	}
+	// Non-blocking guard: broadcast is buffered-forever loop channel; send is
+	// safe but must never wedge an HTTP handler if the hub goroutine died.
+	select {
+	case h.broadcast <- msg:
+	default:
+	}
+	return nil
 }
 
 // BroadcastToRide sends a message to all clients subscribed to a specific ride

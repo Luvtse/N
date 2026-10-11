@@ -37,6 +37,10 @@ type Dependencies struct {
 	PricingService *services.PricingService
 	TipSettler     niduscmds.TipSettler // ledger-backed tip settlement (nil => tips rejected)
 	CORSOrigins    []string             // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
+	// WSHub backs GET /ws (§1.5 router cleanup: the hub existed but was never
+	// mounted). main.go constructs one shared hub here and reuses it as the
+	// notifications module's InAppBroadcaster (§1.4). nil => no /ws route.
+	WSHub *nidusHttp.WebSocketHandler
 }
 
 // CacheService interface for driver location caching. DriverLocation is an
@@ -198,6 +202,18 @@ func NewRouter(deps *Dependencies) http.Handler {
 				r.Post("/update", locationHandler.UpdateLocation)
 				r.Get("/driver/{driverID}", locationHandler.GetDriverLocation)
 			})
+
+			// ====================================================================
+			// WEBSOCKET (§1.5 router cleanup: the hub existed but was never
+			// mounted). Auth is enforced inside HandleWebSocket itself
+			// (subprotocol / bearer / deprecated query token), so this route sits
+			// outside AuthRequired — gorilla upgrades cannot run behind the JSON
+			// 401 middleware. One shared hub also serves the notifications
+			// module's in-app pushes via BroadcastToTopic (§1.4).
+			// ====================================================================
+			if deps.WSHub != nil {
+				r.Get("/ws", deps.WSHub.HandleWebSocket)
+			}
 		})
 	})
 

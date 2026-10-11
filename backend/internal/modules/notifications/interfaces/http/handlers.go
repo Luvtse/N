@@ -97,7 +97,8 @@ func (h *Handler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 // to another user is indistinguishable from revoking an unknown token (both
 // return 204) so the endpoint cannot be used to probe token ownership.
 func (h *Handler) RevokeDevice(w http.ResponseWriter, r *http.Request) {
-	if _, ok := auth.GetUserIDFromContext(r.Context()); !ok {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
@@ -106,7 +107,7 @@ func (h *Handler) RevokeDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "token is required")
 		return
 	}
-	if err := h.repo.RevokeDeviceToken(token); err != nil {
+	if err := h.repo.RevokeDeviceToken(token, userID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke device token")
 		return
 	}

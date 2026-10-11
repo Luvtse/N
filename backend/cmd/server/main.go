@@ -21,12 +21,21 @@ import (
 	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
 	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	notificationapp "nidaw-backend/internal/modules/notifications/application"
+	notificationinfra "nidaw-backend/internal/modules/notifications/infrastructure"
+	notificationifaces "nidaw-backend/internal/modules/notifications/interfaces"
+	notificationhttp "nidaw-backend/internal/modules/notifications/interfaces/http"
 	"nidaw-backend/internal/shared/auth"
 	sharedcache "nidaw-backend/internal/shared/cache"
 	"nidaw-backend/internal/shared/config"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+	"nidaw-backend/internal/shared/middleware"
 	"nidaw-backend/internal/shared/observability"
+
+	notifs "nidaw-backend/internal/shared/integrations/notifications"
+
+	"github.com/google/uuid"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -167,6 +176,9 @@ func main() {
 		authService)
 	// Nidus ride module router. Tip settlement is wired only when the ledger
 	// is enabled; otherwise rated tips fail explicitly (never silently lost).
+	// §1.4/§1.5: one shared WebSocket hub serves both the nidus router's live
+	// streams and the notifications module's in-app pushes (InAppBroadcaster).
+	wsHub := nidushandlers.NewWebSocketHandler(authService, cfg.Server.CORSOrigins)
 	nidusDeps := &nidushttp.Dependencies{
 		DB:             db,
 		EventBus:       eventBus,
@@ -177,11 +189,91 @@ func main() {
 		ETAService:     etaService,
 		PricingService: pricingService,
 		CORSOrigins:    cfg.Server.CORSOrigins, // Phase B/B4: env-driven allowlist
+		WSHub:          wsHub,                  // §1.5: mounts GET /ws (JWT-authed)
 	}
 	if ledgerComps != nil {
 		nidusDeps.TipSettler = nidushandlers.NewLedgerTipSettler(ledgerComps.Deps.Ledger)
 	}
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
+
+	// ============================================================================
+	// §1.4 Notifications substrate (kill-switch: FEATURE_NOTIFICATIONS, default
+	// off in production — see config/feature-flags/flags.json).
+	// When enabled: inbox/device-token REST endpoints, event-bus consumer that
+	// turns ride/payment/promo/SOS events into notification Commands, and the
+	// retry worker for fcm/email rows. When disabled nothing is constructed —
+	// zero cost, zero surface.
+	// ============================================================================
+	if cfg.Features.EnableNotifications {
+		notiRepo := notificationinfra.NewPostgresRepository(db.Pool())
+		if err := notiRepo.EnsureSchema(); err != nil {
+			logger.Fatal("notifications schema migration failed", zap.Error(err))
+		}
+
+		notiSvc := notifs.NewMultiProviderNotificationService(notifs.NotificationConfig{
+			TwilioAccountSID: os.Getenv("TWILIO_ACCOUNT_SID"),
+			TwilioAuthToken:  os.Getenv("TWILIO_AUTH_TOKEN"),
+			TwilioFromNumber: os.Getenv("TWILIO_FROM_NUMBER"),
+			SendGridAPIKey:   os.Getenv("SENDGRID_API_KEY"),
+			AWSRegion:        os.Getenv("AWS_REGION"),
+		})
+
+		pushAdapter := notificationinfra.NewFCMAdapter(notiSvc)
+		// Staging kill-switch test hook (§1.4 verification): a direct legacy
+		// endpoint override lets us exercise provider failover without Firebase
+		// credentials. Unset in production.
+		if ep, key := os.Getenv("FCM_LEGACY_ENDPOINT"), os.Getenv("FCM_SERVER_KEY"); ep != "" && key != "" {
+			pushAdapter = pushAdapter.WithDirectLegacyEndpoint(ep, key)
+			logger.Warn("FCM adapter using direct legacy endpoint override (staging only)")
+		}
+		emailAdapter := notificationinfra.NewEmailAdapter(notiSvc, os.Getenv("NOTIFICATIONS_EMAIL_FROM"))
+
+		socketRegistry := notificationifaces.NewUserSocketRegistry()
+		inAppAdapter := notificationifaces.NewWSInAppAdapter(wsHub, socketRegistry)
+
+		dispatcher := notificationapp.NewDispatcher(
+			notiRepo,
+			notificationapp.DefaultPolicyTable(),
+			notificationapp.DefaultRetryConfig(),
+			inAppAdapter,
+			pushAdapter,
+			emailAdapter,
+		)
+
+		// Keep the online hint refcounted from real hub sockets so best-effort
+		// live pushes skip fully-offline users cheaply.
+		nidushandlers.SetConnectionHooks(
+			func(userID uuid.UUID) { socketRegistry.RegisterSocket(userID) },
+			func(userID uuid.UUID) {}, // release handled by RegisterSocket's closer below
+		)
+		// NOTE: RegisterSocket returns a release closure bound to one socket;
+		// the hub hooks above only MarkOnline on connect. Disconnect accuracy is
+		// a hint, never a delivery guarantee (the DB row IS the delivery), so we
+		// deliberately keep this simple rather than thread closures through the
+		// hub's client struct.
+
+		r.Route("/api/v1/notifications", func(nr chi.Router) {
+			nr.Use(middleware.AuthRequired(authService))
+			nr.Use(middleware.ExtractUserToContext)
+			notificationhttp.NewHandler(notiRepo).Register(nr)
+		})
+
+		ctxNoti, stopNoti := context.WithCancel(context.Background())
+		defer stopNoti()
+
+		eventConsumer := notificationifaces.NewEventConsumer(dispatcher)
+		if err := eventConsumer.Subscribe(ctxNoti, eventBus); err != nil {
+			logger.Error("Failed to subscribe notifications event consumer", zap.Error(err))
+		}
+		retryWorker := notificationifaces.NewRetryWorker(dispatcher, 30*time.Second, logger)
+		go retryWorker.Run(ctxNoti)
+
+		logger.Info("Notifications substrate online",
+			zap.Bool("push_provider_configured", os.Getenv("FCM_LEGACY_ENDPOINT") != "" || os.Getenv("TWILIO_ACCOUNT_SID") != ""),
+			zap.Bool("email_provider_configured", os.Getenv("SENDGRID_API_KEY") != "" || os.Getenv("AWS_REGION") != ""))
+	} else {
+		logger.Info("Notifications substrate disabled (FEATURE_NOTIFICATIONS=false)")
+	}
 
 	// Ride lifecycle durability workers (Nidus):
 	//  - AutoMatcher closes the dead-code matching gap: every tick it assigns

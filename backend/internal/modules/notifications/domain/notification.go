@@ -160,8 +160,12 @@ type Repository interface {
 
 	// UpsertDeviceToken registers or reactivates a token for a user.
 	UpsertDeviceToken(t *DeviceToken) error
-	// RevokeDeviceToken soft-deletes a token; unknown tokens are a no-op.
-	RevokeDeviceToken(token string) error
+	// RevokeDeviceToken soft-deletes a token, but only when it belongs to
+	// userID — revoking another user's token is rejected at the repository
+	// layer so ownership cannot be bypassed by callers that forget to check.
+	// Unknown or foreign tokens are a no-op (the HTTP layer returns 204 for
+	// both, preventing token-ownership probing).
+	RevokeDeviceToken(token string, userID uuid.UUID) error
 	// ActiveTokensForUser lists non-revoked tokens ordered by last_seen desc.
 	ActiveTokensForUser(userID uuid.UUID) ([]*DeviceToken, error)
 	// UserLocale returns the recipient's preferred locale (default "en").
