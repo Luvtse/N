@@ -1,14 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
+import 'package:get_it/get_it.dart';
+
+import '../../../../core/di/injection.dart';
+import '../../../../core/geocoding/geocoding_models.dart';
+import '../../../../core/geocoding/geocoding_service.dart';
 import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
 import '../widgets/location_input.dart';
 import '../widgets/location_permission_gate.dart';
+import '../widgets/place_autocomplete_sheet.dart';
 import '../widgets/payment_method_selector.dart';
 import '../widgets/ride_type_selector.dart';
 
@@ -38,8 +46,12 @@ class _RideRequestPageState extends State<RideRequestPage>
   static final LatLng _cameraFallback = LatLng(9.03, 38.74);
 
   final DeviceLocationService _locationService = const DeviceLocationService();
+  final GeocodingService _geocoding = getIt<GeocodingService>();
   final GlobalKey<LiveMapWidgetState> _mapKey =
       GlobalKey<LiveMapWidgetState>();
+
+  Timer? _reverseDebounce;
+  int _reverseSeq = 0;
 
   LocationFieldValue _pickup = const LocationFieldValue.empty();
   LocationFieldValue _dropoff = const LocationFieldValue.empty();
@@ -65,6 +77,7 @@ class _RideRequestPageState extends State<RideRequestPage>
 
   @override
   void dispose() {
+    _reverseDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -116,16 +129,49 @@ class _RideRequestPageState extends State<RideRequestPage>
     if (_pickup.hasCoordinates) _fitCameraToPoints();
   }
 
+  /// Pin drag updates coordinates immediately; the human-readable label comes
+  /// from reverse geocoding after a 500 ms debounce (§1.3 step 6). While the
+  /// label resolves, the field shows its spinner state — never a stale or
+  /// fabricated address.
   void _onPickupPinDragged(LatLng point) {
     setState(() {
       _pickup = LocationFieldValue(
-        // Reverse geocoding (§1.3) replaces this label once the provider
-        // chain answers; until then the label is honest about what it is.
         display: 'Pinned location',
         lat: point.latitude,
         lng: point.longitude,
+        resolvingLabel: true,
       );
       _gpsUnavailableBanner = false;
+    });
+    _debouncedReverseLabel(point);
+  }
+
+  void _debouncedReverseLabel(LatLng point) {
+    _reverseDebounce?.cancel();
+    final seq = ++_reverseSeq;
+    _reverseDebounce = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        final result = await _geocoding.reverse(point);
+        if (!mounted || seq != _reverseSeq) return;
+        setState(() {
+          _pickup = _pickup.copyWith(
+            display: result.displayAddress,
+            resolvingLabel: false,
+          );
+        });
+      } on GeocodingUnavailableException {
+        if (!mounted || seq != _reverseSeq) return;
+        // Honest fallback: keep the coordinate-backed "Pinned location"
+        // label. No invented address string.
+        setState(() {
+          _pickup = _pickup.copyWith(resolvingLabel: false);
+        });
+      } on Object {
+        if (!mounted || seq != _reverseSeq) return;
+        setState(() {
+          _pickup = _pickup.copyWith(resolvingLabel: false);
+        });
+      }
     });
   }
 
@@ -253,7 +299,7 @@ class _RideRequestPageState extends State<RideRequestPage>
                           hint: _gpsUnavailableBanner
                               ? 'Current location (unavailable) — drag the pin'
                               : 'Use current location or drag the pin',
-                          onTapField: _openPickupSheetPlaceholder,
+                          onTapField: _openPickupSheet,
                           onUseCurrentLocation: _acquirePickup,
                         ),
 
@@ -274,7 +320,7 @@ class _RideRequestPageState extends State<RideRequestPage>
                           iconColor: AppColors.error,
                           value: _dropoff,
                           hint: 'Search a place',
-                          onTapField: _openDropoffSheetPlaceholder,
+                          onTapField: _openDropoffSheet,
                         ),
 
                         const SizedBox(height: 32),
@@ -349,24 +395,91 @@ class _RideRequestPageState extends State<RideRequestPage>
     );
   }
 
-  /// Tap targets until §1.3 ships place_autocomplete_sheet.dart; they explain
-  /// the real flow instead of accepting free text that could never be
-  /// geocoded. Replaced by sheet-openers in the geocoding step.
-  void _openPickupSheetPlaceholder() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Place search arrives with the geocoding release — '
-            'use GPS or drag the pin for now.'),
-      ),
+  Future<void> _openPickupSheet() async {
+    final outcome = await PlaceAutocompleteSheet.show(
+      context,
+      geocoding: _geocoding,
+      title: 'Set pickup location',
+      bias: _pickup.hasCoordinates
+          ? LatLng(_pickup.lat!, _pickup.lng!)
+          : null,
     );
+    if (!mounted) return;
+    switch (outcome.kind) {
+      case PlaceAutocompleteOutcomeKind.suggestion:
+        _applySuggestion(isPickup: true, suggestion: outcome.suggestion!);
+        break;
+      case PlaceAutocompleteOutcomeKind.currentLocation:
+        _acquirePickup();
+        break;
+      case PlaceAutocompleteOutcomeKind.setPin:
+        // Enter pin-drag mode: recenter on the current camera target and let
+        // the rider long-press-drag the pickup marker (LiveMapWidget owns the
+        // drag gesture; the label resolves via reverse geocode on release).
+        _mapKey.currentState?.moveTo(_cameraCenter);
+        break;
+      case PlaceAutocompleteOutcomeKind.none:
+        break;
+    }
   }
 
-  void _openDropoffSheetPlaceholder() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Place search arrives with the geocoding release.'),
-      ),
+  Future<void> _openDropoffSheet() async {
+    final outcome = await PlaceAutocompleteSheet.show(
+      context,
+      geocoding: _geocoding,
+      title: 'Set dropoff location',
+      bias: _pickup.hasCoordinates
+          ? LatLng(_pickup.lat!, _pickup.lng!)
+          : null,
     );
+    if (!mounted) return;
+    switch (outcome.kind) {
+      case PlaceAutocompleteOutcomeKind.suggestion:
+        _applySuggestion(isPickup: false, suggestion: outcome.suggestion!);
+        break;
+      case PlaceAutocompleteOutcomeKind.currentLocation:
+      case PlaceAutocompleteOutcomeKind.setPin:
+        // Those rows only make sense for pickup; for dropoff they behave like
+        // a no-op close so nothing silently mislabels the destination field.
+        break;
+      case PlaceAutocompleteOutcomeKind.none:
+        break;
+    }
+  }
+
+  /// A chosen suggestion stores both the resolved LatLng and its display
+  /// string — geocoding happened at selection time inside the sheet chain, so
+  /// there is no deferred "// TODO: Geocode" anywhere downstream.
+  void _applySuggestion({
+    required bool isPickup,
+    required PlaceSuggestion suggestion,
+  }) {
+    setState(() {
+      final value = LocationFieldValue(
+        display: suggestion.detail.isEmpty
+            ? suggestion.name
+            : '${suggestion.name}, ${suggestion.detail}',
+        lat: suggestion.location.latitude,
+        lng: suggestion.location.longitude,
+      );
+      if (isPickup) {
+        _pickup = value;
+        _gpsUnavailableBanner = false;
+      } else {
+        _dropoff = value;
+      }
+    });
+    _fitCameraToPoints();
+    if (_canRequest) {
+      context.read<RideBloc>().add(
+            GetFareEstimate(
+              pickupLat: _pickup.lat!,
+              pickupLng: _pickup.lng!,
+              dropoffLat: _dropoff.lat!,
+              dropoffLng: _dropoff.lng!,
+            ),
+          );
+    }
   }
 
   Widget _buildFareEstimate(dynamic estimate) {

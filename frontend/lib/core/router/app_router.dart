@@ -13,7 +13,9 @@ import '../../features/nidus/presentation/bloc/ride_bloc.dart';
 import '../../features/nidus/presentation/pages/ride_request_page.dart';
 import '../../features/nidus/presentation/pages/ride_tracking_page.dart';
 import '../../features/nidus/presentation/pages/ride_history_page.dart';
+import '../../features/nidus/presentation/pages/notification_inbox_page.dart';
 import '../../features/nidus/presentation/pages/safety_toolkit_page.dart';
+import '../../features/nidus/presentation/widgets/in_app_notification_banner.dart';
 import '../../features/haven/presentation/pages/hotel_search_page.dart';
 import '../../features/haven/presentation/pages/hotel_detail_page.dart';
 import '../../features/haven/presentation/pages/booking_page.dart';
@@ -50,6 +52,7 @@ class RouteNames {
   static const String consentManagement = 'consentManagement';
   static const String legalDocument = 'legalDocument';
   static const String wallet = 'wallet';
+  static const String notificationInbox = 'notificationInbox';
 }
 
 // ============================================================================
@@ -215,6 +218,12 @@ class AppRouter {
               child: const SafetyToolkitPage(),
             ),
           ),
+          GoRoute(
+            path: '/nidus/notifications',
+            name: RouteNames.notificationInbox,
+            builder: (context, state) =>
+                const NotificationInboxPage(),
+          ),
 
           // ==================================================================
           // HAVEN (Hotels)
@@ -328,15 +337,44 @@ class AppRouter {
 // APP SHELL (Bottom Navigation Bar)
 // ============================================================================
 
-class _AppShell extends StatelessWidget {
+class _AppShell extends StatefulWidget {
   final Widget child;
 
   const _AppShell({required this.child});
 
   @override
+  State<_AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<_AppShell> {
+  @override
+  void initState() {
+    super.initState();
+    // Route taps on notification surfaces (banner/tray/killed-launch) through
+    // the single router (§1.4 step 5).
+    getIt<FcmService>().taps.listen((tap) {
+      final location = tap.deepLink != null && tap.notification == null
+          ? NotificationRouter.resolveFromRawData({'deep_link': tap.deepLink!})
+          : (tap.notification != null
+              ? NotificationRouter.resolveLocation(tap.notification!)
+              : null);
+      if (location != null) context.go(location);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: child,
+      body: Stack(
+        children: [
+          widget.child,
+          // Slide-down in-app banner overlaying every shell route.
+          InAppNotificationBanner(
+            service: getIt<NotificationService>(),
+            onNavigate: (ctx, location) => ctx.go(location),
+          ),
+        ],
+      ),
       bottomNavigationBar: _buildBottomNav(context),
     );
   }

@@ -3,6 +3,12 @@ import 'package:get_it/get_it.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'package:dio/dio.dart';
+
+import '../geocoding/device_geocoding_adapter.dart';
+import '../geocoding/geocoding_cache.dart';
+import '../geocoding/geocoding_rate_limiter.dart';
+import '../geocoding/geocoding_service.dart';
 import '../network/api_client.dart';
 import '../network/websocket_client.dart';
 import '../network/event_bus.dart';
@@ -46,7 +52,7 @@ Future<void> configureDependencies() async {
   await Hive.openBox('settings');
 
   // 2. Register core services (singletons)
-  _registerCoreServices();
+  await _registerCoreServices();
 
   // 3. Register network layer
   _registerNetworkLayer();
@@ -70,9 +76,31 @@ Future<void> configureDependencies() async {
 // CORE SERVICES
 // ============================================================================
 
-void _registerCoreServices() {
+Future<void> _registerCoreServices() async {
   // Connectivity
   getIt.registerLazySingleton<Connectivity>(() => Connectivity());
+
+  // Geocoding substrate (§1.3): dedicated Dio instance (Nominatim/Photon are
+  // external hosts — never reuse the authenticated API client), Hive-backed
+  // cache, and the 1 rps Nominatim rate limiter. The service walks the
+  // provider chain Nominatim -> Photon -> device -> cache.
+  getIt.registerLazySingleton<Dio>(
+    () => Dio(BaseOptions(connectTimeout: const Duration(seconds: 8))),
+  );
+  getIt.registerLazySingleton<GeocodingRateLimiter>(
+    () => GeocodingRateLimiter(requestsPerSecond: 1.0),
+  );
+  final geocodingCache = await GeocodingCache.open();
+  getIt.registerLazySingleton<GeocodingCache>(() => geocodingCache);
+  getIt.registerLazySingleton<GeocodingService>(
+    () => GeocodingService(
+      dio: getIt<Dio>(),
+      cache: getIt<GeocodingCache>(),
+      nominatimLimiter: getIt<GeocodingRateLimiter>(),
+      deviceAutocomplete: DeviceGeocodingAdapter.autocomplete,
+      deviceReverse: DeviceGeocodingAdapter.reverse,
+    ),
+  );
 
   // Event Bus (cross-feature communication)
   getIt.registerLazySingleton<EventBus>(() => EventBus());
