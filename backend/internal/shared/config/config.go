@@ -184,6 +184,15 @@ type FeatureFlags struct {
 	// rows remain queryable via Postgres directly. Defaults false in prod per
 	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnableNotifications bool
+	// EnableChat gates the §2.1 in-app rider↔driver chat (message REST
+	// endpoints + chat.ride.{rideId} WS topic). Kill switch: set
+	// FEATURE_CHAT=false to unmount /api/v1/chat at next boot; persisted
+	// messages remain in Postgres. Machine translation rides on the separate
+	// FEATURE_CHAT_TRANSLATION flag and degrades to untranslated bodies when
+	// off or when no provider is configured. Both default false in production
+	// per CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableChat           bool
+	EnableChatTranslation bool
 }
 
 // ============================================================================
@@ -380,6 +389,8 @@ func (c *Config) loadFeatures() {
 		EnableARNavigation:       getBoolEnvOrDefault("FEATURE_AR_NAVIGATION", false),
 		EnableVoiceCommands:      getBoolEnvOrDefault("FEATURE_VOICE_COMMANDS", false),
 		EnableNotifications:      getBoolEnvOrDefault("FEATURE_NOTIFICATIONS", false),
+		EnableChat:               getBoolEnvOrDefault("FEATURE_CHAT", false),
+		EnableChatTranslation:    getBoolEnvOrDefault("FEATURE_CHAT_TRANSLATION", false),
 	}
 }
 
