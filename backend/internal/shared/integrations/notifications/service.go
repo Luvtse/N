@@ -137,6 +137,35 @@ func (s *MultiProviderNotificationService) SendSMS(ctx context.Context, req *SMS
 	return fmt.Errorf("all SMS providers failed, last error: %w", lastErr)
 }
 
+// SendPush fans out a push request over the configured PushProviders in
+// order. With no providers configured it returns an explicit error rather
+// than silently succeeding, so callers keep rows pending for retry instead of
+// recording a fake delivery.
+func (s *MultiProviderNotificationService) SendPush(ctx context.Context, req *PushRequest) error {
+	if len(s.pushProviders) == 0 {
+		return fmt.Errorf("no push providers configured")
+	}
+
+	var lastErr error
+	for _, provider := range s.pushProviders {
+		err := provider.Send(ctx, req)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		fmt.Printf("Push provider %s failed: %v, trying next\n", provider.Name(), err)
+	}
+
+	return fmt.Errorf("all push providers failed, last error: %w", lastErr)
+}
+
+// RegisterPushProvider appends a push provider to the failover chain at
+// runtime. Used by module wiring that constructs adapters after service
+// creation (e.g. the notifications module's FCM adapter rail).
+func (s *MultiProviderNotificationService) RegisterPushProvider(p PushProvider) {
+	s.pushProviders = append(s.pushProviders, p)
+}
+
 func (s *MultiProviderNotificationService) SendEmail(ctx context.Context, req *EmailRequest) error {
 	// Render template if provided
 	if req.Template != "" {
