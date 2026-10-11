@@ -9,6 +9,11 @@ import '../geocoding/device_geocoding_adapter.dart';
 import '../geocoding/geocoding_cache.dart';
 import '../geocoding/geocoding_rate_limiter.dart';
 import '../geocoding/geocoding_service.dart';
+import '../location/device_location_service.dart';
+import '../map/map_tile_provider.dart';
+import '../notifications/fcm_service.dart';
+import '../notifications/notification_repository.dart';
+import '../notifications/notification_service.dart';
 import '../network/api_client.dart';
 import '../network/websocket_client.dart';
 import '../network/event_bus.dart';
@@ -100,6 +105,19 @@ Future<void> _registerCoreServices() async {
       deviceAutocomplete: DeviceGeocodingAdapter.autocomplete,
       deviceReverse: DeviceGeocodingAdapter.reverse,
     ),
+  );
+
+  // Device location substrate (§1.2): stateless wrapper over geolocator.
+  getIt.registerLazySingleton<DeviceLocationService>(
+    () => const DeviceLocationService(),
+  );
+
+  // Map tile substrate (§1.1): one shared provider per session so the
+  // MapHealth stream and the Hive tile cache are global. LiveMapWidget
+  // consumes this; production builds must swap the templates in
+  // MapTileProvider.defaultChain for a licensed OSM mirror.
+  getIt.registerLazySingleton<MapTileProvider>(
+    () => MapTileProvider.defaultChain(),
   );
 
   // Event Bus (cross-feature communication)
@@ -197,6 +215,11 @@ void _registerRepositories() {
   getIt.registerLazySingleton<WalletRepository>(
     () => WalletRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
+
+  // Notifications Repository (§1.4): /notifications/devices, /inbox, /:id/read
+  getIt.registerLazySingleton<NotificationRepository>(
+    () => NotificationRepository(api: getIt<ApiClient>()),
+  );
 }
 
 // ============================================================================
@@ -211,6 +234,22 @@ void _registerUseCases() {
   // Rides
   getIt.registerFactory(() => RequestRideUseCase(getIt<RideRepository>()));
   getIt.registerFactory(() => GetRideStatusUseCase(getIt<RideRepository>()));
+
+  // Notifications substrate (§1.4). FcmService is a lazy singleton created
+  // after Firebase.initializeApp() in main(); initialize() is idempotent and
+  // safe to call from any first consumer. NotificationService merges the WS
+  // topic, FCM foreground messages, and the HTTP inbox into one stream the
+  // banner + bell badge subscribe to.
+  getIt.registerLazySingleton<FcmService>(
+    () => FcmService(repository: getIt<NotificationRepository>()),
+  );
+  getIt.registerLazySingleton<NotificationService>(
+    () => NotificationService(
+      repository: getIt<NotificationRepository>(),
+      webSocket: getIt<WebSocketClient>(),
+      fcm: getIt<FcmService>(),
+    ),
+  );
 }
 
 // ============================================================================
@@ -336,5 +375,8 @@ Future<void> disposeDependencies() async {
   }
   if (getIt.isRegistered<OfflineService>()) {
     getIt<OfflineService>().dispose();
+  }
+  if (getIt.isRegistered<NotificationService>()) {
+    await getIt<NotificationService>().dispose();
   }
 }
