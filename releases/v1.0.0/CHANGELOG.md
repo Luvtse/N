@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ETA prediction using ML models
   - Ride types: Standard, Premium, Electric, Shared, Wheelchair
   - Real-time GPS tracking via WebSocket
-  - In-app chat between rider and driver
+  - In-app chat between rider and driver *(see CORRECTIONS.md — not shipped in v1.0.0; targeted for v1.1.0 per ride-parity plan §2.1)*
   - Rating and review system
   - Cancellation with fee policy
 
@@ -214,7 +214,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (on main, pending release — ride-parity Foundation phase)
+- **Map provider migration to OpenStreetMap (§1.1):** `flutter_map`-backed `LiveMapWidget` with raster-tile fallback chain (primary mirror → secondary mirror → Hive tile cache → last-known-good), marker clustering support, camera auto-fit, recenter FAB, and a `MapHealth` banner with retry when all tile sources fail. Removed `google_maps_flutter`, the static placeholder widget, and the duplicate home request page.
+- **Device location & GPS pickup pin (§1.2):** `DeviceLocationService` with discriminated permission/service results, live position stream (10 m distance filter), last-known-position instant pin, and a `LocationPermissionGate` covering denied / permanently-denied / service-disabled states with manual-pin fallback. All hardcoded demo coordinates removed.
+- **Geocoding & place autocomplete (§1.3):** Provider-chain geocoder (Nominatim ≤1 req/s token bucket → Photon → device-native geocoder → Hive cache with staleness note), TTL/LRU cache, debounced autocomplete sheet with "Use current location" and "Set pin on map", reverse-geocode-on-drag, and a debug GeocodingHealth indicator.
+- **Notifications substrate (§1.4):** Backend `notifications` module (domain entity, Postgres + in-memory repositories, config-driven dispatcher policy, in-app WS adapter, FCM adapter, email adapter, 3-attempt exponential-backoff retry worker, device-token registry) with REST endpoints `POST /api/v1/notifications/devices`, `DELETE /api/v1/notifications/devices/{token}`, `GET /api/v1/notifications/inbox`, `GET /api/v1/notifications/inbox/unread-count`, `POST /api/v1/notifications/{id}/read`; event-bus consumer mapping ride.matched/completed, payment.failed, promo.granted, sos.confirmed to notification categories. Flutter client: FCM service (foreground banner, background/killed deep-link routing), inbox bell with unread badge, notification inbox page, in-app overlay banner. Gated by `FEATURE_NOTIFICATIONS` (default false in production).
+- **Router cleanup & feature flags (§1.5):** Registered `/nidus/ar-nav/:rideId` behind the `ar_navigation` flag (now default-off with documented kill-switch); added client-side `FeatureFlagService` loading `assets/config/feature-flags/flags.json` with deterministic rollout bucketing; deleted dead map/request-page code and bare TODO markers from shipped surfaces.
+
+### Fixed
+- Device-token revocation is now ownership-scoped (a user can only revoke their own tokens; foreign tokens return 404 without probing).
+- Notification HTTP handlers derive recipient identity exclusively from the JWT subject, never from request bodies.
+
 ### Planned for v1.1.0
+- In-app chat between rider and driver (moved from v1.0.0 claim — see CORRECTIONS.md)
 - Additional regions (UK, Japan, Australia, Brazil)
 - Enhanced autonomous vehicle features
 - Drone delivery expansion
