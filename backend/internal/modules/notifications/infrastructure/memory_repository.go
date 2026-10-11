@@ -16,8 +16,8 @@ import (
 
 // MemoryRepository is a concurrency-safe in-memory domain.Repository.
 type MemoryRepository struct {
-	mu    sync.Mutex
-	rows  map[uuid.UUID]*domain.Notification
+	mu     sync.Mutex
+	rows   map[uuid.UUID]*domain.Notification
 	tokens map[string]*domain.DeviceToken
 	// Locale/Email fixtures for tests; default "en"/"" respectively.
 	LocaleOverrides map[uuid.UUID]string
@@ -255,3 +255,15 @@ func (m *MemoryRepository) Rows() []*domain.Notification {
 }
 
 var _ domain.Repository = (*MemoryRepository)(nil)
+
+// FindByIDForTest returns a copy of the stored row for test assertions.
+func (m *MemoryRepository) FindByIDForTest(id uuid.UUID) (*domain.Notification, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.rows[id]
+	if !ok {
+		return nil, domain.ErrNotificationNotFound
+	}
+	cp := *n
+	return &cp, nil
+}

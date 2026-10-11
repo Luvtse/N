@@ -21,12 +21,21 @@ import (
 	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
 	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	notificationapp "nidaw-backend/internal/modules/notifications/application"
+	notificationinfra "nidaw-backend/internal/modules/notifications/infrastructure"
+	notificationifaces "nidaw-backend/internal/modules/notifications/interfaces"
+	notificationhttp "nidaw-backend/internal/modules/notifications/interfaces/http"
 	"nidaw-backend/internal/shared/auth"
 	sharedcache "nidaw-backend/internal/shared/cache"
 	"nidaw-backend/internal/shared/config"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+	"nidaw-backend/internal/shared/middleware"
 	"nidaw-backend/internal/shared/observability"
+
+	notifs "nidaw-backend/internal/shared/integrations/notifications"
+
+	"github.com/google/uuid"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -244,8 +253,8 @@ func main() {
 		// hub's client struct.
 
 		r.Route("/api/v1/notifications", func(nr chi.Router) {
-			nr.Use(sharedmiddleware.AuthRequired(authService))
-			nr.Use(sharedmiddleware.ExtractUserToContext)
+			nr.Use(middleware.AuthRequired(authService))
+			nr.Use(middleware.ExtractUserToContext)
 			notificationhttp.NewHandler(notiRepo).Register(nr)
 		})
 

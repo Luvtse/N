@@ -40,7 +40,7 @@ type Dependencies struct {
 	// WSHub backs GET /ws (§1.5 router cleanup: the hub existed but was never
 	// mounted). main.go constructs one shared hub here and reuses it as the
 	// notifications module's InAppBroadcaster (§1.4). nil => no /ws route.
-	WSHub *handlers.WebSocketHandler
+	WSHub *nidusHttp.WebSocketHandler
 }
 
 // CacheService interface for driver location caching. DriverLocation is an
