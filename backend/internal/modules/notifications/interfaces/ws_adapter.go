@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	domain "nidaw-backend/internal/modules/notifications/domain"
+
+	"github.com/google/uuid"
 )
 
 // InAppBroadcaster is the minimal surface the notifications module needs from
@@ -24,12 +26,16 @@ type InAppBroadcaster interface {
 // unread-count invalidation cheap for handlers.
 type UserSocketRegistry struct {
 	mu      sync.RWMutex
-	online  map[string]bool // userID -> has at least one live socket
+	online  map[string]bool   // userID -> has at least one live socket
+	sockets map[string]int    // userID -> live socket count (refcount)
 }
 
 // NewUserSocketRegistry returns an empty registry.
 func NewUserSocketRegistry() *UserSocketRegistry {
-	return &UserSocketRegistry{online: make(map[string]bool)}
+	return &UserSocketRegistry{
+		online:  make(map[string]bool),
+		sockets: make(map[string]int),
+	}
 }
 
 // MarkOnline records that userID currently holds a live socket. Called by the
@@ -46,6 +52,33 @@ func (r *UserSocketRegistry) MarkOffline(userID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.online, userID)
+}
+
+// RegisterSocket records a live socket for userID and returns the release
+// function callers must invoke when the socket closes. Reference-counted:
+// the "online" hint is only dropped after the LAST socket for the user
+// releases. Used by the main.go WS shim on connect/disconnect of every
+// authenticated hub client.
+func (r *UserSocketRegistry) RegisterSocket(userID uuid.UUID) func() {
+	id := userID.String()
+	r.mu.Lock()
+	r.sockets[id]++
+	r.online[id] = true
+	r.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.sockets[id] > 0 {
+				r.sockets[id]--
+			}
+			if r.sockets[id] == 0 {
+				delete(r.online, id)
+			}
+		})
+	}
 }
 
 // IsOnline reports whether we believe the user has a live socket.

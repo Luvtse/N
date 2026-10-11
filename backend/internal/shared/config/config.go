@@ -177,6 +177,13 @@ type FeatureFlags struct {
 	EnableFederatedLearning  bool
 	EnableARNavigation       bool
 	EnableVoiceCommands      bool
+	// EnableNotifications gates the §1.4 notifications substrate (in-app +
+	// FCM + email dispatcher, device-token registry, inbox endpoints).
+	// Kill switch: set FEATURE_NOTIFICATIONS=false to stop all dispatch and
+	// unmount the /api/v1/notifications routes at next boot; already-persisted
+	// rows remain queryable via Postgres directly. Defaults false in prod per
+	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableNotifications bool
 }
 
 // ============================================================================
@@ -372,6 +379,7 @@ func (c *Config) loadFeatures() {
 		EnableFederatedLearning:  getBoolEnvOrDefault("FEATURE_FEDERATED_LEARNING", false),
 		EnableARNavigation:       getBoolEnvOrDefault("FEATURE_AR_NAVIGATION", false),
 		EnableVoiceCommands:      getBoolEnvOrDefault("FEATURE_VOICE_COMMANDS", false),
+		EnableNotifications:      getBoolEnvOrDefault("FEATURE_NOTIFICATIONS", false),
 	}
 }
 
