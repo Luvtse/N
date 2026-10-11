@@ -70,7 +70,7 @@ func (b *WSBridge) Handle(ev eventbus.Event) error {
 		for k, v := range ev.Payload {
 			data[k] = v
 		}
-		if !rideID.IsNil() {
+		if rideID != uuid.Nil {
 			b.hub.BroadcastToRide(rideID, Message{
 				Type: "ride_update",
 				Payload: map[string]interface{}{
@@ -81,7 +81,7 @@ func (b *WSBridge) Handle(ev eventbus.Event) error {
 			})
 		}
 		// Mirror to the assigned driver's personal room (offer accepted state).
-		if driverID := extractUUID(ev.Payload, "driver_id"); !driverID.IsNil() {
+		if driverID := extractUUID(ev.Payload, "driver_id"); driverID != uuid.Nil {
 			b.hub.BroadcastToDriver(driverID, Message{
 				Type: "ride_update",
 				Payload: map[string]interface{}{
@@ -95,7 +95,7 @@ func (b *WSBridge) Handle(ev eventbus.Event) error {
 	case "driver.location_updated":
 		// Live GPS during tracking: fan out to the ride room when a ride_id is
 		// present, else to the driver's own room (echo/self-check).
-		if !rideID.IsNil() {
+		if rideID != uuid.Nil {
 			b.hub.BroadcastToRide(rideID, Message{
 				Type: "driver_location",
 				Payload: map[string]interface{}{
@@ -104,7 +104,7 @@ func (b *WSBridge) Handle(ev eventbus.Event) error {
 				},
 				Timestamp: time.Now().Unix(),
 			})
-		} else if driverID := extractUUID(ev.Payload, "driver_id"); !driverID.IsNil() {
+		} else if driverID := extractUUID(ev.Payload, "driver_id"); driverID != uuid.Nil {
 			b.hub.BroadcastToDriver(driverID, Message{
 				Type: "driver_location",
 				Payload: map[string]interface{}{

@@ -173,6 +173,11 @@ var ErrDatabaseClosed = errors.New("database client not initialized")
 // ready reports whether the pool and config are usable.
 func (p *Postgres) ready() bool { return p != nil && p.pool != nil && p.config != nil }
 
+// IsReady reports whether the pool is initialized. Exported for module
+// handlers that must degrade explicitly when the database is unavailable
+// instead of letting queries fail deep inside pgx.
+func (p *Postgres) IsReady() bool { return p.ready() }
+
 // Query executes a query that returns multiple rows
 func (p *Postgres) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	if !p.ready() {
