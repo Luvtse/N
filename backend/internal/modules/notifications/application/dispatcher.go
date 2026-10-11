@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	domain "nidaw-backend/internal/modules/notifications/domain"
 )
 
