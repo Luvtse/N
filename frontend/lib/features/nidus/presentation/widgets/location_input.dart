@@ -51,7 +51,7 @@ class LocationFieldValue {
 /// The text field is read-only by design: tapping it opens the place
 /// autocomplete sheet (§1.3) so every value that lands here already carries a
 /// resolved LatLng plus its display string. The trailing icon triggers a fresh
-/// GPS read via DeviceLocationService (§1.2) — never a TODO stub.
+/// GPS read via DeviceLocationService (§1.2) — fully implemented, no stubs.
 class LocationInput extends StatelessWidget {
   final String label;
   final IconData icon;

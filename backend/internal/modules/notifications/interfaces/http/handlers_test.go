@@ -68,6 +68,12 @@ func TestDeviceTokenLifecycle(t *testing.T) {
 	if w := do(srv, "POST", "/devices", `{"platform":"ios"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("missing token must 400, got %d", w.Code)
 	}
+	// Register tok-2 with a valid platform so the post-revoke assertion below
+	// proves ownership-scoped revocation: tok-1 (caller's) is revoked while
+	// tok-2 (also caller's) stays active.
+	if w := do(srv, "POST", "/devices", `{"token":"tok-2","platform":"ios"}`); w.Code != http.StatusOK {
+		t.Fatalf("register tok-2: %d %s", w.Code, w.Body.String())
+	}
 
 	if w := do(srv, "DELETE", "/devices/tok-1", ""); w.Code != http.StatusNoContent {
 		t.Fatalf("revoke: %d", w.Code)

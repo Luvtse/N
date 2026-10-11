@@ -304,11 +304,13 @@ func (r *PostgresRepository) UpsertDeviceToken(t *domain.DeviceToken) error {
 	return nil
 }
 
-func (r *PostgresRepository) RevokeDeviceToken(token string) error {
+func (r *PostgresRepository) RevokeDeviceToken(token string, userID uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Ownership enforced in the WHERE clause: a foreign token matches nothing
+	// and is silently a no-op, so callers cannot revoke another user's device.
 	_, err := r.pool.Exec(ctx, `
-		UPDATE notification_device_tokens SET revoked_at=now() WHERE token=$1 AND revoked_at IS NULL`, token)
+		UPDATE notification_device_tokens SET revoked_at=now() WHERE token=$1 AND user_id=$2 AND revoked_at IS NULL`, token, userID)
 	return err
 }
 

@@ -203,10 +203,10 @@ func (m *MemoryRepository) UpsertDeviceToken(t *domain.DeviceToken) error {
 	return nil
 }
 
-func (m *MemoryRepository) RevokeDeviceToken(token string) error {
+func (m *MemoryRepository) RevokeDeviceToken(token string, userID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if t, ok := m.tokens[token]; ok {
+	if t, ok := m.tokens[token]; ok && t.UserID == userID {
 		now := time.Now().UTC()
 		t.RevokedAt = &now
 	}

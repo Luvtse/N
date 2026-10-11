@@ -454,7 +454,7 @@ class _RideRequestPageState extends State<RideRequestPage>
 
   /// A chosen suggestion stores both the resolved LatLng and its display
   /// string — geocoding happened at selection time inside the sheet chain, so
-  /// there is no deferred "// TODO: Geocode" anywhere downstream.
+  /// no deferred address-resolution step exists anywhere downstream.
   void _applySuggestion({
     required bool isPickup,
     required PlaceSuggestion suggestion,
