@@ -25,46 +25,46 @@ var (
 
 // Config holds all application configuration
 type Config struct {
-	Server     ServerConfig
-	Database   DatabaseConfig
-	Redis      RedisConfig
-	Kafka      KafkaConfig
-	Auth       AuthConfig
-	Payments   PaymentsConfig
-	ML         MLConfig
-	Logging    LoggingConfig
-	Features   FeatureFlags
-	Regions    []string
+	Server   ServerConfig
+	Database DatabaseConfig
+	Redis    RedisConfig
+	Kafka    KafkaConfig
+	Auth     AuthConfig
+	Payments PaymentsConfig
+	ML       MLConfig
+	Logging  LoggingConfig
+	Features FeatureFlags
+	Regions  []string
 }
 
 // ServerConfig holds HTTP server settings
 type ServerConfig struct {
-	Port              string
-	Host              string
-	Environment       string // development, staging, production
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	ShutdownTimeout   time.Duration
-	CORSOrigins       []string
-	EnableProfiling   bool
+	Port            string
+	Host            string
+	Environment     string // development, staging, production
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	ShutdownTimeout time.Duration
+	CORSOrigins     []string
+	EnableProfiling bool
 }
 
 // DatabaseConfig holds PostgreSQL connection settings
 type DatabaseConfig struct {
-	Host              string
-	Port              int
-	User              string
-	Password          string
-	DBName            string
-	SSLMode           string
-	MaxConns          int32
-	MinConns          int32
-	MaxConnLifetime   time.Duration
-	MaxConnIdleTime   time.Duration
-	ConnectTimeout    time.Duration
-	QueryTimeout      time.Duration
-	LogLevel          string
+	Host            string
+	Port            int
+	User            string
+	Password        string
+	DBName          string
+	SSLMode         string
+	MaxConns        int32
+	MinConns        int32
+	MaxConnLifetime time.Duration
+	MaxConnIdleTime time.Duration
+	ConnectTimeout  time.Duration
+	QueryTimeout    time.Duration
+	LogLevel        string
 }
 
 // ConnectionString builds the PostgreSQL connection URL
@@ -78,37 +78,37 @@ func (d *DatabaseConfig) ConnectionString() string {
 
 // RedisConfig holds Redis connection settings
 type RedisConfig struct {
-	URL             string
-	Password        string
-	DB              int
-	MaxRetries      int
-	PoolSize        int
-	MinIdleConns    int
-	DialTimeout     time.Duration
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
+	URL          string
+	Password     string
+	DB           int
+	MaxRetries   int
+	PoolSize     int
+	MinIdleConns int
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
 }
 
 // KafkaConfig holds Kafka broker settings
 type KafkaConfig struct {
-	Brokers          []string
+	Brokers           []string
 	SchemaRegistryURL string
-	ConsumerGroup    string
-	ProducerTimeout  time.Duration
-	ConsumerTimeout  time.Duration
-	Retries          int
+	ConsumerGroup     string
+	ProducerTimeout   time.Duration
+	ConsumerTimeout   time.Duration
+	Retries           int
 }
 
 // AuthConfig holds JWT and authentication settings
 type AuthConfig struct {
-	JWTSecret           string
-	AccessTokenTTL      time.Duration
-	RefreshTokenTTL     time.Duration
-	Issuer              string
-	Audience            string
-	BcryptCost          int
-	MaxLoginAttempts    int
-	LockoutDuration     time.Duration
+	JWTSecret        string
+	AccessTokenTTL   time.Duration
+	RefreshTokenTTL  time.Duration
+	Issuer           string
+	Audience         string
+	BcryptCost       int
+	MaxLoginAttempts int
+	LockoutDuration  time.Duration
 }
 
 // PaymentsConfig holds payment gateway settings.
@@ -121,7 +121,7 @@ type PaymentsConfig struct {
 
 	// Currency convention (Phase D decision a): ETB minor unit = santim (100 santim = 1 ETB).
 	DefaultCurrency      string
-	MinorUnitScale       int // 2 decimals for ETB santim
+	MinorUnitScale       int     // 2 decimals for ETB santim
 	WithdrawalFeePercent float64 // e.g. 0.5 (%), applied on payouts
 	WithdrawalFeeMin     int64   // santim (e.g. 5000 = 50.00 ETB)
 	WithdrawalFeeMax     int64   // santim (e.g. 50000 = 500.00 ETB)
@@ -184,6 +184,15 @@ type FeatureFlags struct {
 	// rows remain queryable via Postgres directly. Defaults false in prod per
 	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnableNotifications bool
+	// EnableChat gates the §2.1 in-app rider↔driver chat (message REST
+	// endpoints + chat.ride.{rideId} WS topic). Kill switch: set
+	// FEATURE_CHAT=false to unmount /api/v1/chat at next boot; persisted
+	// messages remain in Postgres. Machine translation rides on the separate
+	// FEATURE_CHAT_TRANSLATION flag and degrades to untranslated bodies when
+	// off or when no provider is configured. Both default false in production
+	// per CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableChat            bool
+	EnableChatTranslation bool
 }
 
 // ============================================================================
@@ -255,9 +264,9 @@ func (c *Config) loadServer() error {
 
 func (c *Config) loadDatabase() error {
 	c.Database = DatabaseConfig{
-		Host:            getEnvOrDefault("DB_HOST", "localhost"),
-		Port:            getIntEnvOrDefault("DB_PORT", 5432),
-		User:            getEnvOrDefault("DB_USER", "nidaw"),
+		Host: getEnvOrDefault("DB_HOST", "localhost"),
+		Port: getIntEnvOrDefault("DB_PORT", 5432),
+		User: getEnvOrDefault("DB_USER", "nidaw"),
 		// Phase B/B9: no guessable password fallback. Empty value is allowed
 		// here but rejected by Validate() for non-dev environments, and the
 		// server refuses to boot without DB_PASSWORD set.
@@ -292,12 +301,12 @@ func (c *Config) loadRedis() error {
 
 func (c *Config) loadKafka() error {
 	c.Kafka = KafkaConfig{
-		Brokers:          getSliceEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
+		Brokers:           getSliceEnvOrDefault("KAFKA_BROKERS", []string{"localhost:9092"}),
 		SchemaRegistryURL: getEnvOrDefault("SCHEMA_REGISTRY_URL", "http://localhost:8081"),
-		ConsumerGroup:    getEnvOrDefault("KAFKA_CONSUMER_GROUP", "nidaw-backend"),
-		ProducerTimeout:  getDurationEnvOrDefault("KAFKA_PRODUCER_TIMEOUT", 10*time.Second),
-		ConsumerTimeout:  getDurationEnvOrDefault("KAFKA_CONSUMER_TIMEOUT", 30*time.Second),
-		Retries:          getIntEnvOrDefault("KAFKA_RETRIES", 3),
+		ConsumerGroup:     getEnvOrDefault("KAFKA_CONSUMER_GROUP", "nidaw-backend"),
+		ProducerTimeout:   getDurationEnvOrDefault("KAFKA_PRODUCER_TIMEOUT", 10*time.Second),
+		ConsumerTimeout:   getDurationEnvOrDefault("KAFKA_CONSUMER_TIMEOUT", 30*time.Second),
+		Retries:           getIntEnvOrDefault("KAFKA_RETRIES", 3),
 	}
 	return nil
 }
@@ -380,6 +389,8 @@ func (c *Config) loadFeatures() {
 		EnableARNavigation:       getBoolEnvOrDefault("FEATURE_AR_NAVIGATION", false),
 		EnableVoiceCommands:      getBoolEnvOrDefault("FEATURE_VOICE_COMMANDS", false),
 		EnableNotifications:      getBoolEnvOrDefault("FEATURE_NOTIFICATIONS", false),
+		EnableChat:               getBoolEnvOrDefault("FEATURE_CHAT", false),
+		EnableChatTranslation:    getBoolEnvOrDefault("FEATURE_CHAT_TRANSLATION", false),
 	}
 }
 
