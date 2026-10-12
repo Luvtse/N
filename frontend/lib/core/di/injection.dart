@@ -25,6 +25,7 @@ import '../../features/auth/domain/usecases/login_usecase.dart';
 import '../../features/auth/domain/usecases/register_usecase.dart';
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/auth/presentation/bloc/legal_consent_bloc.dart';
+import '../../features/nidus/data/repositories/chat_repository.dart';
 import '../../features/nidus/data/repositories/ride_repository.dart';
 import '../../features/nidus/data/repositories/safety_repository.dart';
 import '../../features/nidus/domain/usecases/request_ride_usecase.dart';
@@ -228,6 +229,17 @@ void _registerRepositories() {
   // Notifications Repository (§1.4): /notifications/devices, /inbox, /:id/read
   getIt.registerLazySingleton<NotificationRepository>(
     () => NotificationRepository(api: getIt<ApiClient>()),
+  );
+
+  // Chat Repository (§2.1): /api/v1/chat REST + chat.ride.{rideId} WS topic.
+  // Server-side kill switch FEATURE_CHAT makes these endpoints 404 when off;
+  // the repository surfaces that as ChatUnavailableException and the UI shows
+  // a real unavailable state with retry — never fake messages or canned text.
+  getIt.registerLazySingleton<ChatRepository>(
+    () => ChatRepository(
+      api: getIt<ApiClient>(),
+      ws: getIt<WebSocketClient>(),
+    ),
   );
 }
 

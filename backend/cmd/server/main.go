@@ -11,6 +11,9 @@ import (
 	"time"
 
 	authhttp "nidaw-backend/internal/modules/auth/interfaces/http"
+	chatapp "nidaw-backend/internal/modules/chat/application"
+	chatinfra "nidaw-backend/internal/modules/chat/infrastructure"
+	chathttp "nidaw-backend/internal/modules/chat/interfaces/http"
 	ledgermod "nidaw-backend/internal/modules/ledger"
 	ledgeradapters "nidaw-backend/internal/modules/ledger/infrastructure/adapters"
 	ledgerhttp "nidaw-backend/internal/modules/ledger/interfaces/http"
@@ -273,6 +276,49 @@ func main() {
 			zap.Bool("email_provider_configured", os.Getenv("SENDGRID_API_KEY") != "" || os.Getenv("AWS_REGION") != ""))
 	} else {
 		logger.Info("Notifications substrate disabled (FEATURE_NOTIFICATIONS=false)")
+	}
+
+	// ============================================================================
+	// §2.1 In-app chat (kill-switch: FEATURE_CHAT, default off in production —
+	// see config/feature-flags/flags.json). When enabled: rider↔driver message
+	// REST endpoints under /api/v1/chat and real-time delivery over the shared
+	// WS hub topic chat.ride.{rideId}. Machine translation is a separate flag
+	// (FEATURE_CHAT_TRANSLATION) plus a configured CHAT_TRANSLATE_ENDPOINT;
+	// without either, messages ship untranslated (translated_from stays null
+	// and the UI hides translation affordances) — never a fake translation.
+	// ============================================================================
+	if cfg.Features.EnableChat {
+		chatRepo := chatinfra.NewPostgresRepository(db)
+		if err := chatRepo.EnsureSchema(context.Background()); err != nil {
+			logger.Fatal("chat schema migration failed", zap.Error(err))
+		}
+
+		var chatTranslator chatapp.Translator
+		if cfg.Features.EnableChatTranslation {
+			if ep := os.Getenv("CHAT_TRANSLATE_ENDPOINT"); ep != "" {
+				chatTranslator = chatinfra.NewLibreTranslateAdapter(ep)
+			} else {
+				logger.Warn("FEATURE_CHAT_TRANSLATION=true but CHAT_TRANSLATE_ENDPOINT unset; translation disabled (messages ship untranslated)")
+			}
+		}
+
+		chatSvc := chatapp.NewChatService(
+			chatRepo,
+			chatinfra.NewRideStoreLookup(db),
+			chatinfra.NewWSRealtime(wsHub),
+			chatTranslator, // nil-safe: ChatService skips translation when nil
+		)
+
+		r.Route("/api/v1/chat", func(cr chi.Router) {
+			cr.Use(middleware.AuthRequired(authService))
+			cr.Use(middleware.ExtractUserToContext)
+			chathttp.NewHandler(chatSvc).Register(cr)
+		})
+
+		logger.Info("Chat module online",
+			zap.Bool("translation_enabled", chatTranslator != nil))
+	} else {
+		logger.Info("Chat module disabled (FEATURE_CHAT=false)")
 	}
 
 	// Ride lifecycle durability workers (Nidus):
