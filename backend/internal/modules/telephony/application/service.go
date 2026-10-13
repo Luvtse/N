@@ -8,6 +8,7 @@ import (
 	telephonydomain "nidaw-backend/internal/modules/telephony/domain"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // ParticipantResolver supplies the ride's rider id, driver id and both real
@@ -42,6 +43,7 @@ type Service struct {
 	pool       *ProxyPool
 	resolver   ParticipantResolver
 	userLookup RideUserLookup
+	log        *zap.Logger // may be nil; logging is best-effort
 	grace      time.Duration // added to ride duration estimate; plan says +30 min
 	now        func() time.Time
 }
@@ -55,6 +57,7 @@ func NewService(
 	resolver ParticipantResolver,
 	userLookup RideUserLookup,
 	grace time.Duration,
+	opts ...ServiceOption,
 ) (*Service, error) {
 	pool, err := NewProxyPool(numbers)
 	if err != nil {
@@ -63,7 +66,7 @@ func NewService(
 	if grace <= 0 {
 		grace = 30 * time.Minute
 	}
-	return &Service{
+	s := &Service{
 		repo:       repo,
 		provider:   provider,
 		pool:       pool,
@@ -71,7 +74,37 @@ func NewService(
 		userLookup: userLookup,
 		grace:      grace,
 		now:        time.Now,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
+}
+
+// ServiceOption customises a Service at construction. Used by tests to inject
+// a deterministic clock so TTL/expiry behaviour is not timing-dependent.
+type ServiceOption func(*Service)
+
+// WithClock overrides the service's time source. Production code never calls
+// this; the default is time.Now.
+func WithClock(now func() time.Time) ServiceOption {
+	return func(s *Service) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
+// WithLogger attaches a structured logger to the service. Best-effort only —
+// a nil logger disables output rather than panicking.
+func WithLogger(l *zap.Logger) ServiceOption {
+	return func(s *Service) { s.log = l }
+}
+
+func (s *Service) warn(msg string, err error) {
+	if s.log != nil {
+		s.log.Warn(msg, zap.Error(err))
+	}
 }
 
 // Provision creates (or returns the existing) active session for a ride.
@@ -80,7 +113,7 @@ func NewService(
 // a proxy number. ttl is the expected ride duration; the session lives for
 // ttl + grace (plan §2.2).
 func (s *Service) Provision(rideID uuid.UUID, ttl time.Duration) (*telephonydomain.ProxySession, error) {
-	if existing, err := s.repo.GetByRide(rideID); err == nil && existing.IsActive(s.nowTime()) {
+	if existing, err := s.repo.GetByRide(rideID); err == nil && existing.IsActive(s.now()) {
 		return existing, nil
 	}
 
@@ -109,7 +142,7 @@ func (s *Service) Provision(rideID uuid.UUID, ttl time.Duration) (*telephonydoma
 		return nil, err
 	}
 
-	now := s.nowTime().UTC()
+	now := s.now().UTC()
 	session := &telephonydomain.ProxySession{
 		ID:           uuid.New(),
 		RideID:       rideID,
@@ -146,7 +179,7 @@ func (s *Service) ContactFor(rideID, callerUserID uuid.UUID) (*telephonydomain.C
 	if err != nil {
 		return nil, err
 	}
-	if !session.IsActive(s.nowTime()) {
+	if !session.IsActive(s.now()) {
 		return nil, telephonydomain.ErrSessionNotFound
 	}
 
@@ -194,12 +227,13 @@ func (s *Service) Teardown(rideID uuid.UUID) error {
 	if session.Status.IsTerminal() {
 		return nil
 	}
-	at := s.nowTime().UTC()
+	at := s.now().UTC()
 	session.Status = telephonydomain.SessionTornDown
 	session.TorndownAt = &at
 	if session.ProviderSID != "" {
 		if err := s.provider.Teardown(session.ProviderSID); err != nil {
 			session.FailureReason = "provider teardown failed: " + err.Error()
+			s.warn("telephony: provider teardown failed; pairing may outlive its record", err)
 			// Persist the failure reason but still mark the local row down;
 			// leaving it "active" would keep patching calls we cannot trace.
 		}
@@ -215,7 +249,7 @@ func (s *Service) Teardown(rideID uuid.UUID) error {
 // Returns how many rows were swept. Runs from a background ticker so proxy
 // inventory recycles even if terminal events are lost.
 func (s *Service) SweepExpired() (int, error) {
-	expired, err := s.repo.ListExpired(s.nowTime().UTC(), 100)
+	expired, err := s.repo.ListExpired(s.now().UTC(), 100)
 	if err != nil {
 		return 0, err
 	}

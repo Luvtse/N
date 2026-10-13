@@ -56,13 +56,15 @@ func (c *EventConsumer) Handle(ev eventbus.Event) error {
 }
 
 // Subscribe registers the consumer on the canonical bus topic. Call once at
-// boot when FEATURE_MASKED_CALLING is enabled.
-func (c *EventConsumer) Subscribe(ctx context.Context, bus eventbus.EventBus) error {
+// boot when FEATURE_MASKED_CALLING is enabled. Dispatch errors are logged —
+// Provision rolls back provider and pool internally, Teardown is idempotent,
+// and the expiry sweeper is the safety net if terminal events are lost.
+func (c *EventConsumer) Subscribe(ctx context.Context, bus eventbus.EventBus, logger *zap.Logger) error {
 	return bus.Subscribe(ctx, "nidaw.events", func(ev eventbus.Event) {
-		// Dispatch errors leave no half-state: Provision rolls back provider
-		// and pool internally; Teardown is idempotent. The expiry sweeper is
-		// the safety net if terminal events are lost entirely.
-		_ = c.Handle(ev)
+		if err := c.Handle(ev); err != nil && logger != nil {
+			logger.Warn("telephony: event dispatch failed",
+				zap.String("event_type", ev.Type), zap.Error(err))
+		}
 	})
 }
 

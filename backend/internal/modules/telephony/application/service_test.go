@@ -72,6 +72,30 @@ func newTestService(t *testing.T) (*telephonyapp.Service, *fakeProvider, *fakeRe
 	return svc, provider, resolver
 }
 
+// newTestServiceWithClock builds the same service but with a controllable
+// clock so TTL/expiry tests are deterministic instead of sleeping.
+func newTestServiceWithClock(t *testing.T, now *time.Time) (*telephonyapp.Service, *fakeProvider, *fakeResolver) {
+	t.Helper()
+	resolver := &fakeResolver{
+		riderID:  uuid.New(),
+		riderPh:  "+251911111111",
+		driverID: uuid.New(),
+		driverPh: "+251922222222",
+	}
+	provider := &fakeProvider{}
+	repo := telephonyinfra.NewMemoryRepository()
+	svc, err := telephonyapp.NewService(
+		repo, provider,
+		[]string{"+251900000001", "+251900000002"},
+		resolver, nil, time.Second, // tiny grace so tests can exercise short TTLs deterministically
+		telephonyapp.WithClock(func() time.Time { return *now }),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	return svc, provider, resolver
+}
+
 // --- tests -------------------------------------------------------------------
 
 func TestProvisionBooksUniqueNumbersAndIsIdempotent(t *testing.T) {
@@ -188,12 +212,17 @@ func TestTeardownReleasesNumberAndIsIdempotent(t *testing.T) {
 }
 
 func TestSweepExpiresSessionsWithoutTerminalEvents(t *testing.T) {
-	svc, provider, _ := newTestService(t)
+	now := time.Now().UTC()
+	svc, provider, _ := newTestServiceWithClock(t, &now)
 	rideID := uuid.New()
 	if _, err := svc.Provision(rideID, time.Millisecond); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	time.Sleep(5 * time.Millisecond)
+
+	// Advance the deterministic clock past expiry instead of sleeping — no
+	// timing flakiness. The service captured &now at construction, so this
+	// mutation is observed by s.now().
+	now = now.Add(2 * time.Second)
 
 	n, err := svc.SweepExpired()
 	if err != nil {
