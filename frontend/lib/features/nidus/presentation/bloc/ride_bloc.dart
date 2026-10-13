@@ -309,16 +309,44 @@ class DriverEnRoute extends RideState {
   /// PIN the rider shows the driver to start the trip (anti-impersonation).
   final String pinCode;
 
+  /// §2.3 driver pre-selfie verification state embedded on the rider ride
+  /// DTO. Null means the backend omitted `pre_selfie` entirely (feature flag
+  /// off / attacher unwired) — the UI renders the honest "verification
+  /// unavailable" state via PreSelfieInfo.absent, never a placeholder photo.
+  final PreSelfieInfo? preSelfie;
+
   const DriverEnRoute({
     required this.rideId,
     required this.driver,
     required this.fare,
     required this.etaMinutes,
     required this.pinCode,
+    this.preSelfie,
   });
 
   @override
-  List<Object?> get props => [rideId, driver, fare, etaMinutes, pinCode];
+  List<Object?> get props =>
+      [rideId, driver, fare, etaMinutes, pinCode, preSelfie];
+}
+
+/// Driver-side mirror of [DriverEnRoute] (§2.3): the same lifecycle stage,
+/// but rendered for the signed-in account whose id equals the ride's
+/// driver_id. Carries no selfie block because the driver is the one who
+/// SENDS it — the capture sheet owns that flow and must never be shown to
+/// a rider, which is why the bloc emits distinct types instead of a flag.
+class DriverEnRouteForDriver extends RideState {
+  final String rideId;
+  final double fare;
+  final int etaMinutes;
+
+  const DriverEnRouteForDriver({
+    required this.rideId,
+    required this.fare,
+    required this.etaMinutes,
+  });
+
+  @override
+  List<Object?> get props => [rideId, fare, etaMinutes];
 }
 
 /// Payment failed at booking time — recoverable via retry / switch rail.
@@ -423,6 +451,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   DateTime? _requestedAt;
   DriverInfo? _lastKnownDriver;
 
+  /// §2.3 last-known pre-selfie state. WS status payloads usually omit the
+  /// selfie block (it is embedded on the REST ride DTO), so rich states are
+  /// rebuilt from this cache rather than dropping to "unknown". A fresh REST
+  /// value always wins; a null here means "never seen one for this ride",
+  /// which the UI renders as honest unavailable — never a placeholder photo.
+  PreSelfieInfo? _lastKnownPreSelfie;
+
   /// Deterministic per-ride pickup PIN (anti-impersonation). The driver app
   /// derives the same code from the ride id, so no server round-trip is
   /// needed to display it.
@@ -505,6 +540,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
       _currentFare = result.fare ?? 0;
       _requestedAt = DateTime.now();
       _lastKnownDriver = null;
+      _lastKnownPreSelfie = null;
 
       emit(RideRequested(
         rideId: result.rideId!,
@@ -883,6 +919,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             fare: _stateFare(),
             etaMinutes: driver.etaMinutes,
             pinCode: pinCodeForRide(update.rideId),
+            preSelfie: update.preSelfie ?? _lastKnownPreSelfie,
           ));
         } else if (update.driver != null) {
           // Defensive: never drop a payload that does carry a driver.
@@ -948,6 +985,11 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     _currentFare = ride.fareAmount ?? 0;
     _requestedAt = ride.requestedAt;
     if (ride.driver != null) _lastKnownDriver = ride.driver;
+    // REST DTO is the authoritative source for §2.3 pre-selfie state; a
+    // missing block means the feature isn't serving this ride (flag off),
+    // which we normalize to the honest `absent` (unavailable) info rather
+    // than leaving stale data from a previous poll.
+    _lastKnownPreSelfie = ride.preSelfie ?? PreSelfieInfo.absent;
 
     switch (ride.status) {
       case 'requested':
@@ -977,6 +1019,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             fare: ride.fareAmount ?? 0,
             etaMinutes: ride.driver!.etaMinutes,
             pinCode: pinCodeForRide(ride.id),
+            preSelfie: _lastKnownPreSelfie,
           ));
         }
         break;

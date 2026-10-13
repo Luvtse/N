@@ -339,6 +339,11 @@ class RideStatusUpdate {
   /// Live ETA in minutes pushed by the matching / ETA services, when present.
   final int? etaMinutes;
 
+  /// §2.3 pre-selfie state carried on a WS status payload, when present.
+  /// Most deployments embed it only on the REST ride DTO (LoadRide), so this
+  /// is usually null and the bloc keeps the last-known value from REST.
+  final PreSelfieInfo? preSelfie;
+
   const RideStatusUpdate({
     required this.rideId,
     required this.status,
@@ -349,6 +354,7 @@ class RideStatusUpdate {
     this.cancelledBy,
     this.cancelReason,
     this.etaMinutes,
+    this.preSelfie,
   });
 
   factory RideStatusUpdate.fromJson(Map<String, dynamic> json) {
@@ -393,6 +399,9 @@ class RideStatusUpdate {
       cancelReason: payload['reason'] as String?,
       etaMinutes: payload['eta_minutes'] is num
           ? (payload['eta_minutes'] as num).toInt()
+          : null,
+      preSelfie: payload['pre_selfie'] is Map<String, dynamic>
+          ? PreSelfieInfo.fromJson(payload['pre_selfie'] as Map<String, dynamic>)
           : null,
     );
   }

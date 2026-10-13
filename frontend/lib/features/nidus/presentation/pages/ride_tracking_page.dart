@@ -10,6 +10,8 @@ import '../widgets/driver_card.dart';
 import '../widgets/payment_method_selector.dart';
 import '../widgets/rate_ride_sheet.dart';
 import '../widgets/safety_widgets.dart';
+import '../widgets/verify_driver_card.dart';
+import 'chat_page.dart';
 import 'receipt_detail_page.dart';
 import 'safety_toolkit_page.dart';
 
@@ -346,6 +348,20 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                           carModel: state.driver.vehicleType,
                           plateNumber: state.driver.vehiclePlate,
                           eta: state.etaMinutes,
+                        ),
+                        const SizedBox(height: 12),
+                        // §2.3 "Verify your driver" — one honest render per
+                        // backend state; never a placeholder photo.
+                        VerifyDriverCard(
+                          preSelfie: state.preSelfie,
+                          driverName: state.driver.name,
+                          onRecheck: () =>
+                              context.read<RideBloc>().add(LoadRide(widget.rideId)),
+                          onContactDriver: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ChatPage(rideId: widget.rideId),
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 12),
                         _PinCodeCard(pinCode: state.pinCode),
