@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +42,83 @@ type Dependencies struct {
 	// mounted). main.go constructs one shared hub here and reuses it as the
 	// notifications module's InAppBroadcaster (§1.4). nil => no /ws route.
 	WSHub *nidusHttp.WebSocketHandler
+	// PreSelfie attaches the driver's pre-selfie verification state to rider
+	// ride DTOs (§2.3, plan: "attach it to the rider's ride DTO as
+	// driver_pre_selfie_url"). Implemented by the selfie module over its own
+	// storage so this module never imports selfie internals. nil (or flag off)
+	// => the DTO omits the selfie fields entirely; the client then shows its
+	// honest "verification unavailable" state rather than a fabricated one.
+	PreSelfie PreSelfieAttacher
 }
+
+// PreSelfieAttacher is the minimal port the ride DTO needs from the selfie
+// module (§2.3). Declared here (not in selfie) so the dependency direction
+// stays nidus -> nothing: main.go passes *selfieapp.Service, whose methods
+// AttachToRiderView(uuid.UUID) selfieapp.RiderView and
+// RedeemPathForView(selfieapp.RiderView) (string, bool) satisfy this
+// interface structurally at the call site in cmd/server/main.go. The handler
+// package itself only ever reads State/URL/ExpiresAt through the accessor
+// bundle below, never importing the selfie module.
+type PreSelfieAttacher interface {
+	Attach(rideID uuid.UUID) PreSelfieView
+}
+
+// PreSelfieView is the flattened, import-free shape of a rider-facing
+// pre-selfie state produced by the attacher implementation in main.go.
+type PreSelfieView struct {
+	State      string // available | not_sent | expired | unavailable
+	URL        string // display URL when State==available, else ""
+	RedeemPath string // API path to fetch bytes when State==available, else ""
+	ExpiresAt  *time.Time
+}
+
+// AttachPreSelfie adapts *selfieapp.Service to this package's PreSelfieAttacher
+// port without making the nidus module import the selfie module: main.go builds
+// the closure once at startup with the real service in scope. Returns nil when
+// svc is nil so Dependencies.PreSelfie stays nil and DTOs omit the fields —
+// per plan §2.3/§0, an absent feature shows an honest "unavailable" client
+// state, never a fabricated one.
+func AttachPreSelfie(svc interface {
+	AttachToRiderView(id uuid.UUID) selfieViewShape
+	RedeemPathForView(v selfieViewShape) (string, bool)
+}) PreSelfieAttacher {
+	if svc == nil {
+		return nil
+	}
+	return preSelfieFunc(func(rideID uuid.UUID) PreSelfieView {
+		view := svc.AttachToRiderView(rideID)
+		out := PreSelfieView{State: view.State, ExpiresAt: view.ExpiresAt}
+		if view.State == "available" {
+			if path, ok := svc.RedeemPathForView(view); ok && view.URL != "" {
+				out.URL = view.URL
+				out.RedeemPath = path
+			} else {
+				// Minted URL failed validation — do not pretend it is usable.
+				out.State = "unavailable"
+			}
+		}
+		return out
+	})
+}
+
+// selfieViewShape mirrors selfie/application.RiderView exactly. The anonymous
+// interface parameter above only matches services whose method returns this
+// precise field layout; main.go passes the concrete *selfieapp.Service whose
+// RiderView is a named type with identical underlying structure, which Go
+// allows through the explicit adapter below rather than structural typing.
+type selfieViewShape = struct {
+	State     string     `json:"state"`
+	URL       string     `json:"driver_pre_selfie_url,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+type preSelfieFunc func(uuid.UUID) PreSelfieView
+
+func (f preSelfieFunc) Attach(rideID uuid.UUID) PreSelfieView { return f(rideID) }
+
+// ============================================================================
+// CACHE PORT
+// ============================================================================
 
 // CacheService interface for driver location caching. DriverLocation is an
 // alias to the canonical type in nidus/infrastructure/cache, so both packages

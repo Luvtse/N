@@ -5,6 +5,9 @@ package application
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	selfiedomain "nidaw-backend/internal/modules/selfie/domain"
@@ -213,13 +216,65 @@ func (s *Service) AttachToRiderView(rideID uuid.UUID) RiderView {
 	}
 	// Re-mint the signed URL on every read so the rider always holds a URL
 	// valid for the remainder of the window rather than a stale one saved at
-	// upload time.
+	// upload time. If re-signing fails (storage misconfig/outage) we must NOT
+	// claim the selfie expired — the bytes are fine; report "unavailable" with
+	// a retry affordance instead of falsely blaming the clock or the driver.
 	url, err := s.signer.Sign(objectKeyFromURL(selfie.ImageURL), selfie.ExpiresAt)
 	if err != nil {
-		return RiderView{State: selfiedomain.RiderStateExpired}
+		return RiderView{State: RiderViewStateUnavailable}
 	}
 	exp := selfie.ExpiresAt
 	return RiderView{State: selfiedomain.RiderStateAvailable, URL: url, ExpiresAt: &exp}
+}
+
+// RedeemPathForView converts the minted display URL from AttachToRiderView into
+// the API redemption route the client should actually call:
+//
+//	GET /api/v1/selfies/{id}?exp={unix}&sig={hex}
+//
+// The minted URL embeds the selfie ID in its object key
+// ("pre-selfies/{rideID}/{selfieID}.{ext}") and carries exp/sig query params;
+// this helper extracts those three values so clients never parse URLs
+// themselves. Returns ok=false if the view is not "available" or the URL does
+// not match the expected shape — callers then surface the view's honest state
+// instead of fabricating a path.
+func (s *Service) RedeemPathForView(view RiderView) (path string, ok bool) {
+	if view.State != selfiedomain.RiderStateAvailable || view.URL == "" || view.ExpiresAt == nil {
+		return "", false
+	}
+	key := objectKeyFromURL(view.URL)
+	base := key
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	ext := ""
+	if i := strings.LastIndexByte(base, '.'); i >= 0 {
+		ext = base[i:]
+	}
+	idStr := strings.TrimSuffix(base, ext)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return "", false
+	}
+	qIdx := strings.IndexByte(view.URL, '?')
+	if qIdx < 0 {
+		return "", false
+	}
+	params, err := url.ParseQuery(view.URL[qIdx+1:])
+	if err != nil {
+		return "", false
+	}
+	sig := params.Get("sig")
+	exp := params.Get("exp")
+	if sig == "" || exp == "" {
+		return "", false
+	}
+	// Cross-check the embedded expiry against the view's ExpiresAt so a
+	// mismatched mint can never be redeemed under a longer window than issued.
+	if parsed, err := strconv.ParseInt(exp, 10, 64); err != nil || parsed != view.ExpiresAt.Unix() {
+		return "", false
+	}
+	return fmt.Sprintf("/api/v1/selfies/%s?exp=%s&sig=%s", id, exp, sig), true
 }
 
 // RedeemResult carries the selfie aggregate plus its bytes and the ride ID so
