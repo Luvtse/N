@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -36,6 +37,7 @@ type RideHandler struct {
 	startRideCmd    *commands.StartRideHandler
 	completeRideCmd *commands.CompleteRideHandler
 	preSelfie       PreSelfieAttacher
+	etaService      *services.ETAService
 }
 
 // PreSelfieAttacher is the minimal port RideHandler needs from the selfie
@@ -52,6 +54,13 @@ type PreSelfieAttacher interface {
 // pattern as SetLifecycle). nil-safe: GetRide only calls it when non-nil.
 func (h *RideHandler) SetPreSelfieAttacher(a PreSelfieAttacher) {
 	h.preSelfie = a
+}
+
+// SetETAService wires the ETA service used to compute the driver's live pickup
+// ETA on the rider DTO (§2.4). nil-safe: when unwired (or the lookup fails),
+// ETAMinutes is omitted from the card rather than guessed at a constant.
+func (h *RideHandler) SetETAService(s *services.ETAService) {
+	h.etaService = s
 }
 
 // PreSelfieAttacherFunc adapts a plain function to the PreSelfieAttacher
@@ -163,16 +172,29 @@ type RideResponse struct {
 	PreSelfie *PreSelfieInfo `json:"pre_selfie,omitempty"`
 }
 
-// DriverInfo contains driver details for a ride response
+// DriverInfo contains driver details for a ride response. §2.4: the rider-facing
+// card fields (photo, vehicle color/make/model, rating count, verification badge,
+// years active) are pointers so genuinely-unavailable values serialize as null —
+// never blank, never fabricated. The client renders "Not provided" for nulls
+// (Global Rule 2). Fields absent from the drivers table (photo_url, vehicle_make,
+// rating_count) stay null until the schema/onboarding carries them; we do NOT
+// invent columns that don't exist.
 type DriverInfo struct {
-	ID           uuid.UUID `json:"id"`
-	Name         string    `json:"name"`
-	Rating       float64   `json:"rating"`
-	VehicleType  string    `json:"vehicle_type"`
-	VehiclePlate string    `json:"vehicle_plate"`
-	CurrentLat   float64   `json:"current_lat"`
-	CurrentLng   float64   `json:"current_lng"`
-	ETAMinutes   int       `json:"eta_minutes"`
+	ID                uuid.UUID `json:"id"`
+	Name              string    `json:"name"`
+	Rating            float64   `json:"rating"`
+	VehicleType       string    `json:"vehicle_type"`
+	VehiclePlate      string    `json:"vehicle_plate"`
+	CurrentLat        float64   `json:"current_lat"`
+	CurrentLng        float64   `json:"current_lng"`
+	ETAMinutes        int       `json:"eta_minutes"`
+	PhotoURL          *string   `json:"photo_url,omitempty"`
+	VehicleColor      *string   `json:"vehicle_color,omitempty"`
+	VehicleMake       *string   `json:"vehicle_make,omitempty"`
+	VehicleModel      *string   `json:"vehicle_model,omitempty"`
+	RatingCount       *int      `json:"rating_count,omitempty"`
+	VerificationBadge *bool     `json:"verification_badge,omitempty"`
+	YearsActive       *int      `json:"years_active,omitempty"`
 }
 
 // ListRidesResponse wraps a list of rides with pagination
@@ -296,6 +318,10 @@ func (h *RideHandler) GetRide(w http.ResponseWriter, r *http.Request) {
 		info := h.preSelfie.Attach(rideID)
 		resp.PreSelfie = &info
 	}
+	// §2.4: enrich the matched driver's card from the drivers table. Any lookup
+	// failure leaves resp.Driver nil — the client then shows its honest
+	// "driver details unavailable" state instead of blanks or fakes.
+	h.attachDriverCard(ctx, &resp)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -859,4 +885,58 @@ func mapCommandError(err error) (int, string, string) {
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}
+}
+
+// ============================================================================
+// DRIVER CARD ENRICHMENT (§2.4)
+// ============================================================================
+
+func nonEmptyString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+// attachDriverCard populates resp.Driver for matched/in-progress rides by
+// reading the driver profile through the matching engine. photo_url,
+// vehicle_make and rating_count have no backing column anywhere in this
+// codebase, so they are deliberately left nil: the rider card renders "Not
+// provided" for them (Global Rule 2 — never fabricate, never blank). ETA is
+// computed live from the driver's last reported position toward the pickup;
+// when the ETA service is unwired or errors, ETAMinutes stays 0 and the
+// client hides the ETA chip rather than showing a guessed number.
+func (h *RideHandler) attachDriverCard(ctx context.Context, resp *RideResponse) {
+	if resp.DriverID == nil || h.matchingEngine == nil {
+		return
+	}
+	driver, err := h.matchingEngine.GetDriverByID(ctx, *resp.DriverID)
+	if err != nil || driver == nil {
+		return
+	}
+	verified := driver.IsFullyVerified()
+	info := &DriverInfo{
+		ID:                driver.ID,
+		Name:              driver.FullName,
+		Rating:            driver.Rating,
+		VehicleType:       string(driver.VehicleType),
+		VehiclePlate:      driver.VehiclePlate,
+		CurrentLat:        driver.CurrentLat,
+		CurrentLng:        driver.CurrentLng,
+		VehicleColor:      nonEmptyString(driver.VehicleColor),
+		VehicleModel:      nonEmptyString(driver.VehicleModel),
+		VerificationBadge: &verified,
+	}
+	if !driver.CreatedAt.IsZero() {
+		years := int(time.Since(driver.CreatedAt).Hours()) / (24 * 365)
+		if years > 0 {
+			info.YearsActive = &years
+		}
+	}
+	if h.etaService != nil && resp.Status == string(entities.RideStatusDriverEnRoute) {
+		if eta, err := h.etaService.CalculateETA(ctx, driver.CurrentLat, driver.CurrentLng, resp.PickupLat, resp.PickupLng); err == nil && eta != nil {
+			info.ETAMinutes = eta.DurationMinutes
+		}
+	}
+	resp.Driver = info
 }
