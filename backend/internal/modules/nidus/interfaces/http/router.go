@@ -44,77 +44,62 @@ type Dependencies struct {
 	WSHub *nidusHttp.WebSocketHandler
 	// PreSelfie attaches the driver's pre-selfie verification state to rider
 	// ride DTOs (§2.3, plan: "attach it to the rider's ride DTO as
-	// driver_pre_selfie_url"). Implemented by the selfie module over its own
-	// storage so this module never imports selfie internals. nil (or flag off)
-	// => the DTO omits the selfie fields entirely; the client then shows its
-	// honest "verification unavailable" state rather than a fabricated one.
-	PreSelfie PreSelfieAttacher
+	// driver_pre_selfie_url"). Implemented by NewPreSelfieAttacher below over an
+	// injected structural interface so this module never imports selfie
+	// internals. nil (or flag off) => the DTO omits the selfie fields entirely;
+	// the client then shows its honest "verification unavailable" state rather
+	// than a fabricated one.
+	PreSelfie nidusHttp.PreSelfieAttacher
 }
 
-// PreSelfieAttacher is the minimal port the ride DTO needs from the selfie
-// module (§2.3). Declared here (not in selfie) so the dependency direction
-// stays nidus -> nothing: main.go passes *selfieapp.Service, whose methods
-// AttachToRiderView(uuid.UUID) selfieapp.RiderView and
-// RedeemPathForView(selfieapp.RiderView) (string, bool) satisfy this
-// interface structurally at the call site in cmd/server/main.go. The handler
-// package itself only ever reads State/URL/ExpiresAt through the accessor
-// bundle below, never importing the selfie module.
-type PreSelfieAttacher interface {
-	Attach(rideID uuid.UUID) PreSelfieView
-}
-
-// PreSelfieView is the flattened, import-free shape of a rider-facing
-// pre-selfie state produced by the attacher implementation in main.go.
-type PreSelfieView struct {
-	State      string // available | not_sent | expired | unavailable
-	URL        string // display URL when State==available, else ""
-	RedeemPath string // API path to fetch bytes when State==available, else ""
-	ExpiresAt  *time.Time
-}
-
-// AttachPreSelfie adapts *selfieapp.Service to this package's PreSelfieAttacher
-// port without making the nidus module import the selfie module: main.go builds
-// the closure once at startup with the real service in scope. Returns nil when
-// svc is nil so Dependencies.PreSelfie stays nil and DTOs omit the fields —
-// per plan §2.3/§0, an absent feature shows an honest "unavailable" client
-// state, never a fabricated one.
-func AttachPreSelfie(svc interface {
-	AttachToRiderView(id uuid.UUID) selfieViewShape
-	RedeemPathForView(v selfieViewShape) (string, bool)
-}) PreSelfieAttacher {
-	if svc == nil {
-		return nil
-	}
-	return preSelfieFunc(func(rideID uuid.UUID) PreSelfieView {
-		view := svc.AttachToRiderView(rideID)
-		out := PreSelfieView{State: view.State, ExpiresAt: view.ExpiresAt}
-		if view.State == "available" {
-			if path, ok := svc.RedeemPathForView(view); ok && view.URL != "" {
-				out.URL = view.URL
-				out.RedeemPath = path
-			} else {
-				// Minted URL failed validation — do not pretend it is usable.
-				out.State = "unavailable"
-			}
-		}
-		return out
-	})
-}
-
-// selfieViewShape mirrors selfie/application.RiderView exactly. The anonymous
-// interface parameter above only matches services whose method returns this
-// precise field layout; main.go passes the concrete *selfieapp.Service whose
-// RiderView is a named type with identical underlying structure, which Go
-// allows through the explicit adapter below rather than structural typing.
-type selfieViewShape = struct {
+// SelfieRiderView is the structural shape of selfie/application.RiderView. It
+// is declared as an anonymous-struct *alias* so any named type with identical
+// underlying field layout (name, type, tag) satisfies assignments — Go permits
+// assigning a bound method `func(uuid.UUID) selfieapp.RiderView` to a variable
+// of type `func(uuid.UUID) SelfieRiderView` because RiderView and this alias
+// have identical underlying types. That is how main.go injects
+// *selfieapp.Service without the nidus module importing it.
+type SelfieRiderView = struct {
 	State     string     `json:"state"`
 	URL       string     `json:"driver_pre_selfie_url,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
-type preSelfieFunc func(uuid.UUID) PreSelfieView
-
-func (f preSelfieFunc) Attach(rideID uuid.UUID) PreSelfieView { return f(rideID) }
+// NewPreSelfieAttacher adapts the selfie service's two methods to the
+// handlers-package port (nidusHttp.PreSelfieAttacher). Pass the bound method
+// values from *selfieapp.Service at composition time (main.go):
+//
+//	nidusDeps.PreSelfie = nidushttp.NewPreSelfieAttacher(
+//	    selfieSvc.AttachToRiderView, selfieSvc.RedeemPathForView)
+//
+// Both parameters are nil-tolerant: if either is nil the attacher degrades
+// every ride to State=="unavailable" (an honest retry affordance) instead of
+// panicking or fabricating a URL. The downgrade also fires when the minted
+// display URL fails redemption-path validation.
+func NewPreSelfieAttacher(
+	attach func(uuid.UUID) SelfieRiderView,
+	redeemPath func(SelfieRiderView) (string, bool),
+) nidusHttp.PreSelfieAttacher {
+	return nidusHttp.PreSelfieAttacherFunc(func(rideID uuid.UUID) nidusHttp.PreSelfieInfo {
+		if attach == nil || redeemPath == nil {
+			return nidusHttp.PreSelfieInfo{State: "unavailable"}
+		}
+		view := attach(rideID)
+		out := nidusHttp.PreSelfieInfo{State: view.State, ExpiresAt: view.ExpiresAt}
+		if view.State == "available" {
+			if path, ok := redeemPath(view); ok && view.URL != "" {
+				out.DriverPreSelfieURL = view.URL
+				out.RedeemPath = path
+			} else {
+				// Minted URL failed validation — do not pretend it is usable.
+				out.State = "unavailable"
+				out.DriverPreSelfieURL = ""
+				out.RedeemPath = ""
+			}
+		}
+		return out
+	})
+}
 
 // ============================================================================
 // CACHE PORT
@@ -192,6 +177,12 @@ func NewRouter(deps *Dependencies) http.Handler {
 		Cancel:   commands.NewCancelRideHandler(deps.DB, deps.EventBus),
 		Rate:     rateRideCmd,
 	})
+	// §2.3: embed the honest driver pre-selfie state on rider ride DTOs when
+	// the selfie module is wired (FEATURE_PRE_SELFIE). nil => field omitted;
+	// the client shows its "verification unavailable" state, never a fake one.
+	if deps.PreSelfie != nil {
+		rideHandler.SetPreSelfieAttacher(deps.PreSelfie)
+	}
 
 	driverHandler := nidusHttp.NewDriverHandler(
 		deps.MatchingEngine,
