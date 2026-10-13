@@ -26,6 +26,7 @@ import '../../features/auth/domain/usecases/register_usecase.dart';
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/auth/presentation/bloc/legal_consent_bloc.dart';
 import '../../features/nidus/data/repositories/chat_repository.dart';
+import '../../features/nidus/data/repositories/pre_selfie_repository.dart';
 import '../../features/nidus/data/repositories/ride_repository.dart';
 import '../../features/nidus/data/repositories/safety_repository.dart';
 import '../../features/nidus/domain/usecases/request_ride_usecase.dart';
@@ -240,6 +241,14 @@ void _registerRepositories() {
       api: getIt<ApiClient>(),
       ws: getIt<WebSocketClient>(),
     ),
+  );
+
+  // Pre-selfie repository (§2.3): driver upload + rider signed-URL redeem.
+  // Server-side kill switch FEATURE_PRE_SELFIE makes these endpoints 404/503;
+  // the repository maps that to typed exceptions so the UI shows a real
+  // unavailable state with retry — never a placeholder photo or fake URL.
+  getIt.registerLazySingleton<PreSelfieRepository>(
+    () => PreSelfieRepositoryImpl(api: getIt<ApiClient>()),
   );
 }
 
