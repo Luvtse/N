@@ -308,6 +308,10 @@ void _registerBlocs() {
       requestRideUseCase: getIt<RequestRideUseCase>(),
       getRideStatusUseCase: getIt<GetRideStatusUseCase>(),
       safetyRepository: getIt<SafetyRepository>(),
+      // §2.3 role detection: resolves the signed-in account id from the
+      // global AuthBloc so the bloc can split DriverEnRoute into the
+      // rider-side verification view vs. the driver-side capture flow.
+      currentUserIdResolver: () => getIt<AuthBloc>().currentUser?.id,
     ),
   );
 

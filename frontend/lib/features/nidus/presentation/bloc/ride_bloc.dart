@@ -429,6 +429,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   final GetRideStatusUseCase _getRideStatusUseCase;
   final SafetyRepository _safetyRepository;
 
+  /// §2.3 role detection: resolves the signed-in account id so the bloc can
+  /// tell whether this session is the ride's DRIVER (who must send the
+  /// pre-selfie) or its RIDER (who verifies it). Null means "no session" —
+  /// in that case we default to the rider view, which is the safe state:
+  /// a rider never sees the driver's capture sheet, and an unauthenticated
+  /// user has no actionable ride anyway.
+  final String? Function()? _currentUserId;
+
   StreamSubscription<RideStatusUpdate>? _rideUpdateSubscription;
   Timer? _etaUpdateTimer;
 
@@ -450,6 +458,12 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   double _currentFare = 0;
   DateTime? _requestedAt;
   DriverInfo? _lastKnownDriver;
+
+  /// §2.3: authoritative `driver_id` from the last REST ride DTO, used to
+  /// resolve the rider/driver role split for WS status payloads that omit
+  /// it. Null until the first LoadRide succeeds — with null we default to
+  /// the rider view (safe: no driver-only UI can fire without proof).
+  String? _lastKnownDriverId;
 
   /// §2.3 last-known pre-selfie state. WS status payloads usually omit the
   /// selfie block (it is embedded on the REST ride DTO), so rich states are
@@ -478,10 +492,12 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     required RequestRideUseCase requestRideUseCase,
     required GetRideStatusUseCase getRideStatusUseCase,
     required SafetyRepository safetyRepository,
+    String? Function()? currentUserIdResolver,
   })  : _rideRepository = rideRepository,
         _requestRideUseCase = requestRideUseCase,
         _getRideStatusUseCase = getRideStatusUseCase,
         _safetyRepository = safetyRepository,
+        _currentUserId = currentUserIdResolver,
         super(const RideInitial()) {
     on<RequestRide>(_onRequestRide);
     on<LoadRide>(_onLoadRide);
@@ -911,7 +927,21 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         break;
       case 'driver_en_route':
         final driver = update.driver ?? _lastKnownDriver;
-        if (driver != null) {
+        // §2.3 role split (mirrors _emitStateForRide): if this session is
+        // the ride's driver, emit the driver-side state so the tracking
+        // page can fire the pre-selfie capture sheet instead of the
+        // rider-only verification card.
+        final me = _currentUserId?.call();
+        final iAmDriver = me != null &&
+            _lastKnownDriverId != null &&
+            _lastKnownDriverId == me;
+        if (iAmDriver) {
+          emit(DriverEnRouteForDriver(
+            rideId: update.rideId,
+            fare: _stateFare(),
+            etaMinutes: driver?.etaMinutes ?? 0,
+          ));
+        } else if (driver != null) {
           _lastKnownDriver = driver;
           emit(DriverEnRoute(
             rideId: update.rideId,
@@ -990,6 +1020,10 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     // which we normalize to the honest `absent` (unavailable) info rather
     // than leaving stale data from a previous poll.
     _lastKnownPreSelfie = ride.preSelfie ?? PreSelfieInfo.absent;
+    // §2.3: remember the authoritative driver id from the REST DTO so WS
+    // status payloads (which omit it) can still resolve the rider/driver
+    // role split below.
+    _lastKnownDriverId = ride.driverId;
 
     switch (ride.status) {
       case 'requested':
@@ -1012,7 +1046,19 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         }
         break;
       case 'driver_en_route':
-        if (ride.driver != null) {
+        // §2.3 role split: the signed-in account that owns ride.driverId is
+        // the DRIVER — it gets DriverEnRouteForDriver (no rider-side selfie
+        // card; instead the tracking page fires the capture sheet). Everyone
+        // else in this session view is the RIDER and gets the full
+        // DriverEnRoute state with the pre-selfie verification block.
+        final me = _currentUserId?.call();
+        if (me != null && ride.driverId != null && ride.driverId == me) {
+          emit(DriverEnRouteForDriver(
+            rideId: ride.id,
+            fare: ride.fareAmount ?? 0,
+            etaMinutes: ride.driver?.etaMinutes ?? 0,
+          ));
+        } else if (ride.driver != null) {
           emit(DriverEnRoute(
             rideId: ride.id,
             driver: ride.driver!,
