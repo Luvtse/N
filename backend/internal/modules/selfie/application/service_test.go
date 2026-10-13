@@ -197,12 +197,18 @@ func TestRedeemEnforcesExpirySignatureAndParticipants(t *testing.T) {
 	}
 
 	// Derive the storage path and expiry exactly as the service did, then mint
-	// the same signature an honest client would present.
+	// the same signature an honest client would present. The service keys
+	// objects at "pre-selfies/{rideID}/{selfieID}.jpg" (no leading slash);
+	// Sign embeds them under the "/objects/" URL marker which the app layer's
+	// objectKeyFromURL uses to recover the canonical key for verification.
 	exp := selfie.ExpiresAt.UTC()
-	path := "/pre-selfies/" + selfie.RideID.String() + "/" + selfie.ID.String() + ".jpg"
+	path := "pre-selfies/" + selfie.RideID.String() + "/" + selfie.ID.String() + ".jpg"
 	minted, err := h.storage.Sign(path, exp)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
+	}
+	if !strings.Contains(minted, "/objects/pre-selfies/") {
+		t.Fatalf("minted URL missing /objects/ marker: %s", minted)
 	}
 	const sigMarker = "&sig="
 	si := strings.LastIndex(minted, sigMarker)

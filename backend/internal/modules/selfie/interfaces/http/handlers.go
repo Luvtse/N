@@ -37,7 +37,11 @@ func NewHandlers(svc *selfieapp.Service, log *zap.Logger) *Handlers {
 
 // Register mounts the routes on the given chi router. Callers mount under
 // AuthRequired + ExtractUserToContext middleware; identity is read from the
-// JWT subject only — never from the request body.
+// JWT subject only — never from the request body. Both handlers require an
+// authenticated caller: upload because the driver's identity must come from
+// the token, and redemption because the participant gate inside Redeem needs
+// a trustworthy viewer id (the HMAC signature proves link validity, not who
+// is holding it).
 func (h *Handlers) Register(r chi.Router) {
 	r.Post("/driver/rides/{rideId}/pre-selfie", h.upload)
 	r.Get("/selfies/{id}", h.redeem)

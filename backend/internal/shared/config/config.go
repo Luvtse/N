@@ -203,6 +203,15 @@ type FeatureFlags struct {
 	// plan §2.2 forbids ever returning the other party's real number. Default
 	// false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnableMaskedCalling bool
+	// EnablePreSelfie gates the §2.3 driver pre-selfie verification module
+	// (POST /api/v1/driver/rides/{rideId}/pre-selfie + participant-gated
+	// redemption of HMAC-signed, 15-minute URLs). Kill switch: set
+	// FEATURE_PRE_SELFIE=false to unmount both routes at next boot; already
+	// uploaded images remain in storage and rows in pre_selfies. When the flag
+	// is on but SELFIE_STORAGE_DIR has no writable path or SELFIE_SIGNING_KEY
+	// is unset, boot fails loudly rather than serving unsigned/expiring links.
+	// Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnablePreSelfie bool
 }
 
 // ============================================================================
@@ -402,6 +411,7 @@ func (c *Config) loadFeatures() {
 		EnableChat:               getBoolEnvOrDefault("FEATURE_CHAT", false),
 		EnableChatTranslation:    getBoolEnvOrDefault("FEATURE_CHAT_TRANSLATION", false),
 		EnableMaskedCalling:      getBoolEnvOrDefault("FEATURE_MASKED_CALLING", false),
+		EnablePreSelfie:          getBoolEnvOrDefault("FEATURE_PRE_SELFIE", false),
 	}
 }
 
