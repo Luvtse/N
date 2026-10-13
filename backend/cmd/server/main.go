@@ -441,6 +441,24 @@ func main() {
 			selfieStorage,
 		)
 
+		// §2.3 DTO attach: embed the honest driver pre-selfie state on rider
+		// ride GET responses (driver_pre_selfie_url + redeem_path). The adapter
+		// lives in the composition root (main.go) where both packages are
+		// imported, so neither nidus nor selfie depends on the other. Field
+		// mapping here is compile-checked against selfieapp.RiderView; if that
+		// struct ever drifts, this fails loudly at build time rather than
+		// silently fabricating a wrong state. nil-tolerance inside the attacher
+		// means an unwired service degrades to "unavailable", never a panic.
+		nidusDeps.PreSelfie = nidushttp.NewPreSelfieAttacher(
+			func(id uuid.UUID) nidushttp.SelfieRiderView {
+				v := selfieSvc.AttachToRiderView(id)
+				return nidushttp.SelfieRiderView{State: v.State, URL: v.URL, ExpiresAt: v.ExpiresAt}
+			},
+			func(v nidushttp.SelfieRiderView) (string, bool) {
+				return selfieSvc.RedeemPathForView(selfieapp.RiderView{State: v.State, URL: v.URL, ExpiresAt: v.ExpiresAt})
+			},
+		)
+
 		r.Route("/api/v1", func(sr chi.Router) {
 			sr.Use(middleware.AuthRequired(authService))
 			sr.Use(middleware.ExtractUserToContext)

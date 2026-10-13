@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/websocket_client.dart';
+import 'pre_selfie_repository.dart';
 
 // ============================================================================
 // ABSTRACT INTERFACE
@@ -104,6 +105,12 @@ class Ride {
   final DateTime? completedAt;
   final DriverInfo? driver;
 
+  /// §2.3 driver pre-selfie verification state, embedded by the backend on
+  /// rider ride DTOs when FEATURE_PRE_SELFIE is on. Null (or
+  /// [PreSelfieInfo.absent]) means "verification unavailable" — an honest
+  /// retry state, never a fabricated photo or URL.
+  final PreSelfieInfo? preSelfie;
+
   const Ride({
     required this.id,
     required this.userId,
@@ -124,6 +131,7 @@ class Ride {
     this.matchedAt,
     this.completedAt,
     this.driver,
+    this.preSelfie,
   });
 
   factory Ride.fromJson(Map<String, dynamic> json) {
@@ -156,6 +164,9 @@ class Ride {
           : null,
       driver: json['driver'] != null
           ? DriverInfo.fromJson(json['driver'] as Map<String, dynamic>)
+          : null,
+      preSelfie: json['pre_selfie'] != null
+          ? PreSelfieInfo.fromJson(json['pre_selfie'] as Map<String, dynamic>)
           : null,
     );
   }

@@ -35,7 +35,31 @@ type RideHandler struct {
 	acceptRideCmd   *commands.AcceptRideHandler
 	startRideCmd    *commands.StartRideHandler
 	completeRideCmd *commands.CompleteRideHandler
+	preSelfie       PreSelfieAttacher
 }
+
+// PreSelfieAttacher is the minimal port RideHandler needs from the selfie
+// module (§2.3). The concrete implementation wraps *selfieapp.Service and is
+// constructed in main.go / router.go, so this package never imports selfie
+// internals. Attach must never return State=="available" with an empty URL —
+// the selfie service guarantees that invariant (and downgrades to
+// "unavailable" when re-signing fails).
+type PreSelfieAttacher interface {
+	Attach(rideID uuid.UUID) PreSelfieInfo
+}
+
+// SetPreSelfieAttacher wires the §2.3 attacher after construction (same
+// pattern as SetLifecycle). nil-safe: GetRide only calls it when non-nil.
+func (h *RideHandler) SetPreSelfieAttacher(a PreSelfieAttacher) {
+	h.preSelfie = a
+}
+
+// PreSelfieAttacherFunc adapts a plain function to the PreSelfieAttacher
+// interface, used by the nidus router package's adapter so neither handlers
+// nor nidus imports the selfie module directly.
+type PreSelfieAttacherFunc func(rideID uuid.UUID) PreSelfieInfo
+
+func (f PreSelfieAttacherFunc) Attach(rideID uuid.UUID) PreSelfieInfo { return f(rideID) }
 
 // LifecycleCommands bundles the driver-side + terminal transitions built in
 // the router (they need DB/bus/pricing wiring not stored on RideHandler).
@@ -92,6 +116,26 @@ type RequestRideRequest struct {
 	ScheduledAt     string  `json:"scheduled_at,omitempty"`
 }
 
+// PreSelfieInfo is the rider-facing pre-selfie verification state embedded on
+// GET /rides/{rideID} responses (§2.3). The attacher implementation lives in
+// the selfie module and is injected via Dependencies.PreSelfie in main.go;
+// this package never imports selfie internals (dependency direction: nidus ->
+// nothing). When the feature flag is off or no attacher is wired, the field
+// is omitted entirely ("verification unavailable" client state), never a
+// fabricated URL.
+type PreSelfieInfo struct {
+	// State: available | not_sent | expired | unavailable. These are distinct
+	// honest states — "unavailable" means our stack failed (retry affordance),
+	// "not_sent" means the driver skipped the step. Never conflated.
+	State string `json:"state"`
+	// DriverPreSelfieURL is the display URL when State==available, else "".
+	DriverPreSelfieURL string `json:"driver_pre_selfie_url,omitempty"`
+	// RedeemPath is the API path carrying signature/expiry params to fetch
+	// the bytes when State==available, else "" — clients never parse URLs.
+	RedeemPath string     `json:"redeem_path,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
 // RideResponse is the JSON response for ride endpoints
 type RideResponse struct {
 	ID              uuid.UUID   `json:"id"`
@@ -113,6 +157,10 @@ type RideResponse struct {
 	RequestedAt     time.Time   `json:"requested_at"`
 	MatchedAt       *time.Time  `json:"matched_at,omitempty"`
 	CompletedAt     *time.Time  `json:"completed_at,omitempty"`
+	// PreSelfie carries the §2.3 driver pre-selfie verification state for the
+	// rider. Omitted (nil) when the feature is off/unwired — clients then show
+	// their honest "verification unavailable" state, never a fabricated one.
+	PreSelfie *PreSelfieInfo `json:"pre_selfie,omitempty"`
 }
 
 // DriverInfo contains driver details for a ride response
@@ -239,9 +287,17 @@ func (h *RideHandler) GetRide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return response
+	// Return response. §2.3: when a pre-selfie attacher is wired (feature flag
+	// on), embed the honest rider-facing verification state on the DTO. The
+	// attacher reads its own storage; failures inside it already degrade to
+	// State=="unavailable" rather than erroring the ride fetch.
+	resp := toRideResponse(ride)
+	if h.preSelfie != nil {
+		info := h.preSelfie.Attach(rideID)
+		resp.PreSelfie = &info
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(toRideResponse(ride))
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // ListRides handles GET /api/v1/nidus/rides
