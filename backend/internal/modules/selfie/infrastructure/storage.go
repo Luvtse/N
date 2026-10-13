@@ -113,11 +113,16 @@ func (s *LocalFileStorage) Put(key string, contentType string, data []byte) (str
 
 // Sign mints a short-lived, tamper-evident URL for the stored object. Format:
 //
-//	{base}/{storedPath}?exp={unix}&sig={hex(hmac)}
+//	{base}/objects/{storedPath}?exp={unix}&sig={hex(hmac)}
 //
-// where the HMAC payload is "storedPath|expUnix". Returns ErrNoPublicBaseURL
-// when the base URL is unconfigured — the service surfaces that as 503 rather
-// than handing out a fake or unusable link. Implements SignedURLIssuer.
+// where the HMAC payload is "storedPath|expUnix" — i.e. signed over the raw
+// storage key, NOT the display URL. The "/objects/" segment in the URL is a
+// marker the application layer's objectKeyFromURL uses to recover the exact
+// key for verification; keeping the signature bound to the canonical key
+// means minting and verifying can never disagree about what was signed.
+// Returns ErrNoPublicBaseURL when the base URL is unconfigured — the service
+// surfaces that as 503 rather than handing out a fake or unusable link.
+// Implements SignedURLIssuer.
 func (s *LocalFileStorage) Sign(storedPath string, expiresAt time.Time) (string, error) {
 	s.mu.RLock()
 	base := s.publicBaseURL
@@ -126,8 +131,9 @@ func (s *LocalFileStorage) Sign(storedPath string, expiresAt time.Time) (string,
 	if base == "" {
 		return "", ErrNoPublicBaseURL
 	}
-	sig := s.computeSig(storedPath, expiresAt)
-	u := fmt.Sprintf("%s/%s?exp=%d&sig=%s", base, strings.TrimLeft(storedPath, "/"), expiresAt.Unix(), sig)
+	key := strings.TrimLeft(filepath.Clean("/"+storedPath), "/")
+	sig := s.computeSig(key, expiresAt)
+	u := fmt.Sprintf("%s/objects/%s?exp=%d&sig=%s", base, key, expiresAt.Unix(), sig)
 	return u, nil
 }
 

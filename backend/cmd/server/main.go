@@ -28,6 +28,13 @@ import (
 	notificationinfra "nidaw-backend/internal/modules/notifications/infrastructure"
 	notificationifaces "nidaw-backend/internal/modules/notifications/interfaces"
 	notificationhttp "nidaw-backend/internal/modules/notifications/interfaces/http"
+	selfieapp "nidaw-backend/internal/modules/selfie/application"
+	selfieinfra "nidaw-backend/internal/modules/selfie/infrastructure"
+	selfiehttp "nidaw-backend/internal/modules/selfie/interfaces/http"
+	telephonyapp "nidaw-backend/internal/modules/telephony/application"
+	telephonyinfra "nidaw-backend/internal/modules/telephony/infrastructure"
+	telephonyifaces "nidaw-backend/internal/modules/telephony/interfaces"
+	telephonyhttp "nidaw-backend/internal/modules/telephony/interfaces/http"
 	"nidaw-backend/internal/shared/auth"
 	sharedcache "nidaw-backend/internal/shared/cache"
 	"nidaw-backend/internal/shared/config"
@@ -319,6 +326,130 @@ func main() {
 			zap.Bool("translation_enabled", chatTranslator != nil))
 	} else {
 		logger.Info("Chat module disabled (FEATURE_CHAT=false)")
+	}
+
+	// ============================================================================
+	// §2.2 Masked calling (kill-switch: FEATURE_MASKED_CALLING, default off in
+	// production — see config/feature-flags/flags.json). When enabled: Twilio
+	// Proxy pairings are provisioned on ride.matched, torn down on completion/
+	// cancellation, swept on TTL expiry, and riders/drivers fetch the proxy
+	// number via GET /api/v1/telephony/rides/{rideID}/contact. The real numbers
+	// of the other party are NEVER returned by any endpoint (plan §2.2). If the
+	// flag is on but credentials or the proxy-number pool are missing we fail
+	// the boot loudly rather than silently degrading to direct dialing.
+	// ============================================================================
+	if cfg.Features.EnableMaskedCalling {
+		twilioSID := os.Getenv("TWILIO_ACCOUNT_SID")
+		twilioToken := os.Getenv("TWILIO_AUTH_TOKEN")
+		twilioServiceSID := os.Getenv("TELEPHONY_TWILIO_SERVICE_SID")
+		proxyNumbers := splitCSV(os.Getenv("TELEPHONY_PROXY_NUMBERS"))
+		var missing []string
+		if twilioSID == "" {
+			missing = append(missing, "TWILIO_ACCOUNT_SID")
+		}
+		if twilioToken == "" {
+			missing = append(missing, "TWILIO_AUTH_TOKEN")
+		}
+		if twilioServiceSID == "" {
+			missing = append(missing, "TELEPHONY_TWILIO_SERVICE_SID")
+		}
+		if len(proxyNumbers) == 0 {
+			missing = append(missing, "TELEPHONY_PROXY_NUMBERS")
+		}
+		if len(missing) > 0 {
+			logger.Fatal("FEATURE_MASKED_CALLING=true but configuration is incomplete",
+				zap.Strings("missing_env_vars", missing))
+		}
+
+		telRepo := telephonyinfra.NewPostgresRepository(db)
+		if err := telRepo.EnsureSchema(context.Background()); err != nil {
+			logger.Fatal("telephony schema migration failed", zap.Error(err))
+		}
+		telAPI, err := telephonyinfra.NewHTTPRestTwilioAPI(twilioSID, twilioToken, "")
+		if err != nil {
+			logger.Fatal("telephony: Twilio client init failed", zap.Error(err))
+		}
+		telProvider, err := telephonyinfra.NewTwilioProxyProvider(telAPI, twilioServiceSID)
+		if err != nil {
+			logger.Fatal("telephony: provider init failed", zap.Error(err))
+		}
+		telSvc, err := telephonyapp.NewService(
+			telRepo,
+			telProvider,
+			proxyNumbers,
+			telephonyinfra.NewRideParticipantResolver(db),
+			nil, // driver-phone→user-id reverse lookup unused while the REST surface only resolves by ride
+			30*time.Minute,
+			telephonyapp.WithLogger(logger),
+		)
+		if err != nil {
+			logger.Fatal("telephony: service init failed", zap.Error(err))
+		}
+
+		r.Route("/api/v1/telephony", func(tr chi.Router) {
+			tr.Use(middleware.AuthRequired(authService))
+			tr.Use(middleware.ExtractUserToContext)
+			telephonyhttp.NewHandler(telSvc).Register(tr)
+		})
+
+		ctxTel, stopTel := context.WithCancel(context.Background())
+		defer stopTel()
+
+		telConsumer := telephonyifaces.NewEventConsumer(telSvc)
+		if err := telConsumer.Subscribe(ctxTel, eventBus, logger); err != nil {
+			logger.Error("Failed to subscribe telephony event consumer", zap.Error(err))
+		}
+		sweeper := telephonyifaces.NewSweeper(telSvc, time.Minute)
+		go sweeper.Run(ctxTel)
+
+		logger.Info("Telephony masked-calling module online",
+			zap.Int("proxy_pool_size", len(proxyNumbers)))
+	} else {
+		logger.Info("Telephony masked-calling module disabled (FEATURE_MASKED_CALLING=false)")
+	}
+
+	// ============================================================================
+	// §2.3 Pre-selfie verification (kill-switch: FEATURE_PRE_SELFIE, default off
+	// in production — see config/feature-flags/flags.json). Drivers upload a
+	// ≤200 KB selfie at DriverEnRoute; riders redeem an HMAC-signed, 15-minute
+	// URL through GET /api/v1/selfies/{id}. Storage failures surface as 503s —
+	// the API never fabricates a URL for a selfie that was not stored.
+	// ============================================================================
+	if cfg.Features.EnablePreSelfie {
+		signingKey := os.Getenv("SELFIE_SIGNING_KEY")
+		if signingKey == "" {
+			logger.Fatal("FEATURE_PRE_SELFIE=true requires SELFIE_SIGNING_KEY (hex-encoded, >=16 bytes); refusing to serve unsigned selfie URLs")
+		}
+		selfieStorage, err := selfieinfra.NewLocalFileStorage(
+			os.Getenv("SELFIE_STORAGE_DIR"),
+			os.Getenv("SELFIE_PUBLIC_BASE_URL"),
+			signingKey,
+			15*time.Minute,
+		)
+		if err != nil {
+			logger.Fatal("selfie storage init failed", zap.Error(err))
+		}
+		selfieRepo := selfieinfra.NewPostgresRepository(db.Pool())
+		if err := selfieRepo.EnsureSchema(); err != nil {
+			logger.Fatal("pre-selfie schema migration failed", zap.Error(err))
+		}
+		selfieSvc := selfieapp.NewService(
+			selfieRepo,
+			selfieinfra.NewRideStoreLookup(db),
+			selfieStorage,
+			selfieStorage,
+		)
+
+		r.Route("/api/v1", func(sr chi.Router) {
+			sr.Use(middleware.AuthRequired(authService))
+			sr.Use(middleware.ExtractUserToContext)
+			selfiehttp.NewHandlers(selfieSvc, logger).Register(sr)
+		})
+
+		logger.Info("Pre-selfie verification module online",
+			zap.Bool("public_base_url_configured", os.Getenv("SELFIE_PUBLIC_BASE_URL") != ""))
+	} else {
+		logger.Info("Pre-selfie verification module disabled (FEATURE_PRE_SELFIE=false)")
 	}
 
 	// Ride lifecycle durability workers (Nidus):
