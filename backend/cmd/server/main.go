@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -619,4 +620,24 @@ func durationFromEnv(key string, def time.Duration, logger *zap.Logger) time.Dur
 		return def
 	}
 	return d
+}
+
+// splitCSV parses a comma-separated environment value into a trimmed,
+// non-empty string slice. Returns nil when the input is blank so callers
+// can distinguish "not configured" from "configured with entries".
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

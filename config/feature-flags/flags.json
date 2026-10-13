@@ -1,7 +1,7 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "version": "1.0.0",
-    "lastUpdated": "2026-10-12T00:00:00Z",
+    "lastUpdated": "2026-10-13T00:00:00Z",
     "flags": {
         "core_services": {
             "nidus_rides": {
@@ -140,7 +140,7 @@
                     "owner": "nidus-team@nidaw.com",
                     "created": "2026-10-12T00:00:00Z",
                     "expires": null,
-                    "description": "\u00a71.4 notifications substrate (in-app + FCM + email dispatcher, device-token registry, inbox endpoints). Kill switch: FEATURE_NOTIFICATIONS=false (env) unmounts /api/v1/notifications and stops all dispatch at next boot; already-persisted notification rows remain in Postgres. Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.",
+                    "description": "§1.4 notifications substrate (in-app + FCM + email dispatcher, device-token registry, inbox endpoints). Kill switch: FEATURE_NOTIFICATIONS=false (env) unmounts /api/v1/notifications and stops all dispatch at next boot; already-persisted notification rows remain in Postgres. Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.",
                     "category": "ride_parity",
                     "abTestId": null,
                     "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
@@ -263,7 +263,7 @@
                     "owner": "nidus-team@nidaw.com",
                     "created": "2026-10-12T00:00:00Z",
                     "expires": null,
-                    "description": "\u00a72.1 in-app rider<->driver chat (/api/v1/chat REST + chat.ride.{rideId} WS topic). Kill switch: FEATURE_CHAT=false (env) unmounts the routes at next boot; persisted messages remain in Postgres. Default false in production per Global Rule 6.",
+                    "description": "§2.1 in-app rider<->driver chat (/api/v1/chat REST + chat.ride.{rideId} WS topic). Kill switch: FEATURE_CHAT=false (env) unmounts the routes at next boot; persisted messages remain in Postgres. Default false in production per Global Rule 6.",
                     "category": "ride_parity",
                     "abTestId": null,
                     "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
@@ -285,10 +285,54 @@
                     "owner": "nidus-team@nidaw.com",
                     "created": "2026-10-12T00:00:00Z",
                     "expires": null,
-                    "description": "\u00a72.1 optional machine translation for chat (LibreTranslate via CHAT_TRANSLATE_ENDPOINT). Requires chat=true. Kill switch: FEATURE_CHAT_TRANSLATION=false (env) or unset CHAT_TRANSLATE_ENDPOINT; messages then ship untranslated with translated_from=null and the UI hides translation affordances \u2014 never a fake translation. Default false in production per Global Rule 6.",
+                    "description": "§2.1 optional machine translation for chat (LibreTranslate via CHAT_TRANSLATE_ENDPOINT). Requires chat=true. Kill switch: FEATURE_CHAT_TRANSLATION=false (env) or unset CHAT_TRANSLATE_ENDPOINT; messages then ship untranslated with translated_from=null and the UI hides translation affordances — never a fake translation. Default false in production per Global Rule 6.",
                     "category": "ride_parity",
                     "abTestId": null,
                     "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
+                }
+            },
+            "masked_calling": {
+                "enabled": false,
+                "rolloutPercentage": 0,
+                "targeting": {
+                    "environments": [
+                        "development",
+                        "staging"
+                    ],
+                    "regions": [
+                        "ET"
+                    ]
+                },
+                "metadata": {
+                    "owner": "nidus-team@nidaw.com",
+                    "created": "2026-10-13T00:00:00Z",
+                    "expires": null,
+                    "description": "§2.2 masked/anonymous calling (GET /api/v1/telephony/rides/{rideId}/contact, Twilio Proxy adapter). Kill switch: FEATURE_MASKED_CALLING=false (env) unmounts routes and stops new proxy provisioning at next boot; existing sessions expire by TTL. Default false in production per Global Rule 6.",
+                    "category": "ride_parity",
+                    "abTestId": null,
+                    "killSwitch": "Set FEATURE_MASKED_CALLING=false and redeploy; the route group is not mounted and the sweeper does not start. Live proxy sessions age out via their own TTL."
+                }
+            },
+            "pre_selfie": {
+                "enabled": false,
+                "rolloutPercentage": 0,
+                "targeting": {
+                    "environments": [
+                        "development",
+                        "staging"
+                    ],
+                    "regions": [
+                        "ET"
+                    ]
+                },
+                "metadata": {
+                    "owner": "nidus-team@nidaw.com",
+                    "created": "2026-10-13T00:00:00Z",
+                    "expires": null,
+                    "description": "§2.3 pre-selfie verification (POST /api/v1/driver/rides/{rideId}/pre-selfie + signed-URL redemption GET /api/v1/selfies/{id}). Kill switch: FEATURE_PRE_SELFIE=false (env) unmounts routes at next boot; driver_pre_selfie_url is omitted from ride DTOs and the rider card shows the honest 'not sent' state. Default false in production per Global Rule 6.",
+                    "category": "ride_parity",
+                    "abTestId": null,
+                    "killSwitch": "Set FEATURE_PRE_SELFIE=false and redeploy; upload/redemption routes are not mounted and the DTO field is dropped. Stored images remain on disk/object storage for compliance review."
                 }
             }
         },
