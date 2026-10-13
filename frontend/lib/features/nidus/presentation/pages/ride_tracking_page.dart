@@ -8,6 +8,7 @@ import '../bloc/ride_bloc.dart';
 import '../widgets/cancel_ride_sheet.dart';
 import '../widgets/driver_card.dart';
 import '../widgets/payment_method_selector.dart';
+import '../widgets/pre_selfie_capture_sheet.dart';
 import '../widgets/rate_ride_sheet.dart';
 import '../widgets/safety_widgets.dart';
 import '../widgets/verify_driver_card.dart';
@@ -51,6 +52,11 @@ class _RideTrackingPageState extends State<RideTrackingPage>
 
   /// True while the camera follows the driver marker; false = follow rider.
   bool _followDriver = true;
+
+  /// §2.3: guards the one-shot auto-open of the driver pre-selfie capture
+  /// sheet. Reset when leaving DriverEnRouteForDriver so a re-entry (e.g.
+  /// after a reconnect) can prompt again if the driver still hasn't sent.
+  bool _preSelfieSheetShown = false;
 
   @override
   void initState() {
@@ -147,6 +153,20 @@ class _RideTrackingPageState extends State<RideTrackingPage>
     return BlocConsumer<RideBloc, RideState>(
       listenWhen: (previous, current) => previous != current,
       listener: (context, state) {
+        // §2.3 driver-side trigger: when THIS session enters DriverEnRoute
+        // as the ride's driver, fire the pre-selfie capture step exactly
+        // once per en-route phase (plan: "capture step that fires on
+        // DriverEnRoute start"). The sheet itself offers retry on upload
+        // failure and an explicit skip; skipping leaves the rider with the
+        // honest "Driver did not send a selfie" state — never a fake image.
+        if (state is DriverEnRouteForDriver) {
+          if (!_preSelfieSheetShown) {
+            _preSelfieSheetShown = true;
+            PreSelfieCaptureSheet.show(context, rideId: state.rideId);
+          }
+        } else {
+          _preSelfieSheetShown = false;
+        }
         if (state is RideCompleted) {
           RateRideSheet.show(
             context,
