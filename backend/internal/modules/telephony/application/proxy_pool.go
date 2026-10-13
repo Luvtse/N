@@ -59,8 +59,11 @@ func (p *ProxyPool) Acquire() (string, error) {
 	return n, nil
 }
 
-// Release returns a number to the pool. Releasing an unbooked number (double
-// teardown, sweep racing an explicit cancel) is a harmless no-op.
+// Release returns a number to the front of the free list so recycled numbers
+// are handed out again before fresh inventory — this keeps small pools stable
+// and makes the recycle path deterministic for callers and tests. Releasing an
+// unbooked number (double teardown, sweep racing an explicit cancel) is a
+// harmless no-op.
 func (p *ProxyPool) Release(number string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -68,7 +71,7 @@ func (p *ProxyPool) Release(number string) {
 		return
 	}
 	delete(p.booked, number)
-	p.free = append(p.free, number)
+	p.free = append([]string{number}, p.free...)
 }
 
 // Available reports the free count; used for health/metrics.

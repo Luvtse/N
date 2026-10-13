@@ -193,6 +193,16 @@ type FeatureFlags struct {
 	// per CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnableChat            bool
 	EnableChatTranslation bool
+	// EnableMaskedCalling gates the §2.2 telephony module (proxy-number pool +
+	// Twilio Proxy pairings provisioned on ride.matched, torn down on
+	// completion/cancellation, swept on TTL expiry). Kill switch: set
+	// FEATURE_MASKED_CALLING=false to unmount GET /api/v1/telephony at next
+	// boot; live pairings expire naturally via the provider-side TTL. When the
+	// flag is on but Twilio credentials or TELEPHONY_PROXY_NUMBERS are missing,
+	// boot fails loudly rather than silently falling back to real numbers —
+	// plan §2.2 forbids ever returning the other party's real number. Default
+	// false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableMaskedCalling bool
 }
 
 // ============================================================================
@@ -391,6 +401,7 @@ func (c *Config) loadFeatures() {
 		EnableNotifications:      getBoolEnvOrDefault("FEATURE_NOTIFICATIONS", false),
 		EnableChat:               getBoolEnvOrDefault("FEATURE_CHAT", false),
 		EnableChatTranslation:    getBoolEnvOrDefault("FEATURE_CHAT_TRANSLATION", false),
+		EnableMaskedCalling:      getBoolEnvOrDefault("FEATURE_MASKED_CALLING", false),
 	}
 }
 
