@@ -31,6 +31,8 @@ type RideHandler struct {
 	matchingEngine  *services.MatchingEngine
 	pricingService  *services.PricingService
 	cancelRideCmd   *commands.CancelRideHandler
+	cancelPolicy    services.CancellationPolicyConfig
+	quoteCache      *services.QuoteCache
 	rateRideCmd     *commands.RateRideHandler
 	acceptRideCmd   *commands.AcceptRideHandler
 	startRideCmd    *commands.StartRideHandler
@@ -88,6 +90,7 @@ func NewRideHandler(
 	listRidesQuery *queries.ListRidesQuery,
 	matchingEngine *services.MatchingEngine,
 	pricingService *services.PricingService,
+	cancelPolicy services.CancellationPolicyConfig,
 ) *RideHandler {
 	return &RideHandler{
 		db:             db,
@@ -96,6 +99,8 @@ func NewRideHandler(
 		listRidesQuery: listRidesQuery,
 		matchingEngine: matchingEngine,
 		pricingService: pricingService,
+		cancelPolicy:   cancelPolicy,
+		quoteCache:     services.NewQuoteCache(cancelPolicy.withDefaults().QuoteTTL),
 	}
 }
 
