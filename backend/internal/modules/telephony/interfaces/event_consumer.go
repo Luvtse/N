@@ -12,6 +12,7 @@ import (
 	"nidaw-backend/internal/shared/eventbus"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // RideTTL is the expected ride duration budget added to every proxy session.
