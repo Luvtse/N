@@ -1,9 +1,5 @@
-
 ---
 
-## 📄 File #2: `releases/v1.0.0/CHANGELOG.md`
-
-```markdown
 # Changelog
 
 All notable changes to the NIDAW platform will be documented in this file.
