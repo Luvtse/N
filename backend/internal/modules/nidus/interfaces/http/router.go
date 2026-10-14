@@ -10,6 +10,8 @@ import (
 	"nidaw-backend/internal/modules/nidus/application/services"
 	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidusHttp "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	paymentsapp "nidaw-backend/internal/modules/payments/application"
+	payhttp "nidaw-backend/internal/modules/payments/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
@@ -36,8 +38,17 @@ type Dependencies struct {
 	MatchingEngine *services.MatchingEngine
 	ETAService     *services.ETAService
 	PricingService *services.PricingService
-	TipSettler     niduscmds.TipSettler // ledger-backed tip settlement (nil => tips rejected)
-	CORSOrigins    []string             // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
+	TipSettler     niduscmds.TipSettler      // ledger-backed tip settlement (nil => tips rejected)
+	CORSOrigins    []string                  // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
+	// §3.1 Cash Payment Option. PaymentMethods is the payments-module port that
+	// validates and snapshots the rider's chosen method at request time; nil
+	// (flag off / module unwired) preserves legacy behaviour — rides are created
+	// without a payment-method resolution step. CashEnabled mirrors the
+	// cash_payment flag: when false, rides resolving to cash are rejected with
+	// PAYMENT_UNAVAILABLE rather than silently created.
+	PaymentMethods   niduscmds.PaymentMethodResolver
+	CashEnabled      bool
+	PaymentMethodSvc *paymentsapp.PaymentMethodService // nil => registry routes not mounted
 	// WSHub backs GET /ws (§1.5 router cleanup: the hub existed but was never
 	// mounted). main.go constructs one shared hub here and reuses it as the
 	// notifications module's InAppBroadcaster (§1.4). nil => no /ws route.
