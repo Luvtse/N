@@ -81,7 +81,7 @@ func (c CancellationPolicyConfig) WithDefaults() CancellationPolicyConfig {
 	if c.FreeWindowDuration <= 0 {
 		c.FreeWindowDuration = d.FreeWindowDuration
 	}
-	if c.RiderCancelFee < 0 {
+	if c.RiderCancelFee <= 0 {
 		c.RiderCancelFee = d.RiderCancelFee
 	}
 	if c.QuoteTTL <= 0 {

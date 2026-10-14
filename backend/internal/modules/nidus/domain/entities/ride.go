@@ -125,10 +125,14 @@ type Ride struct {
 // DOMAIN BEHAVIORS
 // ============================================================================
 
-// CanBeCancelled returns true if the ride can be cancelled in its current state
+// CanBeCancelled returns true if the ride can be cancelled in its current
+// state. In-progress rides are cancellable per the lifecycle transition table
+// (RideStatusInProgress -> RideStatusCancelled); §2.5's policy charges a
+// late-cancel fee for them, so the guard must not silently reject them.
 func (r *Ride) CanBeCancelled() bool {
 	switch r.Status {
-	case RideStatusRequested, RideStatusSearching, RideStatusMatched, RideStatusDriverEnRoute:
+	case RideStatusRequested, RideStatusSearching, RideStatusMatched,
+		RideStatusDriverEnRoute, RideStatusInProgress:
 		return true
 	default:
 		return false
