@@ -1,611 +1,655 @@
 {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "version": "1.0.0",
-    "lastUpdated": "2026-10-13T00:00:00Z",
-    "flags": {
-        "core_services": {
-            "nidus_rides": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "nidus-team@nidaw.com",
-                    "created": "2026-01-15T00:00:00Z",
-                    "expires": null,
-                    "description": "Core ride-hailing service",
-                    "category": "core",
-                    "abTestId": null
-                }
-            },
-            "haven_hotels": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "haven-team@nidaw.com",
-                    "created": "2026-02-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Hotel booking service",
-                    "category": "core",
-                    "abTestId": null
-                }
-            },
-            "vorax_food": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "vorax-team@nidaw.com",
-                    "created": "2026-02-15T00:00:00Z",
-                    "expires": null,
-                    "description": "Food delivery service",
-                    "category": "core",
-                    "abTestId": null
-                }
-            },
-            "logix_freight": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "logix-team@nidaw.com",
-                    "created": "2026-03-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Freight and logistics service",
-                    "category": "core",
-                    "abTestId": null
-                }
-            },
-            "corpus_corporate": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "corpus-team@nidaw.com",
-                    "created": "2026-03-15T00:00:00Z",
-                    "expires": null,
-                    "description": "Corporate travel service",
-                    "category": "core",
-                    "abTestId": null
-                }
-            },
-            "notifications": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging"
-                    ],
-                    "regions": [
-                        "ET"
-                    ]
-                },
-                "metadata": {
-                    "owner": "nidus-team@nidaw.com",
-                    "created": "2026-10-12T00:00:00Z",
-                    "expires": null,
-                    "description": "§1.4 notifications substrate (in-app + FCM + email dispatcher, device-token registry, inbox endpoints). Kill switch: FEATURE_NOTIFICATIONS=false (env) unmounts /api/v1/notifications and stops all dispatch at next boot; already-persisted notification rows remain in Postgres. Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.",
-                    "category": "ride_parity",
-                    "abTestId": null,
-                    "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
-                }
-            }
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "lastUpdated": "2026-10-15T00:00:00Z",
+  "flags": {
+    "core_services": {
+      "nidus_rides": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
         },
-        "experimental_features": {
-            "autonomous_vehicles": {
-                "enabled": true,
-                "rolloutPercentage": 5,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ],
-                    "regions": [
-                        "US"
-                    ],
-                    "userSegments": [
-                        "beta_testers",
-                        "early_adopters"
-                    ]
-                },
-                "metadata": {
-                    "owner": "autonomous-team@nidaw.com",
-                    "created": "2026-05-01T00:00:00Z",
-                    "expires": "2026-12-31T23:59:59Z",
-                    "description": "Autonomous vehicle ride service (experimental)",
-                    "category": "experimental",
-                    "abTestId": "av-beta-2026-q3"
-                }
-            },
-            "drone_delivery": {
-                "enabled": true,
-                "rolloutPercentage": 10,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ],
-                    "regions": [
-                        "US"
-                    ],
-                    "userSegments": [
-                        "beta_testers"
-                    ]
-                },
-                "metadata": {
-                    "owner": "drone-team@nidaw.com",
-                    "created": "2026-05-15T00:00:00Z",
-                    "expires": "2026-12-31T23:59:59Z",
-                    "description": "Drone delivery service (experimental)",
-                    "category": "experimental",
-                    "abTestId": "drone-beta-2026-q3"
-                }
-            },
-            "ar_navigation": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging"
-                    ],
-                    "regions": [
-                        "ET"
-                    ],
-                    "deviceTypes": [
-                        "ios",
-                        "android"
-                    ]
-                },
-                "metadata": {
-                    "owner": "mobile-team@nidaw.com",
-                    "created": "2026-04-01T00:00:00Z",
-                    "expires": null,
-                    "description": "AR-powered navigation for rides. Kill-switch: set enabled=false to force-off in every environment regardless of rollout/targeting (enforced by FeatureFlagService.isEnabled and the router's compile-time guard). Route /nidus/ar-nav/:rideId is registered but flag-gated; entry point on Tracking page only renders when this flag resolves true during DriverEnRoute.",
-                    "category": "experimental",
-                    "abTestId": "ar-nav-2026-q2"
-                }
-            },
-            "voice_commands": {
-                "enabled": true,
-                "rolloutPercentage": 30,
-                "targeting": {
-                    "environments": [
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU"
-                    ],
-                    "languages": [
-                        "en",
-                        "es",
-                        "fr"
-                    ]
-                },
-                "metadata": {
-                    "owner": "mobile-team@nidaw.com",
-                    "created": "2026-04-15T00:00:00Z",
-                    "expires": null,
-                    "description": "Voice command interface",
-                    "category": "experimental",
-                    "abTestId": "voice-2026-q2"
-                }
-            },
-            "chat": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging"
-                    ],
-                    "regions": [
-                        "ET"
-                    ]
-                },
-                "metadata": {
-                    "owner": "nidus-team@nidaw.com",
-                    "created": "2026-10-12T00:00:00Z",
-                    "expires": null,
-                    "description": "§2.1 in-app rider<->driver chat (/api/v1/chat REST + chat.ride.{rideId} WS topic). Kill switch: FEATURE_CHAT=false (env) unmounts the routes at next boot; persisted messages remain in Postgres. Default false in production per Global Rule 6.",
-                    "category": "ride_parity",
-                    "abTestId": null,
-                    "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
-                }
-            },
-            "chat_translation": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging"
-                    ],
-                    "regions": [
-                        "ET"
-                    ]
-                },
-                "metadata": {
-                    "owner": "nidus-team@nidaw.com",
-                    "created": "2026-10-12T00:00:00Z",
-                    "expires": null,
-                    "description": "§2.1 optional machine translation for chat (LibreTranslate via CHAT_TRANSLATE_ENDPOINT). Requires chat=true. Kill switch: FEATURE_CHAT_TRANSLATION=false (env) or unset CHAT_TRANSLATE_ENDPOINT; messages then ship untranslated with translated_from=null and the UI hides translation affordances — never a fake translation. Default false in production per Global Rule 6.",
-                    "category": "ride_parity",
-                    "abTestId": null,
-                    "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
-                }
-            },
-            "masked_calling": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging"
-                    ],
-                    "regions": [
-                        "ET"
-                    ]
-                },
-                "metadata": {
-                    "owner": "nidus-team@nidaw.com",
-                    "created": "2026-10-13T00:00:00Z",
-                    "expires": null,
-                    "description": "§2.2 masked/anonymous calling (GET /api/v1/telephony/rides/{rideId}/contact, Twilio Proxy adapter). Kill switch: FEATURE_MASKED_CALLING=false (env) unmounts routes and stops new proxy provisioning at next boot; existing sessions expire by TTL. Default false in production per Global Rule 6.",
-                    "category": "ride_parity",
-                    "abTestId": null,
-                    "killSwitch": "Set FEATURE_MASKED_CALLING=false and redeploy; the route group is not mounted and the sweeper does not start. Live proxy sessions age out via their own TTL."
-                }
-            },
-            "pre_selfie": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging"
-                    ],
-                    "regions": [
-                        "ET"
-                    ]
-                },
-                "metadata": {
-                    "owner": "nidus-team@nidaw.com",
-                    "created": "2026-10-13T00:00:00Z",
-                    "expires": null,
-                    "description": "§2.3 pre-selfie verification (POST /api/v1/driver/rides/{rideId}/pre-selfie + signed-URL redemption GET /api/v1/selfies/{id}). Kill switch: FEATURE_PRE_SELFIE=false (env) unmounts routes at next boot; driver_pre_selfie_url is omitted from ride DTOs and the rider card shows the honest 'not sent' state. Default false in production per Global Rule 6.",
-                    "category": "ride_parity",
-                    "abTestId": null,
-                    "killSwitch": "Set FEATURE_PRE_SELFIE=false and redeploy; upload/redemption routes are not mounted and the DTO field is dropped. Stored images remain on disk/object storage for compliance review."
-                }
-            }
-        },
-        "ai_ml_features": {
-            "federated_learning": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "ml-team@nidaw.com",
-                    "created": "2026-02-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Federated learning for privacy-preserving ML",
-                    "category": "ai_ml",
-                    "abTestId": null
-                }
-            },
-            "dynamic_pricing": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "ml-team@nidaw.com",
-                    "created": "2026-01-15T00:00:00Z",
-                    "expires": null,
-                    "description": "AI-powered dynamic pricing",
-                    "category": "ai_ml",
-                    "abTestId": null
-                }
-            },
-            "demand_forecasting": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "ml-team@nidaw.com",
-                    "created": "2026-01-15T00:00:00Z",
-                    "expires": null,
-                    "description": "ML-based demand forecasting",
-                    "category": "ai_ml",
-                    "abTestId": null
-                }
-            },
-            "restaurant_recommendations": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "ml-team@nidaw.com",
-                    "created": "2026-02-15T00:00:00Z",
-                    "expires": null,
-                    "description": "AI restaurant recommendations",
-                    "category": "ai_ml",
-                    "abTestId": null
-                }
-            }
-        },
-        "ui_features": {
-            "dark_mode": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "development",
-                        "staging",
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ]
-                },
-                "metadata": {
-                    "owner": "design-team@nidaw.com",
-                    "created": "2026-01-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Dark mode theme",
-                    "category": "ui",
-                    "abTestId": null
-                }
-            },
-            "multi_language": {
-                "enabled": true,
-                "rolloutPercentage": 100,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ],
-                    "regions": [
-                        "US",
-                        "EU",
-                        "APAC"
-                    ],
-                    "languages": [
-                        "en",
-                        "es",
-                        "fr",
-                        "de",
-                        "ja",
-                        "zh",
-                        "pt",
-                        "ar",
-                        "hi",
-                        "ko"
-                    ]
-                },
-                "metadata": {
-                    "owner": "i18n-team@nidaw.com",
-                    "created": "2026-04-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Multi-language support",
-                    "category": "ui",
-                    "abTestId": null
-                }
-            },
-            "new_homepage_design": {
-                "enabled": true,
-                "rolloutPercentage": 25,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ],
-                    "regions": [
-                        "US"
-                    ],
-                    "userSegments": [
-                        "group_a"
-                    ]
-                },
-                "metadata": {
-                    "owner": "design-team@nidaw.com",
-                    "created": "2026-07-01T00:00:00Z",
-                    "expires": "2026-09-30T23:59:59Z",
-                    "description": "New homepage design A/B test",
-                    "category": "ui",
-                    "abTestId": "homepage-redesign-2026-q3"
-                }
-            }
-        },
-        "operational_features": {
-            "maintenance_mode": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ]
-                },
-                "metadata": {
-                    "owner": "ops-team@nidaw.com",
-                    "created": "2026-01-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Maintenance mode toggle",
-                    "category": "operational",
-                    "abTestId": null
-                }
-            },
-            "read_only_mode": {
-                "enabled": false,
-                "rolloutPercentage": 0,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ]
-                },
-                "metadata": {
-                    "owner": "ops-team@nidaw.com",
-                    "created": "2026-01-01T00:00:00Z",
-                    "expires": null,
-                    "description": "Read-only mode for database maintenance",
-                    "category": "operational",
-                    "abTestId": null
-                }
-            },
-            "beta_api_v2": {
-                "enabled": true,
-                "rolloutPercentage": 10,
-                "targeting": {
-                    "environments": [
-                        "production"
-                    ],
-                    "userSegments": [
-                        "beta_testers",
-                        "partners"
-                    ]
-                },
-                "metadata": {
-                    "owner": "api-team@nidaw.com",
-                    "created": "2026-06-01T00:00:00Z",
-                    "expires": "2026-12-31T23:59:59Z",
-                    "description": "API v2 beta access",
-                    "category": "operational",
-                    "abTestId": null
-                }
-            }
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-01-15T00:00:00Z",
+          "expires": null,
+          "description": "Core ride-hailing service",
+          "category": "core",
+          "abTestId": null
         }
+      },
+      "haven_hotels": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "haven-team@nidaw.com",
+          "created": "2026-02-01T00:00:00Z",
+          "expires": null,
+          "description": "Hotel booking service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "vorax_food": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "vorax-team@nidaw.com",
+          "created": "2026-02-15T00:00:00Z",
+          "expires": null,
+          "description": "Food delivery service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "logix_freight": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "logix-team@nidaw.com",
+          "created": "2026-03-01T00:00:00Z",
+          "expires": null,
+          "description": "Freight and logistics service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "corpus_corporate": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "corpus-team@nidaw.com",
+          "created": "2026-03-15T00:00:00Z",
+          "expires": null,
+          "description": "Corporate travel service",
+          "category": "core",
+          "abTestId": null
+        }
+      },
+      "notifications": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-12T00:00:00Z",
+          "expires": null,
+          "description": "§1.4 notifications substrate (in-app + FCM + email dispatcher, device-token registry, inbox endpoints). Kill switch: FEATURE_NOTIFICATIONS=false (env) unmounts /api/v1/notifications and stops all dispatch at next boot; already-persisted notification rows remain in Postgres. Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
+        }
+      }
     },
-    "segments": {
-        "beta_testers": {
-            "description": "Users enrolled in beta testing program",
-            "criteria": {
-                "userAttribute": "beta_enrolled",
-                "value": true
-            }
+    "experimental_features": {
+      "autonomous_vehicles": {
+        "enabled": true,
+        "rolloutPercentage": 5,
+        "targeting": {
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US"
+          ],
+          "userSegments": [
+            "beta_testers",
+            "early_adopters"
+          ]
         },
-        "early_adopters": {
-            "description": "Early adopter users",
-            "criteria": {
-                "userAttribute": "signup_date",
-                "operator": "before",
-                "value": "2026-03-01"
-            }
-        },
-        "premium_users": {
-            "description": "Users with premium subscription",
-            "criteria": {
-                "userAttribute": "subscription_tier",
-                "value": "premium"
-            }
-        },
-        "group_a": {
-            "description": "A/B test group A",
-            "criteria": {
-                "userAttribute": "ab_group",
-                "value": "A"
-            }
-        },
-        "partners": {
-            "description": "Partner accounts",
-            "criteria": {
-                "userAttribute": "account_type",
-                "value": "partner"
-            }
+        "metadata": {
+          "owner": "autonomous-team@nidaw.com",
+          "created": "2026-05-01T00:00:00Z",
+          "expires": "2026-12-31T23:59:59Z",
+          "description": "Autonomous vehicle ride service (experimental)",
+          "category": "experimental",
+          "abTestId": "av-beta-2026-q3"
         }
+      },
+      "drone_delivery": {
+        "enabled": true,
+        "rolloutPercentage": 10,
+        "targeting": {
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US"
+          ],
+          "userSegments": [
+            "beta_testers"
+          ]
+        },
+        "metadata": {
+          "owner": "drone-team@nidaw.com",
+          "created": "2026-05-15T00:00:00Z",
+          "expires": "2026-12-31T23:59:59Z",
+          "description": "Drone delivery service (experimental)",
+          "category": "experimental",
+          "abTestId": "drone-beta-2026-q3"
+        }
+      },
+      "ar_navigation": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ],
+          "deviceTypes": [
+            "ios",
+            "android"
+          ]
+        },
+        "metadata": {
+          "owner": "mobile-team@nidaw.com",
+          "created": "2026-04-01T00:00:00Z",
+          "expires": null,
+          "description": "AR-powered navigation for rides. Kill-switch: set enabled=false to force-off in every environment regardless of rollout/targeting (enforced by FeatureFlagService.isEnabled and the router's compile-time guard). Route /nidus/ar-nav/:rideId is registered but flag-gated; entry point on Tracking page only renders when this flag resolves true during DriverEnRoute.",
+          "category": "experimental",
+          "abTestId": "ar-nav-2026-q2"
+        }
+      },
+      "voice_commands": {
+        "enabled": true,
+        "rolloutPercentage": 30,
+        "targeting": {
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU"
+          ],
+          "languages": [
+            "en",
+            "es",
+            "fr"
+          ]
+        },
+        "metadata": {
+          "owner": "mobile-team@nidaw.com",
+          "created": "2026-04-15T00:00:00Z",
+          "expires": null,
+          "description": "Voice command interface",
+          "category": "experimental",
+          "abTestId": "voice-2026-q2"
+        }
+      },
+      "chat": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-12T00:00:00Z",
+          "expires": null,
+          "description": "§2.1 in-app rider<->driver chat (/api/v1/chat REST + chat.ride.{rideId} WS topic). Kill switch: FEATURE_CHAT=false (env) unmounts the routes at next boot; persisted messages remain in Postgres. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
+        }
+      },
+      "chat_translation": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-12T00:00:00Z",
+          "expires": null,
+          "description": "§2.1 optional machine translation for chat (LibreTranslate via CHAT_TRANSLATE_ENDPOINT). Requires chat=true. Kill switch: FEATURE_CHAT_TRANSLATION=false (env) or unset CHAT_TRANSLATE_ENDPOINT; messages then ship untranslated with translated_from=null and the UI hides translation affordances — never a fake translation. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set the paired FEATURE_* env var to false and redeploy; routes unmount at next boot. Persisted rows remain queryable directly."
+        }
+      },
+      "masked_calling": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-13T00:00:00Z",
+          "expires": null,
+          "description": "§2.2 masked/anonymous calling (GET /api/v1/telephony/rides/{rideId}/contact, Twilio Proxy adapter). Kill switch: FEATURE_MASKED_CALLING=false (env) unmounts routes and stops new proxy provisioning at next boot; existing sessions expire by TTL. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set FEATURE_MASKED_CALLING=false and redeploy; the route group is not mounted and the sweeper does not start. Live proxy sessions age out via their own TTL."
+        }
+      },
+      "pre_selfie": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-13T00:00:00Z",
+          "expires": null,
+          "description": "§2.3 pre-selfie verification (POST /api/v1/driver/rides/{rideId}/pre-selfie + signed-URL redemption GET /api/v1/selfies/{id}). Kill switch: FEATURE_PRE_SELFIE=false (env) unmounts routes at next boot; driver_pre_selfie_url is omitted from ride DTOs and the rider card shows the honest 'not sent' state. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set FEATURE_PRE_SELFIE=false and redeploy; upload/redemption routes are not mounted and the DTO field is dropped. Stored images remain on disk/object storage for compliance review."
+        }
+      },
+      "cash_payment": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-15T00:00:00Z",
+          "expires": null,
+          "description": "§3.1 cash payment option (cash in GET/POST /api/v1/payment-methods, cash ride requests, POST /api/v1/nidus/rides/{rideId}/confirm-cash-collection). Kill switch: FEATURE_CASH_PAYMENT=false (env) stops accepting new cash requests and unmounts the confirm endpoint at next boot; rides already pending_cash_collection remain collectible via the wallet fallback so no driver is stranded. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set FEATURE_CASH_PAYMENT=false and redeploy; the confirm endpoint returns 404 (unmounted) and RequestRide rejects payment_method_type=cash with a validation error. Existing pending_cash_collection rows are untouched in Postgres."
+        }
+      },
+      "promotions": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-15T00:00:00Z",
+          "expires": null,
+          "description": "§3.2 promo codes & coupons (POST /api/v1/promotions/redeem pre-ride validation + projected discount, GET /api/v1/promotions/mine active-code listing, automatic discount application at receipt time, promo.granted notification fan-out). Kill switch: FEATURE_PROMOTIONS=false (env) unmounts both routes at next boot; redemption rows remain in Postgres and previously-granted codes fail validation with an explicit 'promotions unavailable' error rather than silently charging full fare. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set FEATURE_PROMOTIONS=false and redeploy; redeem/mine routes are not mounted and receipt-time application is skipped (discount_applied stays persisted on completed rides for accounting). No user-visible fake discount states are shown while off."
+        }
+      }
+    },
+    "ai_ml_features": {
+      "federated_learning": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-02-01T00:00:00Z",
+          "expires": null,
+          "description": "Federated learning for privacy-preserving ML",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      },
+      "dynamic_pricing": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-01-15T00:00:00Z",
+          "expires": null,
+          "description": "AI-powered dynamic pricing",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      },
+      "demand_forecasting": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-01-15T00:00:00Z",
+          "expires": null,
+          "description": "ML-based demand forecasting",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      },
+      "restaurant_recommendations": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "ml-team@nidaw.com",
+          "created": "2026-02-15T00:00:00Z",
+          "expires": null,
+          "description": "AI restaurant recommendations",
+          "category": "ai_ml",
+          "abTestId": null
+        }
+      }
+    },
+    "ui_features": {
+      "dark_mode": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging",
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ]
+        },
+        "metadata": {
+          "owner": "design-team@nidaw.com",
+          "created": "2026-01-01T00:00:00Z",
+          "expires": null,
+          "description": "Dark mode theme",
+          "category": "ui",
+          "abTestId": null
+        }
+      },
+      "multi_language": {
+        "enabled": true,
+        "rolloutPercentage": 100,
+        "targeting": {
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US",
+            "EU",
+            "APAC"
+          ],
+          "languages": [
+            "en",
+            "es",
+            "fr",
+            "de",
+            "ja",
+            "zh",
+            "pt",
+            "ar",
+            "hi",
+            "ko"
+          ]
+        },
+        "metadata": {
+          "owner": "i18n-team@nidaw.com",
+          "created": "2026-04-01T00:00:00Z",
+          "expires": null,
+          "description": "Multi-language support",
+          "category": "ui",
+          "abTestId": null
+        }
+      },
+      "new_homepage_design": {
+        "enabled": true,
+        "rolloutPercentage": 25,
+        "targeting": {
+          "environments": [
+            "production"
+          ],
+          "regions": [
+            "US"
+          ],
+          "userSegments": [
+            "group_a"
+          ]
+        },
+        "metadata": {
+          "owner": "design-team@nidaw.com",
+          "created": "2026-07-01T00:00:00Z",
+          "expires": "2026-09-30T23:59:59Z",
+          "description": "New homepage design A/B test",
+          "category": "ui",
+          "abTestId": "homepage-redesign-2026-q3"
+        }
+      }
+    },
+    "operational_features": {
+      "maintenance_mode": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "production"
+          ]
+        },
+        "metadata": {
+          "owner": "ops-team@nidaw.com",
+          "created": "2026-01-01T00:00:00Z",
+          "expires": null,
+          "description": "Maintenance mode toggle",
+          "category": "operational",
+          "abTestId": null
+        }
+      },
+      "read_only_mode": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "production"
+          ]
+        },
+        "metadata": {
+          "owner": "ops-team@nidaw.com",
+          "created": "2026-01-01T00:00:00Z",
+          "expires": null,
+          "description": "Read-only mode for database maintenance",
+          "category": "operational",
+          "abTestId": null
+        }
+      },
+      "beta_api_v2": {
+        "enabled": true,
+        "rolloutPercentage": 10,
+        "targeting": {
+          "environments": [
+            "production"
+          ],
+          "userSegments": [
+            "beta_testers",
+            "partners"
+          ]
+        },
+        "metadata": {
+          "owner": "api-team@nidaw.com",
+          "created": "2026-06-01T00:00:00Z",
+          "expires": "2026-12-31T23:59:59Z",
+          "description": "API v2 beta access",
+          "category": "operational",
+          "abTestId": null
+        }
+      }
     }
+  },
+  "segments": {
+    "beta_testers": {
+      "description": "Users enrolled in beta testing program",
+      "criteria": {
+        "userAttribute": "beta_enrolled",
+        "value": true
+      }
+    },
+    "early_adopters": {
+      "description": "Early adopter users",
+      "criteria": {
+        "userAttribute": "signup_date",
+        "operator": "before",
+        "value": "2026-03-01"
+      }
+    },
+    "premium_users": {
+      "description": "Users with premium subscription",
+      "criteria": {
+        "userAttribute": "subscription_tier",
+        "value": "premium"
+      }
+    },
+    "group_a": {
+      "description": "A/B test group A",
+      "criteria": {
+        "userAttribute": "ab_group",
+        "value": "A"
+      }
+    },
+    "partners": {
+      "description": "Partner accounts",
+      "criteria": {
+        "userAttribute": "account_type",
+        "value": "partner"
+      }
+    }
+  }
 }

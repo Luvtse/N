@@ -212,6 +212,26 @@ type FeatureFlags struct {
 	// is unset, boot fails loudly rather than serving unsigned/expiring links.
 	// Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnablePreSelfie bool
+	// EnableCashPayment gates the §3.1 cash payment option (cash appears in
+	// GET/POST /api/v1/payment-methods, riders may request cash rides, and
+	// drivers may confirm collection via POST
+	// /api/v1/nidus/rides/{rideId}/confirm-cash-collection). Kill switch: set
+	// FEATURE_CASH_PAYMENT=false to stop accepting new cash requests and
+	// unmount the confirm endpoint at next boot; rides already marked
+	// pending_cash_collection remain collectible through the wallet fallback
+	// path so no driver is ever stranded with an un-confirmable fare.
+	// Default false in production per CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableCashPayment bool
+	// EnablePromotions gates the §3.2 promotions module (promo-code validation
+	// via POST /api/v1/promotions/redeem, user code listing via GET
+	// /api/v1/promotions/mine, automatic discount application at receipt time,
+	// and promo.granted notification fan-out). Kill switch: set
+	// FEATURE_PROMOTIONS=false to unmount both routes at next boot; redemption
+	// rows remain in Postgres and previously-granted codes simply fail
+	// validation with a "promotions unavailable" error rather than silently
+	// charging full fare without notice. Default false in production per
+	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnablePromotions bool
 }
 
 // ============================================================================
@@ -412,6 +432,8 @@ func (c *Config) loadFeatures() {
 		EnableChatTranslation:    getBoolEnvOrDefault("FEATURE_CHAT_TRANSLATION", false),
 		EnableMaskedCalling:      getBoolEnvOrDefault("FEATURE_MASKED_CALLING", false),
 		EnablePreSelfie:          getBoolEnvOrDefault("FEATURE_PRE_SELFIE", false),
+		EnableCashPayment:        getBoolEnvOrDefault("FEATURE_CASH_PAYMENT", false),
+		EnablePromotions:         getBoolEnvOrDefault("FEATURE_PROMOTIONS", false),
 	}
 }
 
