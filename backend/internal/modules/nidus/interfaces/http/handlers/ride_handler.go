@@ -100,7 +100,7 @@ func NewRideHandler(
 		matchingEngine: matchingEngine,
 		pricingService: pricingService,
 		cancelPolicy:   cancelPolicy,
-		quoteCache:     services.NewQuoteCache(cancelPolicy.withDefaults().QuoteTTL),
+		quoteCache:     services.NewQuoteCache(cancelPolicy.WithDefaults().QuoteTTL),
 	}
 }
 
