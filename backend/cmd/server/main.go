@@ -46,6 +46,7 @@ import (
 
 	notifs "nidaw-backend/internal/shared/integrations/notifications"
 
+
 	"github.com/google/uuid"
 
 	"github.com/go-chi/chi/v5"
@@ -294,6 +295,25 @@ func main() {
 		}
 		retryWorker := notificationifaces.NewRetryWorker(dispatcher, 30*time.Second, logger)
 		go retryWorker.Run(ctxNoti)
+
+		// §1.4 driver_arriving producer: watches driver.location_updated pings,
+		// computes haversine distance to each ride's pickup, and emits
+		// driver.arriving once per tier (≤300 m "approaching", ≤80 m "arriving"),
+		// deduped per (ride, tier). The eventConsumer above turns those into
+		// rider notifications. Runs under the same FEATURE_NOTIFICATIONS switch.
+		// NB: Go method-set rules mean neither *database.Postgres nor
+		// *pgxpool.Pool directly satisfy the watcher's narrow RowQuerier port
+		// (their QueryRow returns pgx.Row, a concrete interface type); the
+		// rowQuerier adapter at the bottom of main.go bridges it.
+		arrivalWatcher := nidusservices.NewDriverArrivingWatcher(
+			nidusservices.NewPostgresRideLookup(rowQuerier{db}),
+			eventBus,
+			nidusservices.DriverArrivingWatcherConfig{},
+			logger,
+		)
+		if err := arrivalWatcher.Run(ctxNoti, eventBus); err != nil {
+			logger.Error("Failed to subscribe driver-arriving watcher", zap.Error(err))
+		}
 
 		logger.Info("Notifications substrate online",
 			zap.Bool("push_provider_configured", os.Getenv("FCM_LEGACY_ENDPOINT") != "" || os.Getenv("TWILIO_ACCOUNT_SID") != ""),
@@ -674,4 +694,16 @@ func splitCSV(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+// rowQuerier adapts *database.Postgres to the narrow RowQuerier port used by
+// nidus services (e.g. the §1.4 driver-arriving watcher's PostgresRideLookup).
+// Go method-set rules prevent *database.Postgres from satisfying the port
+// directly: its QueryRow returns pgx.Row, whereas the port declares a local
+// RowScanner interface — same shape, different named type. This wrapper makes
+// the conversion explicit and keeps the service packages free of pgx imports.
+type rowQuerier struct{ db *database.Postgres }
+
+func (q rowQuerier) QueryRow(ctx context.Context, sql string, args ...any) nidusservices.RowScanner {
+	return q.db.QueryRow(ctx, sql, args...)
 }
