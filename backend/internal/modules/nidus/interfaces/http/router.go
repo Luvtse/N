@@ -188,6 +188,9 @@ func NewRouter(deps *Dependencies) http.Handler {
 		Complete: commands.NewCompleteRideHandler(deps.DB, deps.EventBus, deps.PricingService),
 		Cancel:   commands.NewCancelRideHandler(deps.DB, deps.EventBus),
 		Rate:     rateRideCmd,
+		// §3.1: driver-side cash-collection confirm (completed -> paid + deferred
+		// settlement event). Mounted on the router only when cash is enabled.
+		ConfirmCashCollection: commands.NewConfirmCashCollectionHandler(deps.DB, deps.EventBus),
 	})
 	// §2.3: embed the honest driver pre-selfie state on rider ride DTOs when
 	// the selfie module is wired (FEATURE_PRE_SELFIE). nil => field omitted;
@@ -268,6 +271,13 @@ func NewRouter(deps *Dependencies) http.Handler {
 				// Rider-side terminal actions.
 				r.Post("/{rideID}/cancel", rideHandler.CancelRide)
 				r.Post("/{rideID}/rate", rideHandler.RateRide)
+				// §3.1 Cash Payment Option: driver confirms physical collection of
+				// the cash fare (completed -> paid + deferred settlement). Mounted
+				// only when cash is enabled; otherwise clients get a clean 404 and
+				// the tracking page never shows a confirm affordance.
+				if deps.CashEnabled {
+					r.Post("/{rideID}/confirm-cash-collection", rideHandler.ConfirmCashCollection)
+				}
 			})
 
 			// ====================================================================
