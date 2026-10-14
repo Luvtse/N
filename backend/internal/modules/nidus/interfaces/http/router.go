@@ -175,7 +175,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 
 	rideHandler := nidusHttp.NewRideHandler(
 		deps.DB,
-		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService),
+		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService, deps.PaymentMethods, deps.CashEnabled),
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
@@ -280,6 +280,24 @@ func NewRouter(deps *Dependencies) http.Handler {
 				r.Get("/pending-rides", rideHandler.PendingRides)
 				r.Get("/{driverID}", driverHandler.GetDriver)
 			})
+
+			// ====================================================================
+			// PAYMENT-METHOD REGISTRY (§3.1 Cash Payment Option). Mounted only when
+			// the payments module is wired into composition (main.go); a nil service
+			// means the routes are absent entirely, so clients get a clean 404 and
+			// render their honest "payment methods unavailable" state rather than a
+			// broken list. Endpoints: GET/POST /nidus/payment-methods,
+			// DELETE /nidus/payment-methods/{id}, PATCH .../{id}/default.
+			// ====================================================================
+			if deps.PaymentMethodSvc != nil {
+				paymentMethodHandler := payhttp.NewPaymentMethodHandler(deps.PaymentMethodSvc)
+				r.Route("/nidus/payment-methods", func(r chi.Router) {
+					r.Get("/", paymentMethodHandler.List)
+					r.Post("/", paymentMethodHandler.Create)
+					r.Delete("/{id}", paymentMethodHandler.Delete)
+					r.Patch("/{id}/default", paymentMethodHandler.SetDefault)
+				})
+			}
 
 			// ====================================================================
 			// LOCATION TRACKING (real-time)
