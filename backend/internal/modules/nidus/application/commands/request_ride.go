@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/services"
+	paydomain "nidaw-backend/internal/modules/payments/domain"
 	"nidaw-backend/internal/modules/nidus/domain/entities"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
@@ -21,6 +22,8 @@ import (
 var (
 	ErrNoDriversAvailable   = errors.New("no drivers available nearby")
 	ErrInvalidPaymentMethod = errors.New("invalid payment method")
+	ErrNoPaymentMethods     = errors.New("no payment methods on file; add one before requesting a ride")
+	ErrPaymentUnavailable   = errors.New("payment method unavailable")
 	ErrPaymentFailed        = errors.New("payment processing failed")
 	ErrInvalidLocation      = errors.New("invalid pickup or dropoff location")
 	ErrRideCreationFailed   = errors.New("failed to create ride")
@@ -52,6 +55,17 @@ type RequestRideResult struct {
 	FareAmount float64
 	Currency   string
 	ETAMinutes int
+	// §3.1: snapshot of the resolved payment method so clients can render
+	// the Cash badge without a second round-trip.
+	PaymentMethodType string
+}
+
+// PaymentMethodResolver is the narrow port RequestRideHandler needs from the
+// payments module (§3.1). It is satisfied by *payments/app.PaymentMethodService;
+// declaring it here keeps the nidus module free of an import cycle and lets
+// tests inject a fake.
+type PaymentMethodResolver interface {
+	ResolveForRide(ctx context.Context, userID uuid.UUID, methodID string) (*paydomain.PaymentMethod, error)
 }
 
 // ============================================================================
@@ -60,21 +74,30 @@ type RequestRideResult struct {
 
 // RequestRideHandler orchestrates the ride request process
 type RequestRideHandler struct {
-	db             *database.Postgres
-	eventBus       eventbus.EventBus
-	pricingService *services.PricingService
+	db               *database.Postgres
+	eventBus         eventbus.EventBus
+	pricingService   *services.PricingService
+	paymentResolvers PaymentMethodResolver // nil = legacy behaviour (no resolution)
+	cashEnabled      bool                  // §3.1 cash_payment feature flag
 }
 
-// NewRequestRideHandler creates a new RequestRideHandler
+// NewRequestRideHandler creates a new RequestRideHandler.
+// paymentResolvers may be nil (feature off / not configured); cashEnabled
+// mirrors the cash_payment flag — when false, rides resolving to cash are
+// rejected with PAYMENT_UNAVAILABLE rather than silently created.
 func NewRequestRideHandler(
 	db *database.Postgres,
 	eventBus eventbus.EventBus,
 	pricingService *services.PricingService,
+	paymentResolvers PaymentMethodResolver,
+	cashEnabled bool,
 ) *RequestRideHandler {
 	return &RequestRideHandler{
-		db:             db,
-		eventBus:       eventBus,
-		pricingService: pricingService,
+		db:               db,
+		eventBus:         eventBus,
+		pricingService:   pricingService,
+		paymentResolvers: paymentResolvers,
+		cashEnabled:      cashEnabled,
 	}
 }
 
@@ -85,7 +108,24 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		return nil, err
 	}
 
-	// 2. Calculate fare using pricing service
+	// 2. Resolve the payment method (§3.1). When the payments module is wired,
+	// a ride may only be created for a method the rider actually owns; we
+	// snapshot its type on the ride row so completion routing (cash -> collect
+	// on completion) and the client Cash badge never need to re-query.
+	var paymentType string
+	if h.paymentResolvers != nil {
+		method, err := h.paymentResolvers.ResolveForRide(ctx, cmd.UserID, cmd.PaymentMethodID)
+		if err != nil {
+			return nil, mapPaymentResolveError(err)
+		}
+		if method.Type == paydomain.MethodTypeCash && !h.cashEnabled {
+			// Kill-switch semantics: cash_payment off => reject with PAYMENT_UNAVAILABLE.
+			return nil, ErrPaymentUnavailable
+		}
+		paymentType = string(method.Type)
+	}
+
+	// 3. Calculate fare using pricing service
 	rideType := services.RideType(cmd.RideType)
 	if rideType == "" {
 		rideType = services.RideTypeStandard
@@ -120,9 +160,12 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		Currency:        fareEstimate.Currency,
 		DistanceKm:      fareEstimate.DistanceKm,
 		DurationMinutes: fareEstimate.DurationMinutes,
-		RequestedAt:     now,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		// §3.1: method snapshot resolved before creation (empty when the
+		// payments module is not wired — legacy rides behave as before).
+		PaymentMethodType: paymentType,
+		RequestedAt:       now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 
 	// 4. Persist ride to database
@@ -139,12 +182,28 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 
 	// 6. Return result
 	return &RequestRideResult{
-		RideID:     rideID,
-		Status:     string(ride.Status),
-		FareAmount: ride.FareAmount,
-		Currency:   ride.Currency,
-		ETAMinutes: fareEstimate.EstimatedPickup,
+		RideID:            rideID,
+		Status:            string(ride.Status),
+		FareAmount:        ride.FareAmount,
+		Currency:          ride.Currency,
+		ETAMinutes:        fareEstimate.EstimatedPickup,
+		PaymentMethodType: paymentType,
 	}, nil
+}
+
+// mapPaymentResolveError converts payments-domain errors into command-level
+// errors so the HTTP layer's mapCommandError can produce stable codes.
+func mapPaymentResolveError(err error) error {
+	switch {
+	case errors.Is(err, paydomain.ErrNotFound):
+		return fmt.Errorf("%w: unknown payment method", ErrInvalidPaymentMethod)
+	case errors.Is(err, paydomain.ErrForbidden):
+		return fmt.Errorf("%w: payment method belongs to another user", ErrInvalidPaymentMethod)
+	case errors.Is(err, paydomain.ErrNoPaymentMethods):
+		return ErrNoPaymentMethods
+	default:
+		return fmt.Errorf("%w: %v", ErrInvalidPaymentMethod, err)
+	}
 }
 
 // ============================================================================
@@ -205,10 +264,11 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 			id, user_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 			pickup_address, dropoff_address, ride_type, status,
 			fare_amount, currency, distance_km, duration_minutes,
+			payment_method_type,
 			requested_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17
+			$11, $12, $13, $14, $15, $16, $17, $18
 		)
 	`
 
@@ -221,6 +281,7 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 		ride.RideType, string(ride.Status),
 		ride.FareAmount, ride.Currency,
 		ride.DistanceKm, ride.DurationMinutes,
+		ride.PaymentMethodType,
 		ride.RequestedAt, ride.CreatedAt, ride.UpdatedAt,
 	)
 

@@ -33,6 +33,11 @@ const (
 	// RideStatusCompleted - ride has been completed
 	RideStatusCompleted RideStatus = "completed"
 
+	// RideStatusPaid - fare settled. For digital methods this happens at
+	// completion; for cash rides (§3.1) it is reached only after the driver
+	// confirms physical collection (completed -> paid).
+	RideStatusPaid RideStatus = "paid"
+
 	// RideStatusCancelled - ride was cancelled
 	RideStatusCancelled RideStatus = "cancelled"
 
