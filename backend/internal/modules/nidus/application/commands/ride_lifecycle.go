@@ -549,7 +549,8 @@ type CancelRideCommand struct {
 	UserID      uuid.UUID // authenticated subject (rider or driver-user)
 	RideID      uuid.UUID
 	Reason      string
-	CancelledBy string // "rider" | "driver" (derived server-side, never client input)
+	CancelledBy string  // "rider" | "driver" (derived server-side, never client input)
+	RiderCancelFee float64 // §2.5: authoritative fee computed by the SAME policy function that backs GET /cancellation-quote; charged only when the actor is the rider and > 0
 }
 
 type CancelRideHandler struct{ lifecycleBase }

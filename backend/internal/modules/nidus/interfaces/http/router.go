@@ -247,6 +247,10 @@ func NewRouter(deps *Dependencies) http.Handler {
 				r.Post("/{rideID}/accept", rideHandler.AcceptRide)
 				r.Post("/{rideID}/start", rideHandler.StartRide)
 				r.Post("/{rideID}/complete", rideHandler.CompleteRide)
+				// §2.5 — Authoritative cancellation-fee quote. Shares one policy
+				// implementation with POST /{rideID}/cancel below, so the number
+				// the rider sees is the number they pay.
+				r.Get("/{rideID}/cancellation-quote", rideHandler.CancellationQuote)
 				// Rider-side terminal actions.
 				r.Post("/{rideID}/cancel", rideHandler.CancelRide)
 				r.Post("/{rideID}/rate", rideHandler.RateRide)

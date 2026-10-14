@@ -72,9 +72,11 @@ func DefaultCancellationPolicy() CancellationPolicyConfig {
 	}
 }
 
-// withDefaults substitutes zero-valued fields with production defaults so a
+// WithDefaults substitutes zero-valued fields with production defaults so a
 // partially-specified config can never disable the free window or the cache.
-func (c CancellationPolicyConfig) withDefaults() CancellationPolicyConfig {
+// Exported because the HTTP layer builds the quote cache from the effective
+// TTL before any quote is computed.
+func (c CancellationPolicyConfig) WithDefaults() CancellationPolicyConfig {
 	d := DefaultCancellationPolicy()
 	if c.FreeWindowDuration <= 0 {
 		c.FreeWindowDuration = d.FreeWindowDuration
@@ -146,7 +148,7 @@ func ComputeCancellationQuote(
 		return nil, ErrRideNotCancellable
 	}
 
-	p := policy.withDefaults()
+	p := policy.WithDefaults()
 	currency := ride.Currency
 	if currency == "" {
 		currency = "ETB"
@@ -283,6 +285,15 @@ func (c *QuoteCache) Put(rideID uuid.UUID, quote *CancellationQuote, now time.Ti
 	stored := *quote
 	stored.FromCache = false
 	c.items[rideID] = cachedQuote{quote: &stored, expires: now.Add(c.ttl)}
+}
+
+// Evict removes any cached quote for the ride. Called by the cancel command
+// path so a quote fetched moments before cancellation is never served stale
+// after the ride has already been charged.
+func (c *QuoteCache) Evict(rideID uuid.UUID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.items, rideID)
 }
 
 // Len exposes the current entry count for tests/telemetry.
