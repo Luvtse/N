@@ -28,10 +28,14 @@ var (
 	ErrInvalidLocation      = errors.New("invalid pickup or dropoff location")
 	ErrRideCreationFailed   = errors.New("failed to create ride")
 	ErrSamePickupAndDropoff = errors.New("pickup and dropoff locations must be different")
-	// §3.6 Scheduled rides: booking-window violations, surfaced as stable
-	// codes by the HTTP layer (SCHEDULED_TOO_SOON / SCHEDULED_TOO_FAR_OUT).
+	// ErrScheduledTooSoon = scheduled-ride booking-window violations, surfaced as
+	// stable codes by the HTTP layer (SCHEDULED_TOO_SOON / SCHEDULED_TOO_FAR_OUT).
 	ErrScheduledTooSoon = errors.New("scheduled time must be at least 15 minutes from now")
 	ErrScheduledTooFar  = errors.New("scheduled time must be no more than 30 days from now")
+	// ErrPromotionsDisabled is returned when a request carries a PromoCode while
+	// the promotions feature flag is off (kill-switch semantics: never silently
+	// ignore a money-affecting input). HTTP maps it to PROMO_DISABLED.
+	ErrPromotionsDisabled = errors.New("promotions are not enabled")
 )
 
 // ============================================================================
@@ -50,6 +54,11 @@ type RequestRideCommand struct {
 	RideType        string
 	PaymentMethodID string
 	ScheduledAt     *time.Time
+	// §3.2 Promo Codes & Coupons: the code the rider projected via
+	// POST /promotions/redeem before confirming the request. Empty = no promo.
+	// The code is normalized and consumed at request time (ApplyAtRequest);
+	// the resulting discount is stored on the ride row as a snapshot.
+	PromoCode string
 }
 
 // RequestRideResult contains the outcome of a ride request
@@ -62,6 +71,13 @@ type RequestRideResult struct {
 	// §3.1: snapshot of the resolved payment method so clients can render
 	// the Cash badge without a second round-trip.
 	PaymentMethodType string
+	// §3.2: promo fields echo what was actually applied (not what the client
+	// asked for). PromoApplied is false when no code was given or when the
+	// application downgraded to "no discount" — clients then show the undis-
+	// counted fare honestly rather than the stale projected number.
+	PromoApplied  bool
+	PromoCode     string
+	PromoDiscount float64
 }
 
 // PaymentMethodResolver is the narrow port RequestRideHandler needs from the
@@ -71,6 +87,30 @@ type RequestRideResult struct {
 type PaymentMethodResolver interface {
 	ResolveForRide(ctx context.Context, userID uuid.UUID, methodID string) (*paydomain.PaymentMethod, error)
 }
+
+// PromoApplier is the narrow port RequestRideHandler needs from the promotions
+// module (§3.2): consume the rider's projected promo code and bind it to the
+// freshly created ride. It is satisfied by *promotions/app.Service (declared
+// structurally so nidus never imports the promotions package — same dependency
+// direction as PaymentMethodResolver). Returning ErrPromoNotFound means the
+// code no longer exists; any other error, or ErrRedemptionNotFound, downgrades
+// to "ride proceeds without a discount" per §3.2 — a promo hiccup must never
+// block a ride request.
+type PromoApplier interface {
+	ApplyAtRequest(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, finalFare float64) (*PromoApplication, error)
+}
+
+// PromoApplication is the structural shape of the promotions module's applied
+// result (code + authoritative discount for this fare).
+type PromoApplication struct {
+	Code     string
+	Discount float64
+}
+
+// ErrPromoNotFound mirrors promotions/domain.ErrCodeNotFound at the command
+// boundary; the HTTP layer maps it to PROMO_NOT_FOUND so the client can show
+// an inline error on the promo sheet instead of silently dropping the code.
+var ErrPromoNotFound = errors.New("promo code not found")
 
 // ============================================================================
 // HANDLER
@@ -83,18 +123,29 @@ type RequestRideHandler struct {
 	pricingService   *services.PricingService
 	paymentResolvers PaymentMethodResolver // nil = legacy behaviour (no resolution)
 	cashEnabled      bool                  // §3.1 cash_payment feature flag
+	// §3.2: promotions port, injected structurally (nil => promo codes are a
+	// no-op and rides never carry discounts). Enabled mirrors the
+	// promotions feature flag: when false, a supplied PromoCode is rejected
+	// with ErrPromotionsDisabled so the client shows an honest "promos
+	// unavailable" state instead of silently ignoring the code.
+	promoApplier PromoApplier
+	promoEnabled bool
 }
 
 // NewRequestRideHandler creates a new RequestRideHandler.
 // paymentResolvers may be nil (feature off / not configured); cashEnabled
 // mirrors the cash_payment flag — when false, rides resolving to cash are
 // rejected with PAYMENT_UNAVAILABLE rather than silently created.
+// promoApplier may be nil (promotions module unwired); promoEnabled mirrors
+// the promotions flag (§3.2).
 func NewRequestRideHandler(
 	db *database.Postgres,
 	eventBus eventbus.EventBus,
 	pricingService *services.PricingService,
 	paymentResolvers PaymentMethodResolver,
 	cashEnabled bool,
+	promoApplier PromoApplier,
+	promoEnabled bool,
 ) *RequestRideHandler {
 	return &RequestRideHandler{
 		db:               db,
@@ -102,6 +153,8 @@ func NewRequestRideHandler(
 		pricingService:   pricingService,
 		paymentResolvers: paymentResolvers,
 		cashEnabled:      cashEnabled,
+		promoApplier:     promoApplier,
+		promoEnabled:     promoEnabled,
 	}
 }
 
@@ -149,6 +202,32 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 	rideID := uuid.New()
 	now := time.Now().UTC()
 
+	// §3.2: apply the rider's projected promo code (if any) to the freshly
+	// minted ride id BEFORE persisting, so the discount snapshot lands on the
+	// same INSERT that creates the ride — there is no window where a ride
+	// exists with a bound redemption but no stored discount. Failure policy
+	// per plan: an unknown/expired code fails the request loudly (the client
+	// showed a stale projection); anything else (store hiccup, missing
+	// projection row) downgrades to "no discount applied" and logs — a promo
+	// problem must never block someone from getting a ride.
+	var promoCode string
+	var promoDiscount float64
+	if cmd.PromoCode != "" {
+		if !h.promoEnabled || h.promoApplier == nil {
+			return nil, ErrPromotionsDisabled
+		}
+		applied, err := h.promoApplier.ApplyAtRequest(ctx, cmd.UserID, cmd.PromoCode, rideID, float64(fareEstimate.TotalFare)/100.0)
+		switch {
+		case err == nil && applied != nil:
+			promoCode = applied.Code
+			promoDiscount = round2(applied.Discount)
+		case errors.Is(err, ErrPromoNotFound):
+			return nil, fmt.Errorf("%w: %s", ErrPromoNotFound, cmd.PromoCode)
+		default:
+			fmt.Printf("warning: promo %q application failed for ride %s, proceeding without discount: %v\n", cmd.PromoCode, rideID, err)
+		}
+	}
+
 	ride := &entities.Ride{
 		ID:              rideID,
 		UserID:          cmd.UserID,
@@ -167,6 +246,9 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		// §3.1: method snapshot resolved before creation (empty when the
 		// payments module is not wired — legacy rides behave as before).
 		PaymentMethodType: paymentType,
+		// §3.2: promo snapshot computed before persistence; empty/0 = no code.
+		PromoCode:     promoCode,
+		PromoDiscount: promoDiscount,
 		// §3.6: requested pickup time for a scheduled ride; nil = on-demand.
 		ScheduledAt: cmd.ScheduledAt,
 		RequestedAt: now,
@@ -194,6 +276,9 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		Currency:          ride.Currency,
 		ETAMinutes:        fareEstimate.EstimatedPickup,
 		PaymentMethodType: paymentType,
+		PromoApplied:      promoCode != "",
+		PromoCode:         promoCode,
+		PromoDiscount:     promoDiscount,
 	}, nil
 }
 
@@ -280,11 +365,11 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 			id, user_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 			pickup_address, dropoff_address, ride_type, status,
 			fare_amount, currency, distance_km, duration_minutes,
-			payment_method_type, scheduled_at,
+			payment_method_type, scheduled_at, promo_code, promo_discount,
 			requested_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18, $19
+			$11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 		)
 	`
 
@@ -298,6 +383,8 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 		ride.FareAmount, ride.Currency,
 		ride.DistanceKm, ride.DurationMinutes,
 		ride.PaymentMethodType, ride.ScheduledAt,
+		// §3.2 promo snapshot columns (migration 009); empty/0 = no code.
+		ride.PromoCode, ride.PromoDiscount,
 		ride.RequestedAt, ride.CreatedAt, ride.UpdatedAt,
 	)
 
