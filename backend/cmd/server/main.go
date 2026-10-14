@@ -25,6 +25,7 @@ import (
 	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
 	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	paymentsapp "nidaw-backend/internal/modules/payments/application"
 	notificationapp "nidaw-backend/internal/modules/notifications/application"
 	notificationinfra "nidaw-backend/internal/modules/notifications/infrastructure"
 	notificationifaces "nidaw-backend/internal/modules/notifications/interfaces"
@@ -206,6 +207,20 @@ func main() {
 	if ledgerComps != nil {
 		nidusDeps.TipSettler = nidushandlers.NewLedgerTipSettler(ledgerComps.Deps.Ledger)
 	}
+	// §3.1 Cash Payment Option: construct the payment-method registry service
+	// (Postgres-backed, migration 007) and hand it to the nidus router. The
+	// registry routes (GET/POST/DELETE/PATCH /api/v1/nidus/payment-methods)
+	// mount only when PaymentMethodSvc is non-nil; CashEnabled mirrors the
+	// FEATURE_CASH_PAYMENT kill switch — with the flag off, cash rows are
+	// hidden from the list, cash adds are rejected, RequestRide refuses cash
+	// resolution, and confirm-cash-collection stays unmounted. Same binary,
+	// env flips the behaviour.
+	paymentMethodSvc := paymentsapp.NewPaymentMethodService(
+		paymentsapp.NewPostgresPaymentMethodRepository(db),
+	)
+	nidusDeps.PaymentMethodSvc = paymentMethodSvc
+	nidusDeps.PaymentMethods = paymentMethodSvc
+	nidusDeps.CashEnabled = cfg.Features.EnableCashPayment
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
 
 	// Phase 1 audit fix: wire the WS bridge. Without this the hub is an
