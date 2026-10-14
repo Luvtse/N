@@ -39,8 +39,11 @@ type RideHandler struct {
 	acceptRideCmd   *commands.AcceptRideHandler
 	startRideCmd    *commands.StartRideHandler
 	completeRideCmd *commands.CompleteRideHandler
-	preSelfie       PreSelfieAttacher
-	etaService      *services.ETAService
+	// confirmCashCmd completes the §3.1 cash loop: driver-side confirmation
+	// that physical collection happened (completed -> paid + settlement event).
+	confirmCashCmd *commands.ConfirmCashCollectionHandler
+	preSelfie      PreSelfieAttacher
+	etaService     *services.ETAService
 }
 
 // PreSelfieAttacher is the minimal port RideHandler needs from the selfie
@@ -81,6 +84,8 @@ type LifecycleCommands struct {
 	Complete *commands.CompleteRideHandler
 	Cancel   *commands.CancelRideHandler
 	Rate     *commands.RateRideHandler
+	// ConfirmCashCollection is the §3.1 driver-side cash-collection confirm.
+	ConfirmCashCollection *commands.ConfirmCashCollectionHandler
 }
 
 // SetLifecycle wires the lifecycle command handlers into this HTTP handler.
@@ -90,6 +95,7 @@ func (h *RideHandler) SetLifecycle(lc LifecycleCommands) {
 	h.completeRideCmd = lc.Complete
 	h.cancelRideCmd = lc.Cancel
 	h.rateRideCmd = lc.Rate
+	h.confirmCashCmd = lc.ConfirmCashCollection
 }
 
 // NewRideHandler creates a new ride handler
@@ -720,6 +726,11 @@ func mapLifecycleError(err error) (int, string, string) {
 		return http.StatusBadRequest, "TIP_TOO_LARGE", "tip must be between 0 and the fare amount"
 	case errors.Is(err, commands.ErrFareCalcFailed):
 		return http.StatusInternalServerError, "FARE_CALC_FAILED", "final fare calculation failed"
+	// §3.1 cash-collection confirmation sentinels.
+	case errors.Is(err, commands.ErrNotACashRide):
+		return http.StatusConflict, "NOT_A_CASH_RIDE", "this ride was not requested with cash payment"
+	case errors.Is(err, commands.ErrRideNotEligibleForCashCollection):
+		return http.StatusConflict, "CASH_NOT_ELIGIBLE", "ride is not awaiting cash collection"
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}
@@ -902,6 +913,51 @@ func (h *RideHandler) CompleteRide(w http.ResponseWriter, r *http.Request) {
 		DriverEarnings:   res.DriverEarnings,
 		Tip:              res.Tip,
 		SettlementQueued: !res.Settled,
+	})
+}
+
+// ConfirmCashCollectionResponse reports the §3.1 collection-confirmation outcome.
+type ConfirmCashCollectionResponse struct {
+	RideID           uuid.UUID `json:"ride_id"`
+	Status           string    `json:"status"`
+	CashCollectedAt  time.Time `json:"cash_collected_at"`
+	AlreadyCollected bool      `json:"already_collected"`
+}
+
+// ConfirmCashCollection handles POST /api/v1/nidus/rides/{rideID}/confirm-cash-collection
+// (driver, §3.1). The driver attests they physically collected the cash fare;
+// this stamps cash_collected_at, moves completed -> paid, and emits the deferred
+// settlement event. Idempotent: a replay returns 200 with already_collected=true
+// and no double settlement. Non-cash rides get 409 NOT_A_CASH_RIDE; rides not in
+// the pending_cash_collection state get 409 CASH_NOT_ELIGIBLE.
+func (h *RideHandler) ConfirmCashCollection(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	rideID, ok := parseRideID(w, r)
+	if !ok {
+		return
+	}
+	if h.confirmCashCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "confirm cash collection not yet wired")
+		return
+	}
+	res, err := h.confirmCashCmd.Execute(r.Context(), &commands.ConfirmCashCollectionCommand{
+		DriverUserID: userID,
+		RideID:       rideID,
+	})
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, ConfirmCashCollectionResponse{
+		RideID:           res.RideID,
+		Status:           res.Status,
+		CashCollectedAt:  res.CashCollectedAt,
+		AlreadyCollected: res.AlreadyCollected,
 	})
 }
 

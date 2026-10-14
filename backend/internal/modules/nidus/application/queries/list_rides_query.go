@@ -211,6 +211,9 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 		&rating,
 		&review,
 		&tipAmount,
+		&paymentMethodType,
+		&cashCollectedAt,
+		&scheduledAt,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
 	)
@@ -249,6 +252,17 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	}
 	if tipAmount.Valid {
 		ride.TipAmount = tipAmount.Float64
+	}
+	// §3.1/§3.6: money + scheduling columns. COALESCE in the SELECT guarantees
+	// the method type is never SQL-NULL; the timestamps stay nil for legacy rows.
+	ride.PaymentMethodType = paymentMethodType.String
+	if cashCollectedAt.Valid {
+		t := cashCollectedAt.Time
+		ride.CashCollectedAt = &t
+	}
+	if scheduledAt.Valid {
+		t := scheduledAt.Time
+		ride.ScheduledAt = &t
 	}
 
 	return &ride, nil
