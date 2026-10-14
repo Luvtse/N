@@ -170,11 +170,24 @@ func (m *MatchingEngine) getAvailableDrivers(
 }
 
 // GetDriverByID retrieves a driver by ID. Exported for use by HTTP handlers.
+// §2.4: the SELECT now pulls every drivers-table column the rider-facing driver
+// card needs (full_name, plate/model/color, verification flags, created_at for
+// years-active). photo_url, vehicle_make and rating_count do NOT exist as columns
+// anywhere in this codebase — they stay zero-valued on the entity and the handler
+// serializes them as null so the client renders "Not provided" (Global Rule 2:
+// never fabricate). Nullable columns are scanned into pointers so a SQL NULL
+// degrades to the zero value instead of failing the entire row scan.
 func (m *MatchingEngine) GetDriverByID(ctx context.Context, driverID uuid.UUID) (*entities.Driver, error) {
 	var driver entities.Driver
+	var fullName *string
+	var vehicleModel, vehicleColor, vehiclePlate *string
+	var licenseVerified, backgroundCheck, vehicleInspected *bool
+	var createdAt *time.Time
 	query := `
-		SELECT id, user_id, rating, acceptance_rate, completion_rate,
-		       current_lat, current_lng, status, vehicle_type
+		SELECT id, user_id, rating, acceptance_rate, completion_rate, total_rides,
+		       current_lat, current_lng, status, vehicle_type,
+		       full_name, vehicle_plate, vehicle_model, vehicle_color,
+		       license_verified, background_check, vehicle_inspected, created_at
 		FROM drivers
 		WHERE id = $1
 	`
@@ -184,13 +197,46 @@ func (m *MatchingEngine) GetDriverByID(ctx context.Context, driverID uuid.UUID) 
 		&driver.Rating,
 		&driver.AcceptanceRate,
 		&driver.CompletionRate,
+		&driver.TotalRides,
 		&driver.CurrentLat,
 		&driver.CurrentLng,
 		&driver.Status,
 		&driver.VehicleType,
+		&fullName,
+		&vehiclePlate,
+		&vehicleModel,
+		&vehicleColor,
+		&licenseVerified,
+		&backgroundCheck,
+		&vehicleInspected,
+		&createdAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if fullName != nil {
+		driver.FullName = *fullName
+	}
+	if vehiclePlate != nil {
+		driver.VehiclePlate = *vehiclePlate
+	}
+	if vehicleModel != nil {
+		driver.VehicleModel = *vehicleModel
+	}
+	if vehicleColor != nil {
+		driver.VehicleColor = *vehicleColor
+	}
+	if licenseVerified != nil {
+		driver.LicenseVerified = *licenseVerified
+	}
+	if backgroundCheck != nil {
+		driver.BackgroundCheck = *backgroundCheck
+	}
+	if vehicleInspected != nil {
+		driver.VehicleInspected = *vehicleInspected
+	}
+	if createdAt != nil {
+		driver.CreatedAt = *createdAt
 	}
 	return &driver, nil
 }
