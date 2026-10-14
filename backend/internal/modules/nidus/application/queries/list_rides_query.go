@@ -127,7 +127,10 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 		return nil, fmt.Errorf("failed to count rides: %w", err)
 	}
 
-	// Build main query
+	// Build main query. §3.1/§3.6: payment_method_type, cash_collected_at and
+	// scheduled_at are scanned so the history list can show the Cash badge and
+	// the Scheduled chip without an extra round-trip per ride. COALESCE keeps
+	// legacy rows (pre-migration 007) scanning cleanly into empty strings.
 	mainQuery := fmt.Sprintf(`
 		SELECT 
 			id, user_id, driver_id,
@@ -137,6 +140,7 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 			distance_km, duration_minutes,
 			requested_at, matched_at, completed_at,
 			rating, review, tip_amount,
+			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 			created_at, updated_at
 		FROM rides
 		WHERE %s
@@ -180,6 +184,10 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	var matchedAt, completedAt pgtype.Timestamptz
 	var review pgtype.Text
 	var tipAmount pgtype.Float8
+	// §3.1/§3.6 money + scheduling columns: nullable so legacy rows (created
+	// before migrations 007/008) scan cleanly into zero values / nil pointers.
+	var paymentMethodType pgtype.Text
+	var cashCollectedAt, scheduledAt pgtype.Timestamptz
 
 	err := rows.Scan(
 		&ride.ID,
