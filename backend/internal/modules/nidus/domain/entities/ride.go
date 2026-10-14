@@ -96,6 +96,12 @@ type Ride struct {
 	Currency   string  `json:"currency" db:"currency"`
 	TipAmount  float64 `json:"tip_amount,omitempty" db:"tip_amount"`
 
+	// §2.5 Cancellation accounting (authoritative, computed server-side by the
+	// shared cancellation policy — never trusted from client input).
+	CancelFee    float64 `json:"cancel_fee" db:"cancel_fee"`
+	CancelledBy  string  `json:"cancelled_by,omitempty" db:"cancelled_by"`
+	CancelReason string  `json:"cancel_reason,omitempty" db:"cancel_reason"`
+
 	// Trip Metrics
 	DistanceKm      float64 `json:"distance_km,omitempty" db:"distance_km"`
 	DurationMinutes int     `json:"duration_minutes,omitempty" db:"duration_minutes"`

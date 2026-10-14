@@ -162,6 +162,14 @@ type RideResponse struct {
 	RequestedAt     time.Time   `json:"requested_at"`
 	MatchedAt       *time.Time  `json:"matched_at,omitempty"`
 	CompletedAt     *time.Time  `json:"completed_at,omitempty"`
+	// §2.5: authoritative cancellation accounting, persisted server-side by
+	// the shared cancellation policy at the instant of cancel. CancelFee is
+	// omitted unless a fee was actually charged; CancelledBy/CancelReason are
+	// present only on cancelled rides so the client can reconcile the number it
+	// saw in the quote against the number it pays.
+	CancelFee    *float64 `json:"cancel_fee,omitempty"`
+	CancelledBy  string   `json:"cancelled_by,omitempty"`
+	CancelReason string   `json:"cancel_reason,omitempty"`
 	// PreSelfie carries the §2.3 driver pre-selfie verification state for the
 	// rider. Omitted (nil) when the feature is off/unwired — clients then show
 	// their honest "verification unavailable" state, never a fabricated one.
@@ -407,15 +415,15 @@ func (h *RideHandler) GetActiveRide(w http.ResponseWriter, r *http.Request) {
 // free-window countdown, machine-readable reason code, and an itemized
 // breakdown whose amounts sum to `fee`. Clients never compute fees.
 type CancellationQuoteResponse struct {
-	RideID                     uuid.UUID                    `json:"ride_id"`
-	Fee                        float64                      `json:"fee"`
-	Currency                   string                       `json:"currency"`
+	RideID                     uuid.UUID                       `json:"ride_id"`
+	Fee                        float64                         `json:"fee"`
+	Currency                   string                          `json:"currency"`
 	ReasonCode                 services.CancellationReasonCode `json:"reason_code"`
-	FreeWindowSecondsRemaining int                          `json:"free_window_seconds_remaining"`
-	Breakdown                  []services.BreakdownItem     `json:"breakdown"`
-	ComputedAt                 time.Time                    `json:"computed_at"`
-	ExpiresAt                  time.Time                    `json:"expires_at"`
-	FromCache                  bool                         `json:"from_cache"`
+	FreeWindowSecondsRemaining int                             `json:"free_window_seconds_remaining"`
+	Breakdown                  []services.BreakdownItem        `json:"breakdown"`
+	ComputedAt                 time.Time                       `json:"computed_at"`
+	ExpiresAt                  time.Time                       `json:"expires_at"`
+	FromCache                  bool                            `json:"from_cache"`
 }
 
 // CancellationQuote handles GET /api/v1/nidus/rides/{rideID}/cancellation-quote
@@ -553,9 +561,9 @@ func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ride, err := h.cancelRideCmd.Execute(ctx, &commands.CancelRideCommand{
-		UserID:        userID,
-		RideID:        rideID,
-		Reason:        req.Reason,
+		UserID:         userID,
+		RideID:         rideID,
+		Reason:         req.Reason,
 		RiderCancelFee: feeForRider,
 	})
 	if err != nil {
@@ -979,6 +987,12 @@ func toRideResponse(ride *entities.Ride) RideResponse {
 	if ride.DurationMinutes > 0 {
 		resp.DurationMinutes = &ride.DurationMinutes
 	}
+
+	if ride.CancelFee > 0 {
+		resp.CancelFee = &ride.CancelFee
+	}
+	resp.CancelledBy = ride.CancelledBy
+	resp.CancelReason = ride.CancelReason
 
 	return resp
 }

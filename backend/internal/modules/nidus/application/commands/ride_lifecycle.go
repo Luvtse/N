@@ -86,6 +86,7 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		       COALESCE(pickup_address, ''), COALESCE(dropoff_address, ''),
 		       ride_type, status,
 		       COALESCE(fare_amount, 0), COALESCE(currency, 'ETB'), COALESCE(tip_amount, 0),
+		       COALESCE(cancel_fee, 0), COALESCE(cancelled_by, ''), COALESCE(cancel_reason, ''),
 		       COALESCE(distance_km, 0), COALESCE(duration_minutes, 0),
 		       requested_at, matched_at, started_at, completed_at,
 		       COALESCE(rating, 0), created_at, updated_at
@@ -95,6 +96,7 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&r.PickupAddress, &r.DropoffAddress,
 		&r.RideType, &r.Status,
 		&r.FareAmount, &r.Currency, &r.TipAmount,
+		&r.CancelFee, &r.CancelledBy, &r.CancelReason,
 		&r.DistanceKm, &r.DurationMinutes,
 		&r.RequestedAt, &r.MatchedAt, &r.StartedAt, &r.CompletedAt,
 		&r.Rating, &r.CreatedAt, &r.UpdatedAt,
@@ -546,10 +548,10 @@ func round2(v float64) float64 {
 // ============================================================================
 
 type CancelRideCommand struct {
-	UserID      uuid.UUID // authenticated subject (rider or driver-user)
-	RideID      uuid.UUID
-	Reason      string
-	CancelledBy string  // "rider" | "driver" (derived server-side, never client input)
+	UserID         uuid.UUID // authenticated subject (rider or driver-user)
+	RideID         uuid.UUID
+	Reason         string
+	CancelledBy    string  // "rider" | "driver" (derived server-side, never client input)
 	RiderCancelFee float64 // §2.5: authoritative fee computed by the SAME policy function that backs GET /cancellation-quote; charged only when the actor is the rider and > 0
 }
 
@@ -592,10 +594,19 @@ func (h *CancelRideHandler) Execute(ctx context.Context, cmd *CancelRideCommand)
 	if reason == "" {
 		reason = "no reason provided"
 	}
+	// §2.5: the authoritative fee is persisted only when the RIDER is the
+	// cancelling actor and the shared policy computed a positive charge.
+	// Driver-initiated cancels never fee the rider (cancel_fee stays 0).
+	chargedFee := 0.0
+	if actor == "rider" && cmd.RiderCancelFee > 0 {
+		chargedFee = cmd.RiderCancelFee
+	}
+
 	tag, err := h.db.Exec(ctx, `
-		UPDATE rides SET status = 'cancelled', cancel_reason = $3, updated_at = $2
+UPDATE rides SET status = 'cancelled', cancel_reason = $3, updated_at = $2,
+		       cancel_fee = $4, cancelled_by = $5
 		 WHERE id = $1 AND status IN ('requested','searching','matched','driver_en_route')`,
-		ride.ID, now, reason)
+		ride.ID, now, reason, chargedFee, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -613,6 +624,9 @@ func (h *CancelRideHandler) Execute(ctx context.Context, cmd *CancelRideCommand)
 	}
 
 	ride.Status = entities.RideStatusCancelled
+	ride.CancelFee = chargedFee
+	ride.CancelledBy = actor
+	ride.CancelReason = reason
 
 	ev := &nidusevents.RideCancelled{
 		RideID: ride.ID, UserID: ride.UserID, DriverID: ride.DriverID,

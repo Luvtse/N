@@ -169,6 +169,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
 		deps.PricingService,
+		services.DefaultCancellationPolicy(),
 	)
 	rideHandler.SetLifecycle(nidusHttp.LifecycleCommands{
 		Accept:   commands.NewAcceptRideHandler(deps.DB, deps.EventBus, deps.MatchingEngine, deps.PricingService),
