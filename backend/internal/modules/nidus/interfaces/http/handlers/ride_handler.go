@@ -31,6 +31,8 @@ type RideHandler struct {
 	matchingEngine  *services.MatchingEngine
 	pricingService  *services.PricingService
 	cancelRideCmd   *commands.CancelRideHandler
+	cancelPolicy    services.CancellationPolicyConfig
+	quoteCache      *services.QuoteCache
 	rateRideCmd     *commands.RateRideHandler
 	acceptRideCmd   *commands.AcceptRideHandler
 	startRideCmd    *commands.StartRideHandler
@@ -88,6 +90,7 @@ func NewRideHandler(
 	listRidesQuery *queries.ListRidesQuery,
 	matchingEngine *services.MatchingEngine,
 	pricingService *services.PricingService,
+	cancelPolicy services.CancellationPolicyConfig,
 ) *RideHandler {
 	return &RideHandler{
 		db:             db,
@@ -96,6 +99,8 @@ func NewRideHandler(
 		listRidesQuery: listRidesQuery,
 		matchingEngine: matchingEngine,
 		pricingService: pricingService,
+		cancelPolicy:   cancelPolicy,
+		quoteCache:     services.NewQuoteCache(cancelPolicy.withDefaults().QuoteTTL),
 	}
 }
 
@@ -396,8 +401,121 @@ func (h *RideHandler) GetActiveRide(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toRideResponse(ride))
 }
 
+// CancellationQuoteResponse is the JSON body for
+// GET /api/v1/nidus/rides/{rideID}/cancellation-quote (§2.5). The shape is
+// exactly what the rider-facing cancel sheet renders — fee, currency, live
+// free-window countdown, machine-readable reason code, and an itemized
+// breakdown whose amounts sum to `fee`. Clients never compute fees.
+type CancellationQuoteResponse struct {
+	RideID                     uuid.UUID                    `json:"ride_id"`
+	Fee                        float64                      `json:"fee"`
+	Currency                   string                       `json:"currency"`
+	ReasonCode                 services.CancellationReasonCode `json:"reason_code"`
+	FreeWindowSecondsRemaining int                          `json:"free_window_seconds_remaining"`
+	Breakdown                  []services.BreakdownItem     `json:"breakdown"`
+	ComputedAt                 time.Time                    `json:"computed_at"`
+	ExpiresAt                  time.Time                    `json:"expires_at"`
+	FromCache                  bool                         `json:"from_cache"`
+}
+
+// CancellationQuote handles GET /api/v1/nidus/rides/{rideID}/cancellation-quote
+// (rider or the matched driver; identity derived from the JWT subject).
+//
+// §2.5 — Authoritative Cancellation-Fee Quote. This endpoint and POST
+// /cancel share ONE policy implementation
+// (services.ComputeCancellationQuote), so the number the rider sees here is
+// the number they are charged on cancel. Quotes are cached per ride for the
+// policy TTL (default 30 s) so the cancel sheet's open/close cycles do not
+// hammer the pricing path. Access control mirrors GetRide via the same query
+// (owner-or-matched-driver enforced inside GetRideQuery): strangers get 404/
+// 403, never a leaked fee. Terminal rides answer 409 RIDE_NOT_CANCELLABLE —
+// an honest error, never an invented quote.
+func (h *RideHandler) CancellationQuote(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userID, ok := auth.GetUserIDFromContext(ctx)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+
+	rideID, err := uuid.Parse(chi.URLParam(r, "rideID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "invalid ride ID format")
+		return
+	}
+
+	now := time.Now().UTC()
+
+	// Cache first: a fresh cached quote was computed for this same user-visible
+	// ride state moments ago; recomputing would only shift the countdown by
+	// seconds while costing a DB read.
+	if cached, ok := h.quoteCache.Get(rideID, now); ok {
+		writeJSON(w, http.StatusOK, quoteToResponse(cached))
+		return
+	}
+
+	ride, err := h.getRideQuery.Execute(ctx, userID, rideID)
+	if err != nil {
+		if errors.Is(err, queries.ErrRideNotFound) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "ride not found")
+			return
+		}
+		if errors.Is(err, queries.ErrRideAccessDenied) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "you don't have access to this ride")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch ride")
+		return
+	}
+
+	quote, err := services.ComputeCancellationQuote(ride, h.cancelPolicy, now)
+	if err != nil {
+		if errors.Is(err, services.ErrRideNotCancellable) {
+			writeError(w, http.StatusConflict, "RIDE_NOT_CANCELLABLE", "this ride can no longer be cancelled")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to compute cancellation quote")
+		return
+	}
+
+	h.quoteCache.Put(rideID, quote, now)
+	writeJSON(w, http.StatusOK, quoteToResponse(quote))
+}
+
+// quoteToResponse flattens the domain quote into the wire DTO. Kept as a
+// function (not a method on the service type) so the application layer stays
+// transport-free. Breakdown is normalised to an empty slice so clients always
+// receive a JSON array, never null.
+func quoteToResponse(q *services.CancellationQuote) CancellationQuoteResponse {
+	breakdown := q.Breakdown
+	if breakdown == nil {
+		breakdown = []services.BreakdownItem{}
+	}
+	return CancellationQuoteResponse{
+		RideID:                     q.RideID,
+		Fee:                        q.Fee,
+		Currency:                   q.Currency,
+		ReasonCode:                 q.ReasonCode,
+		FreeWindowSecondsRemaining: q.FreeWindowSecondsRemaining,
+		Breakdown:                  breakdown,
+		ComputedAt:                 q.ComputedAt,
+		ExpiresAt:                  q.ExpiresAt,
+		FromCache:                  q.FromCache,
+	}
+}
+
 // CancelRide handles POST /api/v1/nidus/rides/{rideID}/cancel
 // (rider or the matched driver; identity derived from the JWT subject).
+//
+// §2.5: when the caller is the RIDER, the authoritative cancellation fee is
+// computed by the SAME pure policy function that backs the quote endpoint,
+// at the exact instant of cancellation, and persisted on the ride row
+// (cancel_fee). If the rider previously fetched a quote, the charge equals
+// that quote unless ride state changed in between (e.g. the trip started) —
+// in which case the new, still-authoritative value is returned on the ride
+// response so the client can reconcile honestly. Driver-initiated cancels
+// never fee the rider.
 func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -420,17 +538,36 @@ func (h *RideHandler) CancelRide(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "cancel ride not yet wired")
 		return
 	}
+
+	// Snapshot the pre-cancel state for the authoritative fee BEFORE the
+	// transition runs. The command re-validates permissions/state itself; a
+	// failed cancel persists nothing, so this read has no side effects.
+	feeForRider := 0.0
+	if pre, perr := h.getRideQuery.Execute(ctx, userID, rideID); perr == nil && pre.UserID == userID {
+		if q, qerr := services.ComputeCancellationQuote(pre, h.cancelPolicy, time.Now().UTC()); qerr == nil {
+			feeForRider = q.Fee
+		}
+		// A ComputeCancellationQuote error here (terminal state) is NOT an
+		// error response: the command below produces the canonical mapped
+		// error (409 INVALID_TRANSITION etc.) with full actor semantics.
+	}
+
 	ride, err := h.cancelRideCmd.Execute(ctx, &commands.CancelRideCommand{
-		UserID: userID,
-		RideID: rideID,
-		Reason: req.Reason,
+		UserID:        userID,
+		RideID:        rideID,
+		Reason:        req.Reason,
+		RiderCancelFee: feeForRider,
 	})
 	if err != nil {
 		status, code, msg := mapLifecycleError(err)
 		writeError(w, status, code, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, toRideResponse(ride))
+	// The fee has been charged and must stop being quoted stale for 30 s
+	// windows opened before this cancel.
+	h.quoteCache.Evict(rideID)
+	resp := toRideResponse(ride)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // RateRide handles POST /api/v1/nidus/rides/{rideID}/rate (rider only).
