@@ -1,5 +1,5 @@
-// Package handlers integration tests for the §3.1 cash-collection confirm
-// endpoint (POST /api/v1/nidus/rides/{rideID}/confirm-cash-collection).
+// Package http_test holds integration tests for the §3.1 cash-collection
+// confirm endpoint (POST /api/v1/nidus/rides/{rideID}/confirm-cash-collection).
 //
 // Postgres is not available in unit-test environments, so these tests drive
 // the HTTP surface with a nil-pool *database.Postgres: every DB call fails
@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	niduscmds "nidaw-backend/internal/modules/nidus/application/commands"
+	nidusservices "nidaw-backend/internal/modules/nidus/application/services"
 	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/database"
@@ -31,8 +32,14 @@ import (
 	"github.com/google/uuid"
 )
 
-func newCashConfirmServer(t *testing.T, userID uuid.UUID, rideID uuid.UUID, wireCmd bool) http.Handler {
-	t.Helper()
+// testCancelPolicy mirrors the production composition root's policy input:
+// the zero value run through WithDefaults so quote-cache construction gets a
+// non-zero TTL, exactly as main.go does before handing it to NewRideHandler.
+func testCancelPolicy() nidusservices.CancellationPolicyConfig {
+	return nidusservices.CancellationPolicyConfig{}.WithDefaults()
+}
+
+func newCashConfirmHandler(wireCmd bool) *nidushandlers.RideHandler {
 	db := &database.Postgres{} // nil pool => all queries fail with ErrDatabaseClosed
 	bus := eventbus.NewMemoryBus()
 
@@ -41,29 +48,29 @@ func newCashConfirmServer(t *testing.T, userID uuid.UUID, rideID uuid.UUID, wire
 		lc.ConfirmCashCollection = niduscmds.NewConfirmCashCollectionHandler(db, bus)
 	}
 
-	h := nidushandlers.NewRideHandler(db, nil, nil, nil, nil, nil, nidushandlers.DefaultCancellationPolicyForTest())
+	h := nidushandlers.NewRideHandler(db, nil, nil, nil, nil, nil, testCancelPolicy())
 	h.SetLifecycle(lc)
+	return h
+}
 
+// mountChi registers the endpoint on a real chi router so chi.URLParam(r,
+// "rideID") resolves exactly as it does in production routing.
+func mountChi(h *nidushandlers.RideHandler) *chi.Mux {
 	r := chi.NewRouter()
 	r.Post("/api/v1/nidus/rides/{rideID}/confirm-cash-collection", h.ConfirmCashCollection)
-	return injectUser(userID, r, rideID)
+	return r
 }
 
-// injectUser mimics AuthRequired+ExtractUserToContext: it stamps the JWT
-// subject into the request context and sets the chi route parameter so
-// parseRideID resolves the same way production does.
-func injectUser(userID uuid.UUID, next http.Handler, rideID uuid.UUID) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		ctx := context.WithValue(req.Context(), auth.UserIDKey, userID)
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("rideID", rideID.String())
-		next.ServeHTTP(w, req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx)))
-	})
-}
-
-func postConfirm(srv http.Handler) *httptest.ResponseRecorder {
+// serveAsUser stamps the JWT subject into the context (mimicking the auth
+// middleware) and dispatches through the real chi router. Empty rideIDStr
+// simulates an unauthenticated/no-route request path used by the 401 test.
+func serveAsUser(r *chi.Mux, userID uuid.UUID, rideIDStr string, withUser bool) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nidus/rides/"+rideIDStr+"/confirm-cash-collection", nil)
+	if withUser {
+		req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, userID))
+	}
 	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/nidus/rides/x/confirm-cash-collection", nil))
+	r.ServeHTTP(w, req)
 	return w
 }
 
@@ -81,33 +88,21 @@ func decodeErrCode(t *testing.T, body []byte) string {
 }
 
 func TestConfirmCashCollection_MissingAuthContext(t *testing.T) {
-	rideID := uuid.New()
-	db := &database.Postgres{}
-	h := nidushandlers.NewRideHandler(db, nil, nil, nil, nil, nil, nidushandlers.DefaultCancellationPolicyForTest())
-	h.SetLifecycle(nidushandlers.LifecycleCommands{
-		ConfirmCashCollection: niduscmds.NewConfirmCashCollectionHandler(db, eventbus.NewMemoryBus()),
-	})
-	r := chi.NewRouter()
-	r.Post("/api/v1/nidus/rides/{rideID}/confirm-cash-collection", h.ConfirmCashCollection)
-	w := httptest.NewRecorder()
-	// No user injected: unauthenticated request must 401, not panic.
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/", nil))
+	r := mountChi(newCashConfirmHandler(true))
+	w := serveAsUser(r, uuid.Nil, uuid.NewString(), false)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated: want 401, got %d %s", w.Code, w.Body.String())
 	}
 	if code := decodeErrCode(t, w.Body.Bytes()); code != "UNAUTHORIZED" {
 		t.Fatalf("want UNAUTHORIZED, got %q", code)
 	}
-	_ = rideID
 }
 
 func TestConfirmCashCollection_UnwiredHandlerIsHonest501(t *testing.T) {
 	// Flag-off / not-constructed state: the endpoint must answer NOT_IMPLEMENTED
 	// (501) rather than pretending the collection was recorded.
-	user := uuid.New()
-	ride := uuid.New()
-	srv := newCashConfirmServer(t, user, ride, false)
-	w := postConfirm(srv)
+	r := mountChi(newCashConfirmHandler(false))
+	w := serveAsUser(r, uuid.New(), uuid.NewString(), true)
 	if w.Code != http.StatusNotImplemented {
 		t.Fatalf("unwired: want 501, got %d %s", w.Code, w.Body.String())
 	}
@@ -117,22 +112,8 @@ func TestConfirmCashCollection_UnwiredHandlerIsHonest501(t *testing.T) {
 }
 
 func TestConfirmCashCollection_InvalidRideID(t *testing.T) {
-	user := uuid.New()
-	r := chi.NewRouter()
-	db := &database.Postgres{}
-	h := nidushandlers.NewRideHandler(db, nil, nil, nil, nil, nil, nidushandlers.DefaultCancellationPolicyForTest())
-	h.SetLifecycle(nidushandlers.LifecycleCommands{
-		ConfirmCashCollection: niduscmds.NewConfirmCashCollectionHandler(db, eventbus.NewMemoryBus()),
-	})
-	r.Post("/api/v1/nidus/rides/{rideID}/confirm-cash-collection", h.ConfirmCashCollection)
-	inject := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		ctx := context.WithValue(req.Context(), auth.UserIDKey, user)
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("rideID", "not-a-uuid")
-		r.ServeHTTP(w, req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx)))
-	})
-	w := httptest.NewRecorder()
-	inject.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/", nil))
+	r := mountChi(newCashConfirmHandler(true))
+	w := serveAsUser(r, uuid.New(), "not-a-uuid", true)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("bad id: want 400, got %d %s", w.Code, w.Body.String())
 	}
@@ -144,10 +125,8 @@ func TestConfirmCashCollection_InvalidRideID(t *testing.T) {
 func TestConfirmCashCollection_DatabaseUnavailableFailsExplicitly(t *testing.T) {
 	// Wired handler, DB unreachable: resolveDriverID's query fails, mapped to
 	// 500 INTERNAL_ERROR. The response must never claim success.
-	user := uuid.New()
-	ride := uuid.New()
-	srv := newCashConfirmServer(t, user, ride, true)
-	w := postConfirm(srv)
+	r := mountChi(newCashConfirmHandler(true))
+	w := serveAsUser(r, uuid.New(), uuid.NewString(), true)
 	if w.Code == http.StatusOK {
 		t.Fatalf("must not report collection success without a database write: %s", w.Body.String())
 	}
