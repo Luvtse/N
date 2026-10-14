@@ -429,16 +429,13 @@ class _RideTrackingPageState extends State<RideTrackingPage>
   Future<void> _confirmCancel(BuildContext context, RideState state) async {
     final bloc = context.read<RideBloc>();
 
-    // Free-window heuristic: within the grace period after matching the
-    // backend waives the fee; the authoritative amount comes back on the
-    // CancelRideResult and lands in the RideCancelled state.
-    final inGraceWindow = state is DriverMatched || state is DriverEnRoute;
-    final feeEstimate = inGraceWindow ? 0.0 : 25.0;
-
+    // §2.5: the fee, reason code and free-window countdown are fetched from
+    // GET /rides/{id}/cancellation-quote inside the sheet itself — computed
+    // by the same backend policy service that charges the fee on cancel. No
+    // client-side heuristic exists in this flow anymore.
     await CancelRideSheet.show(
       context,
-      estimatedFee: feeEstimate,
-      freeWindowMinutesLeft: inGraceWindow ? 5 : null,
+      rideId: widget.rideId,
       onConfirmed: (reason) async {
         bloc.add(CancelRide(rideId: widget.rideId, reason: reason));
       },

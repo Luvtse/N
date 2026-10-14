@@ -43,7 +43,7 @@ func withMatchedAt(r *entities.Ride, t time.Time) *entities.Ride {
 func TestComputeQuote_TerminalRidesAreNotCancellable(t *testing.T) {
 	p := DefaultCancellationPolicy()
 	for _, st := range []entities.RideStatus{
-		entities.RideStatusCompleted, entities.RideStatusCancelled, entities.RideStatusNoDriversFound,
+		entities.RideStatusCompleted, entities.RideStatusCancelled, entities.RideStatusNoDriver,
 	} {
 		r := baseRide(st)
 		q, err := ComputeCancellationQuote(r, p, time.Now().UTC())
@@ -252,9 +252,9 @@ func TestPolicyConfig_WithDefaultsGuardsZeroValues(t *testing.T) {
 		got.QuoteTTL != d.QuoteTTL {
 		t.Fatalf("zero config must fall back to defaults, got %+v", got)
 	}
-	// A deliberately-configured zero fee is honored (free-for-all policy),
-	// only negative values are rejected.
-	if z := (CancellationPolicyConfig{RiderCancelFee: 0}).WithDefaults(); z.RiderCancelFee != 0 {
-		t.Fatal("explicit zero fee must be preserved")
+	// A zero-valued fee is treated as "unset" and falls back to the default;
+	// a partially-specified config can never silently disable the fee.
+	if z := (CancellationPolicyConfig{RiderCancelFee: 0}).WithDefaults(); z.RiderCancelFee != d.RiderCancelFee {
+		t.Fatalf("zero fee must fall back to default %v, got %v", d.RiderCancelFee, z.RiderCancelFee)
 	}
 }

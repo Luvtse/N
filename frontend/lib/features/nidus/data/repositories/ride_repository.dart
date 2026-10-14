@@ -67,6 +67,16 @@ abstract class RideRepository {
     String? reason,
   });
 
+  /// §2.5: fetch the authoritative cancellation-fee quote for a ride.
+  ///
+  /// The backend computes this with the same policy service that charges the
+  /// fee on CancelRide, so the number shown here is the number the rider
+  /// pays if they cancel now. Throws [ApiException] when the quote cannot be
+  /// retrieved; callers must degrade honestly ("Fee will be confirmed on
+  /// cancel") and never invent a number. Rides in terminal states fail with
+  /// errorCode `RIDE_NOT_CANCELLABLE`.
+  Future<CancellationQuote> getCancellationQuote(String rideId);
+
   /// Rate a completed ride with full result semantics (error code).
   ///
   /// Preferred over [rateRide] for flows that must distinguish
@@ -447,6 +457,83 @@ class CancelRideResult {
   bool get wasDriverCancelled => errorCode == 'DRIVER_CANCELLED';
 }
 
+/// §2.5: authoritative cancellation-fee quote returned by
+/// GET /api/v1/nidus/rides/{rideId}/cancellation-quote. Mirrors the backend's
+/// services.CancellationQuote exactly; the UI renders these values verbatim.
+class CancellationQuoteBreakdownItem {
+  final String label;
+  final double amount;
+  final String currency;
+
+  const CancellationQuoteBreakdownItem({
+    required this.label,
+    required this.amount,
+    required this.currency,
+  });
+
+  factory CancellationQuoteBreakdownItem.fromJson(Map<String, dynamic> json) {
+    return CancellationQuoteBreakdownItem(
+      label: json['label'] as String? ?? '',
+      amount: (json['amount'] as num?)?.toDouble() ?? 0,
+      currency: json['currency'] as String? ?? 'ETB',
+    );
+  }
+}
+
+class CancellationQuote {
+  final String rideId;
+  final double fee;
+  final String currency;
+
+  /// FREE_WINDOW | NO_DRIVER_YET | DRIVER_ARRIVED | TRIP_STARTED |
+  /// DRIVER_CANCELLED — machine-readable classification from the policy.
+  final String reasonCode;
+
+  /// Whole seconds left before the post-match free window closes. The sheet
+  /// ticks this down locally instead of re-fetching.
+  final int freeWindowSecondsRemaining;
+  final List<CancellationQuoteBreakdownItem> breakdown;
+  final DateTime computedAt;
+  final DateTime expiresAt;
+  final bool fromCache;
+
+  const CancellationQuote({
+    required this.rideId,
+    required this.fee,
+    required this.currency,
+    required this.reasonCode,
+    required this.freeWindowSecondsRemaining,
+    required this.breakdown,
+    required this.computedAt,
+    required this.expiresAt,
+    required this.fromCache,
+  });
+
+  bool get isFree => fee <= 0;
+
+  factory CancellationQuote.fromJson(Map<String, dynamic> json) {
+    return CancellationQuote(
+      rideId: json['ride_id'] as String? ?? '',
+      fee: (json['fee'] as num?)?.toDouble() ?? 0,
+      currency: json['currency'] as String? ?? 'ETB',
+      reasonCode: json['reason_code'] as String? ?? '',
+      freeWindowSecondsRemaining:
+          (json['free_window_seconds_remaining'] as num?)?.toInt() ?? 0,
+      breakdown: (json['breakdown'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(CancellationQuoteBreakdownItem.fromJson)
+          .toList(growable: false),
+      computedAt:
+          DateTime.tryParse(json['computed_at'] as String? ?? '') ??
+              DateTime.now().toUtc(),
+      expiresAt:
+          DateTime.tryParse(json['expires_at'] as String? ?? '') ??
+              DateTime.now().toUtc(),
+      fromCache: json['from_cache'] as bool? ?? false,
+    );
+  }
+}
+
 /// Result of a rating attempt with coded failures surfaced by the backend.
 class RateRideResult {
   final bool success;
@@ -746,6 +833,17 @@ class RideRepositoryImpl implements RideRepository {
       debugPrint('Failed to get active ride: $e');
       return null;
     }
+  }
+
+  @override
+  Future<CancellationQuote> getCancellationQuote(String rideId) async {
+    final response = await _apiClient.get<Map<String, dynamic>>(
+      '/api/v1/nidus/rides/$rideId/cancellation-quote',
+    );
+    var data = response.data ?? const <String, dynamic>{};
+    final inner = data['data'];
+    if (inner is Map<String, dynamic>) data = inner;
+    return CancellationQuote.fromJson(data);
   }
 
   @override
