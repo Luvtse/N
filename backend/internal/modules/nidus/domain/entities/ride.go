@@ -96,6 +96,14 @@ type Ride struct {
 	Currency   string  `json:"currency" db:"currency"`
 	TipAmount  float64 `json:"tip_amount,omitempty" db:"tip_amount"`
 
+	// §3.1 Cash Payment Option. PaymentMethodType is the method snapshot taken
+	// at request time ("wallet" | "card" | "cash"; empty = legacy ride).
+	// CashCollectedAt is stamped by the driver-app collection confirmation;
+	// a completed cash ride with nil CashCollectedAt is in the
+	// pending_cash_collection state (see IsPendingCashCollection).
+	PaymentMethodType string     `json:"payment_method_type,omitempty" db:"payment_method_type"`
+	CashCollectedAt   *time.Time `json:"cash_collected_at,omitempty" db:"cash_collected_at"`
+
 	// §2.5 Cancellation accounting (authoritative, computed server-side by the
 	// shared cancellation policy — never trusted from client input).
 	CancelFee    float64 `json:"cancel_fee" db:"cancel_fee"`
@@ -149,6 +157,19 @@ func (r *Ride) IsAssignedToDriver() bool {
 	return r.DriverID != nil
 }
 
+// IsCashRide reports whether the rider chose cash at request time (§3.1).
+func (r *Ride) IsCashRide() bool {
+	return r.PaymentMethodType == "cash"
+}
+
+// IsPendingCashCollection is the §3.1 collect-on-completion state: the trip
+// finished, the method is cash, and the driver has not yet confirmed physical
+// collection. The fare is owed in hand; the receipt shows the pending state
+// and the driver app keeps a confirmation affordance until it clears.
+func (r *Ride) IsPendingCashCollection() bool {
+	return r.Status == RideStatusCompleted && r.IsCashRide() && r.CashCollectedAt == nil
+}
+
 // TransitionTo attempts to transition the ride to a new status
 // Returns an error if the transition is invalid
 func (r *Ride) TransitionTo(newStatus RideStatus) error {
@@ -158,6 +179,11 @@ func (r *Ride) TransitionTo(newStatus RideStatus) error {
 		RideStatusMatched:       {RideStatusDriverEnRoute, RideStatusCancelled},
 		RideStatusDriverEnRoute: {RideStatusInProgress, RideStatusCancelled},
 		RideStatusInProgress:    {RideStatusCompleted, RideStatusCancelled},
+		// §3.1: pending_cash_collection -> paid is modelled as a status
+		// transition on completed rides. It is only valid while the ride is
+		// still awaiting collection; ConfirmCashCollectionHandler checks the
+		// precondition against the database row before applying it.
+		RideStatusCompleted: {RideStatusPaid},
 	}
 
 	allowed, exists := validTransitions[r.Status]
