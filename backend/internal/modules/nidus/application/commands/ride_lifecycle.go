@@ -47,6 +47,13 @@ var (
 	ErrTipTooLarge        = errors.New("tip must be less than or equal to the fare")
 	ErrFareCalcFailed     = errors.New("final fare calculation failed")
 	ErrSettlementFallback = errors.New("settlement event persisted but direct publish failed (outbox will retry)")
+
+	// Cash collection (§3.1). ErrNotACashRide is returned when the driver
+	// attempts to confirm collection on a ride that was not booked with the
+	// cash payment method; ErrRideNotEligibleForCashCollection covers every
+	// other precondition failure (not completed yet, already collected).
+	ErrNotACashRide                     = errors.New("ride is not a cash ride")
+	ErrRideNotEligibleForCashCollection = errors.New("ride is not eligible for cash collection confirmation")
 )
 
 // PlatformCommissionRate is the marketplace take applied to every completed
@@ -142,9 +149,13 @@ func (b *lifecycleBase) updateStatus(ctx context.Context, rideID uuid.UUID, stat
 }
 
 // recordCompleted persists the terminal completed state with final money and
-// trip metrics inside one DB transaction together with the durable settlement
-// outbox row (see enqueueRideCompleted).
-func (b *lifecycleBase) recordCompleted(ctx context.Context, rideID uuid.UUID, fare, fee, tip float64, distance float64, duration int, ev settlementRecord) error {
+// trip metrics inside one DB transaction. When isCash is true the settlement
+// outbox row is deliberately NOT enqueued: cash rides are collected by the
+// driver in person, and ledger settlement is deferred until the driver
+// confirms collection via ConfirmCashCollectionHandler (§3.1), which emits
+// the same settlement event at that point. Non-cash rides settle immediately
+// as before.
+func (b *lifecycleBase) recordCompleted(ctx context.Context, rideID uuid.UUID, fare, fee, tip float64, distance float64, duration int, ev settlementRecord, isCash bool) error {
 	return b.db.WithTx(ctx, func(tx *database.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			UPDATE rides
@@ -155,6 +166,9 @@ func (b *lifecycleBase) recordCompleted(ctx context.Context, rideID uuid.UUID, f
 			 WHERE id = $1 AND status = 'in_progress'`,
 			rideID, fare, ev.Currency, tip, distance, duration); err != nil {
 			return err
+		}
+		if isCash {
+			return nil
 		}
 		return enqueueRideCompleted(ctx, tx, ev)
 	})
