@@ -28,6 +28,10 @@ var (
 	ErrInvalidLocation      = errors.New("invalid pickup or dropoff location")
 	ErrRideCreationFailed   = errors.New("failed to create ride")
 	ErrSamePickupAndDropoff = errors.New("pickup and dropoff locations must be different")
+	// §3.6 Scheduled rides: booking-window violations, surfaced as stable
+	// codes by the HTTP layer (SCHEDULED_TOO_SOON / SCHEDULED_TOO_FAR_OUT).
+	ErrScheduledTooSoon = errors.New("scheduled time must be at least 15 minutes from now")
+	ErrScheduledTooFar  = errors.New("scheduled time must be no more than 30 days from now")
 )
 
 // ============================================================================
@@ -163,7 +167,9 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		// §3.1: method snapshot resolved before creation (empty when the
 		// payments module is not wired — legacy rides behave as before).
 		PaymentMethodType: paymentType,
-		RequestedAt:       now,
+		// §3.6: requested pickup time for a scheduled ride; nil = on-demand.
+		ScheduledAt: cmd.ScheduledAt,
+		RequestedAt: now,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
@@ -242,9 +248,19 @@ func (h *RequestRideHandler) validateCommand(cmd *RequestRideCommand) error {
 		return fmt.Errorf("invalid ride type: %s", cmd.RideType)
 	}
 
-	// Validate scheduled time (if provided)
-	if cmd.ScheduledAt != nil && cmd.ScheduledAt.Before(time.Now()) {
-		return errors.New("scheduled time must be in the future")
+	// §3.6 Scheduled rides: validate the booking window. A scheduled ride
+	// must be at least 15 minutes out (the matcher pre-matches at T-15 min,
+	// so earlier bookings would race that process) and no more than 30 days
+	// out (pricing/driver-availability forecasts are unreliable beyond that
+	// horizon).
+	if cmd.ScheduledAt != nil {
+		now := time.Now().UTC()
+		if cmd.ScheduledAt.Before(now.Add(15 * time.Minute)) {
+			return ErrScheduledTooSoon
+		}
+		if cmd.ScheduledAt.After(now.Add(30 * 24 * time.Hour)) {
+			return ErrScheduledTooFar
+		}
 	}
 
 	return nil
@@ -264,11 +280,11 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 			id, user_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 			pickup_address, dropoff_address, ride_type, status,
 			fare_amount, currency, distance_km, duration_minutes,
-			payment_method_type,
+			payment_method_type, scheduled_at,
 			requested_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18
+			$11, $12, $13, $14, $15, $16, $17, $18, $19
 		)
 	`
 
@@ -281,7 +297,7 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 		ride.RideType, string(ride.Status),
 		ride.FareAmount, ride.Currency,
 		ride.DistanceKm, ride.DurationMinutes,
-		ride.PaymentMethodType,
+		ride.PaymentMethodType, ride.ScheduledAt,
 		ride.RequestedAt, ride.CreatedAt, ride.UpdatedAt,
 	)
 
