@@ -109,6 +109,14 @@ type Ride struct {
 	PaymentMethodType string     `json:"payment_method_type,omitempty" db:"payment_method_type"`
 	CashCollectedAt   *time.Time `json:"cash_collected_at,omitempty" db:"cash_collected_at"`
 
+	// §3.2 Promo Codes & Coupons. PromoCode is the normalized code snapshot
+	// applied at request time (empty = no discount); PromoDiscount is the
+	// authoritative amount the receipt shows as a line item. Both are written
+	// by the request path through the promotions service — never trusted from
+	// client input. Legacy rides have empty/zero values.
+	PromoCode     string  `json:"promo_code,omitempty" db:"promo_code"`
+	PromoDiscount float64 `json:"promo_discount,omitempty" db:"promo_discount"`
+
 	// §2.5 Cancellation accounting (authoritative, computed server-side by the
 	// shared cancellation policy — never trusted from client input).
 	CancelFee    float64 `json:"cancel_fee" db:"cancel_fee"`
