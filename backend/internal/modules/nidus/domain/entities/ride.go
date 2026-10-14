@@ -119,6 +119,11 @@ type Ride struct {
 	DistanceKm      float64 `json:"distance_km,omitempty" db:"distance_km"`
 	DurationMinutes int     `json:"duration_minutes,omitempty" db:"duration_minutes"`
 
+	// §3.6 Scheduled Rides. ScheduledAt is the requested pickup time for a
+	// scheduled ride; nil means on-demand. The request path validates the
+	// window (>= now+15 min, <= now+30 days) before persisting it.
+	ScheduledAt *time.Time `json:"scheduled_at,omitempty" db:"scheduled_at"`
+
 	// Lifecycle Timestamps
 	RequestedAt time.Time  `json:"requested_at" db:"requested_at"`
 	MatchedAt   *time.Time `json:"matched_at,omitempty" db:"matched_at"`
