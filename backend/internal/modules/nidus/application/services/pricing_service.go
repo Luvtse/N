@@ -90,6 +90,34 @@ func DefaultPricingConfig() *PricingConfig {
 	}
 }
 
+// RideTypeDisplay carries UI-facing metadata for a ride type. §2.6: the
+// estimate carousel renders display name, capacity, and icon key from here —
+// never from client-side hardcoded card definitions.
+type RideTypeDisplay struct {
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	Capacity    int    `json:"capacity"`
+	IconKey     string `json:"icon_key"`
+}
+
+var rideTypeDisplays = map[RideType]RideTypeDisplay{
+	RideTypeStandard:   {DisplayName: "Standard", Description: "Affordable everyday rides", Capacity: 4, IconKey: "car"},
+	RideTypePremium:    {DisplayName: "Premium", Description: "Top drivers in high-end cars", Capacity: 4, IconKey: "star"},
+	RideTypeElectric:   {DisplayName: "Electric", Description: "Zero-emission electric vehicles", Capacity: 4, IconKey: "electric_car"},
+	RideTypeShared:     {DisplayName: "Shared", Description: "Split the ride, split the fare", Capacity: 1, IconKey: "groups"},
+	RideTypeWheelchair: {DisplayName: "Wheelchair", Description: "Wheelchair-accessible vehicles", Capacity: 6, IconKey: "accessible"},
+}
+
+// RideTypeDisplayFor returns the display metadata for a ride type. Unknown
+// types fall back to a capitalized raw name with honest zero-capacity so the
+// UI can render "Not provided" rather than fabricate values.
+func RideTypeDisplayFor(t RideType) RideTypeDisplay {
+	if d, ok := rideTypeDisplays[t]; ok {
+		return d
+	}
+	return RideTypeDisplay{DisplayName: string(t), Description: "", Capacity: 0, IconKey: "car"}
+}
+
 // FareEstimate contains the full fare breakdown
 type FareEstimate struct {
 	RideType        RideType  `json:"ride_type"`
@@ -98,6 +126,7 @@ type FareEstimate struct {
 	TimeFare        int64     `json:"time_fare"`     // in cents
 	Subtotal        int64     `json:"subtotal"`      // in cents
 	SurgeMultiplier float64   `json:"surge_multiplier"`
+	SurgeReason     string    `json:"surge_reason"`
 	SurgeAmount     int64     `json:"surge_amount"` // in cents
 	TotalFare       int64     `json:"total_fare"`   // in cents
 	Currency        string    `json:"currency"`
@@ -207,6 +236,7 @@ func (s *PricingService) CalculateFare(
 		TimeFare:        timeFare,
 		Subtotal:        subtotal,
 		SurgeMultiplier: surgeInfo.Multiplier,
+		SurgeReason:     surgeInfo.Reason,
 		SurgeAmount:     surgeAmount,
 		TotalFare:       totalFare,
 		Currency:        s.config.DefaultCurrency,

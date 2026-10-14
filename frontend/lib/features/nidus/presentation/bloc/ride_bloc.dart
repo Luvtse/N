@@ -146,6 +146,56 @@ class GetFareEstimate extends RideEvent {
   List<Object?> get props => [pickupLat, pickupLng, dropoffLat, dropoffLng];
 }
 
+/// §2.6: load per-type ride-option estimates for the request carousel.
+/// [selectedType] is the rider's current choice; when the refreshed list no
+/// longer contains it (or marks it unavailable) the bloc re-anchors to the
+/// first available type and emits [RideOptionSelectionChanged] so the page
+/// can update its own selection state — fixing the "estimate ignores
+/// selected ride type" drift by keeping UI and data in lockstep.
+class LoadRideOptions extends RideEvent {
+  final double pickupLat;
+  final double pickupLng;
+  final double dropoffLat;
+  final double dropoffLng;
+  final String selectedType;
+
+  const LoadRideOptions({
+    required this.pickupLat,
+    required this.pickupLng,
+    required this.dropoffLat,
+    required this.dropoffLng,
+    this.selectedType = 'standard',
+  });
+
+  @override
+  List<Object?> get props =>
+      [pickupLat, pickupLng, dropoffLat, dropoffLng, selectedType];
+}
+
+/// §2.6: rider picked a different option in the carousel. Pure state update —
+/// the chosen type is what gets sent with RequestRide.
+class SelectRideOption extends RideEvent {
+  final String rideType;
+
+  const SelectRideOption(this.rideType);
+
+  @override
+  List<Object?> get props => [rideType];
+}
+
+/// §2.6: emitted when a refresh forced the selection to change (the previous
+/// choice vanished or became unavailable). The page mirrors it into its local
+/// selection so the highlighted card always equals the type that will be
+/// requested.
+class RideOptionSelectionChanged extends RideEvent {
+  final String rideType;
+
+  const RideOptionSelectionChanged(this.rideType);
+
+  @override
+  List<Object?> get props => [rideType];
+}
+
 /// Clear current ride
 class ClearCurrentRide extends RideEvent {
   const ClearCurrentRide();
@@ -405,6 +455,43 @@ class FareEstimateLoaded extends RideState {
   List<Object?> get props => [estimate];
 }
 
+/// §2.6: per-type ride-option estimates loaded for the request carousel.
+/// The list is exactly what the pricing service returned — every card the UI
+/// renders is data-driven (Shared and Wheelchair included). [selectedType]
+/// carries the current selection so a refresh that drops the selected type
+/// can re-anchor honestly instead of silently keeping a stale choice.
+class RideOptionsLoaded extends RideState {
+  final List<RideOptionEstimate> options;
+  final String selectedType;
+
+  const RideOptionsLoaded({
+    required this.options,
+    required this.selectedType,
+  });
+
+  RideOptionEstimate? get selected {
+    for (final o in options) {
+      if (o.rideType == selectedType && o.available) return o;
+    }
+    return null;
+  }
+
+  @override
+  List<Object?> get props => [options, selectedType];
+}
+
+/// §2.6: the estimate fetch failed. The carousel must render this as a
+/// retryable "Prices unavailable" strip — never hardcoded cards or fake
+/// price ranges.
+class RideOptionsFailed extends RideState {
+  final String message;
+
+  const RideOptionsFailed(this.message);
+
+  @override
+  List<Object?> get props => [message];
+}
+
 /// Error state
 class RideError extends RideState {
   final String message;
@@ -452,6 +539,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   /// Kept separate from [state] so safety actions never clobber ride states.
   bool get isSosActive => _sosActive;
   int get sosCountdownRemaining => _sosCountdownRemaining;
+
+  /// §2.6: the ride type the rider currently has selected in the carousel.
+  /// Kept on the bloc so a refresh that drops the selected type can re-anchor
+  /// the highlight to real data instead of leaving a stale choice that would
+  /// be sent with RequestRide ("estimate ignores selected ride type" fix).
+  String _currentSelectedRideType = 'standard';
+
+  String get selectedRideType => _currentSelectedRideType;
 
   /// Cached context for the current ride, used to rebuild rich states when a
   /// WebSocket update arrives without a full Ride payload.
@@ -507,6 +602,9 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     on<UnsubscribeFromRideUpdates>(_onUnsubscribeFromUpdates);
     on<RateRide>(_onRateRide);
     on<GetFareEstimate>(_onGetFareEstimate);
+    on<LoadRideOptions>(_onLoadRideOptions);
+    on<SelectRideOption>(_onSelectRideOption);
+    on<RideOptionSelectionChanged>(_onRideOptionSelectionChanged);
     on<ClearCurrentRide>(_onClearCurrentRide);
     on<StartSosCountdown>(_onStartSosCountdown);
     on<CancelSosCountdown>(_onCancelSosCountdown);
@@ -798,6 +896,78 @@ class RideBloc extends Bloc<RideEvent, RideState> {
       emit(RideError(
         message: e.toString(),
         errorCode: 'ESTIMATE_FAILED',
+      ));
+    }
+  }
+
+  // ==========================================================================
+  // §2.6 RIDE-OPTION CAROUSEL
+  // ==========================================================================
+
+  Future<void> _onLoadRideOptions(
+    LoadRideOptions event,
+    Emitter<RideState> emit,
+  ) async {
+    try {
+      final options = await _rideRepository.getRideOptionEstimates(
+        pickupLat: event.pickupLat,
+        pickupLng: event.pickupLng,
+        dropoffLat: event.dropoffLat,
+        dropoffLng: event.dropoffLng,
+      );
+
+      if (options.isEmpty) {
+        emit(const RideOptionsFailed('No ride options are currently available'));
+        return;
+      }
+
+      _currentSelectedRideType = event.selectedType;
+
+      // Re-anchor honestly: if the refreshed list no longer contains the
+      // selected type (or marks it unavailable), fall back to the first
+      // available option and tell the page so its highlight follows the data.
+      final stillValid = options.any(
+          (o) => o.rideType == event.selectedType && o.available);
+      if (!stillValid) {
+        final fallback =
+            options.firstWhere((o) => o.available, orElse: () => options.first);
+        _currentSelectedRideType = fallback.rideType;
+        add(RideOptionSelectionChanged(fallback.rideType));
+      }
+
+      emit(RideOptionsLoaded(
+        options: options,
+        selectedType: _currentSelectedRideType,
+      ));
+    } catch (e) {
+      emit(RideOptionsFailed(e.toString()));
+    }
+  }
+
+  void _onSelectRideOption(
+    SelectRideOption event,
+    Emitter<RideState> emit,
+  ) {
+    _currentSelectedRideType = event.rideType;
+    final currentState = state;
+    if (currentState is RideOptionsLoaded) {
+      emit(RideOptionsLoaded(
+        options: currentState.options,
+        selectedType: event.rideType,
+      ));
+    }
+  }
+
+  void _onRideOptionSelectionChanged(
+    RideOptionSelectionChanged event,
+    Emitter<RideState> emit,
+  ) {
+    _currentSelectedRideType = event.rideType;
+    final currentState = state;
+    if (currentState is RideOptionsLoaded) {
+      emit(RideOptionsLoaded(
+        options: currentState.options,
+        selectedType: event.rideType,
       ));
     }
   }

@@ -49,6 +49,21 @@ abstract class RideRepository {
     required double dropoffLng,
   });
 
+  /// §2.6: per-type ride-option estimates for the request carousel.
+  ///
+  /// Calls the canonical `GET /api/v1/nidus/rides/estimates?pickup=..&dropoff=..`
+  /// surface and falls back to the legacy POST `/rides/estimate` (same wire
+  /// shape) when the GET is unavailable. Returns one entry per ride type the
+  /// pricing service produced — including Shared and Wheelchair. Throws
+  /// [Exception] when both surfaces fail; callers must render a retryable
+  /// "Prices unavailable" state, never hardcoded cards.
+  Future<List<RideOptionEstimate>> getRideOptionEstimates({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+  });
+
   /// Subscribe to ride status updates via WebSocket
   Stream<RideStatusUpdate> subscribeToRideUpdates(String rideId);
 
@@ -260,6 +275,87 @@ class FareEstimate {
       durationMinutes: json['duration_minutes'] as int,
       estimatedPickupMinutes: json['estimated_pickup_minutes'] as int,
     );
+  }
+}
+
+/// §2.6: one per-ride-type estimate for the ride-option carousel. Mirrors the
+/// backend `FareEstimateResponse`. Every field is server-sourced — display
+/// name, capacity, price band, ETA, surge badge and availability. The client
+/// renders zero hardcoded cards; when a legacy response omits the new fields
+/// they degrade to null (rendered as honest "unavailable" text), never to a
+/// fabricated value.
+class RideOptionEstimate {
+  final String rideType;
+  final String? displayName;
+  final String? description;
+  final int? capacity;
+  final String? iconKey;
+  final double? priceLow;
+  final double? priceHigh;
+  final double totalFare;
+  final double surgeMultiplier;
+  final String? surgeReason;
+  final String currency;
+  final int etaMinutes;
+  final bool available;
+
+  const RideOptionEstimate({
+    required this.rideType,
+    this.displayName,
+    this.description,
+    this.capacity,
+    this.iconKey,
+    this.priceLow,
+    this.priceHigh,
+    required this.totalFare,
+    required this.surgeMultiplier,
+    this.surgeReason,
+    required this.currency,
+    required this.etaMinutes,
+    required this.available,
+  });
+
+  factory RideOptionEstimate.fromJson(Map<String, dynamic> json) {
+    double? asDouble(String key) {
+      final v = json[key];
+      return v is num ? v.toDouble() : null;
+    }
+
+    int? asInt(String key) {
+      final v = json[key];
+      return v is num ? v.toInt() : null;
+    }
+
+    return RideOptionEstimate(
+      rideType: json['ride_type'] as String? ?? 'standard',
+      displayName: json['display_name'] as String?,
+      description: json['description'] as String?,
+      capacity: asInt('capacity'),
+      iconKey: json['icon_key'] as String?,
+      // Legacy responses lack the price band; fall back to the point fare so
+      // the card shows a real number derived from the pricing service.
+      priceLow: asDouble('price_low'),
+      priceHigh: asDouble('price_high'),
+      totalFare: (json['total_fare'] as num?)?.toDouble() ?? 0,
+      surgeMultiplier: (json['surge_multiplier'] as num?)?.toDouble() ?? 1.0,
+      surgeReason: json['surge_reason'] as String?,
+      currency: json['currency'] as String? ?? 'ETB',
+      etaMinutes: asInt('estimated_pickup_minutes') ?? 0,
+      available: json['available'] as bool? ?? true,
+    );
+  }
+
+  /// Display price band. Prefers the server-provided low/high; degrades to
+  /// the point estimate. All values originate from the pricing service —
+  /// nothing here is a hardcoded "$12–15".
+  String get priceRangeLabel {
+    final low = priceLow ?? totalFare;
+    final high = priceHigh ?? totalFare;
+    if ((high - low).abs() < 0.005) {
+      return '${currency == 'USD' ? '\$' : '$currency '}${low.toStringAsFixed(2)}';
+    }
+    final symbol = currency == 'USD' ? '\$' : '$currency ';
+    return '$symbol${low.toStringAsFixed(0)}–$symbol${high.toStringAsFixed(0)}';
   }
 }
 
@@ -761,6 +857,65 @@ class RideRepositoryImpl implements RideRepository {
       debugPrint('Failed to get fare estimate: $e');
       return null;
     }
+  }
+
+  @override
+  Future<List<RideOptionEstimate>> getRideOptionEstimates({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+  }) async {
+    // Canonical GET surface registered in the router (§2.6).
+    try {
+      final response = await _apiClient.get(
+        '/api/v1/nidus/rides/estimates',
+        queryParameters: {
+          'pickup': '$pickupLat,$pickupLng',
+          'dropoff': '$dropoffLat,$dropoffLng',
+        },
+      );
+      final parsed = _parseEstimateEnvelope(response.data);
+      if (parsed != null) return parsed;
+    } catch (e) {
+      debugPrint('GET /rides/estimates failed, trying legacy POST: $e');
+    }
+
+    // Legacy POST fallback — same wire envelope, older per-card fields.
+    try {
+      final response = await _apiClient.post(
+        '/api/v1/nidus/rides/estimate',
+        data: {
+          'pickup_lat': pickupLat,
+          'pickup_lng': pickupLng,
+          'dropoff_lat': dropoffLat,
+          'dropoff_lng': dropoffLng,
+        },
+      );
+      final parsed = _parseEstimateEnvelope(response.data);
+      if (parsed != null) return parsed;
+    } catch (e) {
+      debugPrint('POST /rides/estimate also failed: $e');
+    }
+
+    throw Exception('fare estimates unavailable');
+  }
+
+  List<RideOptionEstimate>? _parseEstimateEnvelope(dynamic rawData) {
+    Map<String, dynamic>? map;
+    if (rawData is Map<String, dynamic>) {
+      map = rawData;
+    } else if (rawData is String) {
+      final decoded = jsonDecode(rawData);
+      if (decoded is Map<String, dynamic>) map = decoded;
+    }
+    if (map == null) return null;
+    final list = map['estimates'];
+    if (list is! List) return null;
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(RideOptionEstimate.fromJson)
+        .toList();
   }
 
   // ==========================================================================

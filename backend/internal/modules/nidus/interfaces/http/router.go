@@ -229,6 +229,8 @@ func NewRouter(deps *Dependencies) http.Handler {
 		r.Route("/nidus", func(r chi.Router) {
 			// Ride estimates are public (used before login)
 			r.Post("/rides/estimate", estimateHandler.EstimateFare)
+			// §2.6 canonical GET surface for the ride-option carousel
+			r.Get("/rides/estimates", estimateHandler.Estimates)
 		})
 
 		// Protected endpoints (require authentication)
