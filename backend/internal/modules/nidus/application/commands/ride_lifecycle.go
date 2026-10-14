@@ -86,6 +86,10 @@ type lifecycleBase struct {
 func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entities.Ride, error) {
 	// DriverID is *uuid.UUID on the entity; scan it directly so an unmatched ride
 	// (SQL NULL) normalises to a nil pointer.
+	// §3.1: payment_method_type and cash_collected_at MUST be loaded here —
+	// ConfirmCashCollectionHandler gates on ride.IsCashRide(), which reads
+	// PaymentMethodType. Omitting these columns would make every cash-ride
+	// precondition check fail against a zero-valued entity.
 	var r entities.Ride
 	err := b.db.QueryRow(ctx, `
 		SELECT id, user_id, driver_id,
@@ -95,6 +99,7 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		       COALESCE(fare_amount, 0), COALESCE(currency, 'ETB'), COALESCE(tip_amount, 0),
 		       COALESCE(cancel_fee, 0), COALESCE(cancelled_by, ''), COALESCE(cancel_reason, ''),
 		       COALESCE(distance_km, 0), COALESCE(duration_minutes, 0),
+		       COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 		       requested_at, matched_at, started_at, completed_at,
 		       COALESCE(rating, 0), created_at, updated_at
 		FROM rides WHERE id = $1`, rideID).Scan(
@@ -105,6 +110,7 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&r.FareAmount, &r.Currency, &r.TipAmount,
 		&r.CancelFee, &r.CancelledBy, &r.CancelReason,
 		&r.DistanceKm, &r.DurationMinutes,
+		&r.PaymentMethodType, &r.CashCollectedAt, &r.ScheduledAt,
 		&r.RequestedAt, &r.MatchedAt, &r.StartedAt, &r.CompletedAt,
 		&r.Rating, &r.CreatedAt, &r.UpdatedAt,
 	)
