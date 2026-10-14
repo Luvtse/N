@@ -111,16 +111,27 @@ func (h *LocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Publish location update event
+	// Publish location update event. Phase 1 audit: when the driver is on an
+	// active ride, enrich the payload with ride_id + rider user_id so (a) the
+	// WSBridge fans GPS to the ride room (rider's live tracking) and (b) the
+	// DriverArrivingWatcher can evaluate pickup proximity for the
+	// driver_arriving notification (§1.4 event wiring). One indexed query per
+	// GPS ping; failures degrade silently to the pre-enrichment behavior.
+	rideID, riderID := h.activeRideFor(ctx, userID)
+	payload := map[string]interface{}{
+		"driver_id": userID.String(),
+		"lat":       req.Lat,
+		"lng":       req.Lng,
+		"heading":   req.Heading,
+		"speed":     req.Speed,
+	}
+	if rideID != uuid.Nil {
+		payload["ride_id"] = rideID.String()
+		payload["user_id"] = riderID.String()
+	}
 	event := eventbus.Event{
-		Type: "driver.location_updated",
-		Payload: map[string]interface{}{
-			"driver_id": userID.String(),
-			"lat":       req.Lat,
-			"lng":       req.Lng,
-			"heading":   req.Heading,
-			"speed":     req.Speed,
-		},
+		Type:      "driver.location_updated",
+		Payload:   payload,
 		Timestamp: time.Now().Unix(),
 	}
 	_ = h.eventBus.Publish(ctx, "nidus.locations", event)
@@ -130,6 +141,29 @@ func (h *LocationHandler) UpdateLocation(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status": "updated",
 	})
+}
+
+// activeRideFor returns the ride + rider for the driver's current pre-trip
+// assignment (matched / driver_en_route — i.e., the driver is on the way to
+// pickup). in_progress is deliberately excluded: once the trip starts there
+// is no "arriving at pickup" state to announce. Zero or multiple rows, and
+// any query error, degrade to uuid.Nil (no enrichment) rather than failing
+// the GPS ping itself — location ingest must stay available.
+func (h *LocationHandler) activeRideFor(ctx context.Context, driverID uuid.UUID) (rideID, riderID uuid.UUID) {
+	if h.db == nil {
+		return uuid.Nil, uuid.Nil
+	}
+	var rideStr, userStr string
+	err := h.db.QueryRow(ctx, `
+		SELECT id::text, user_id::text FROM rides
+		WHERE driver_id = $1 AND status IN ('matched', 'driver_en_route')
+		ORDER BY created_at DESC LIMIT 1`, driverID).Scan(&rideStr, &userStr)
+	if err != nil {
+		return uuid.Nil, uuid.Nil
+	}
+	rideID, _ = uuid.Parse(rideStr)
+	riderID, _ = uuid.Parse(userStr)
+	return rideID, riderID
 }
 
 // canTrackDriver reports whether caller may view the live position of driverID.

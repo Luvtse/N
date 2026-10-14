@@ -207,6 +207,22 @@ func main() {
 	}
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
 
+	// Phase 1 audit fix: wire the WS bridge. Without this the hub is an
+	// island — clients connect and subscribe to ride:<id>/driver:<id> topics
+	// but nothing ever publishes into the hub, so riders never saw live ride
+	// status and drivers never received the offer feed. The bridge consumes
+	// the canonical bus topic ("nidaw.events") and fans lifecycle/location
+	// events out to per-ride and per-driver rooms.
+	ctxWSBridge, stopWSBridge := context.WithCancel(context.Background())
+	defer stopWSBridge()
+	wsBridge := nidushandlers.NewWSBridge(wsHub)
+	wsBridge.SetLogger(logger)
+	if err := wsBridge.Subscribe(ctxWSBridge, eventBus); err != nil {
+		logger.Error("Failed to subscribe WS bridge to event bus", zap.Error(err))
+	} else {
+		logger.Info("WS bridge online (event bus -> websocket hub fan-out)")
+	}
+
 	// ============================================================================
 	// §1.4 Notifications substrate (kill-switch: FEATURE_NOTIFICATIONS, default
 	// off in production — see config/feature-flags/flags.json).

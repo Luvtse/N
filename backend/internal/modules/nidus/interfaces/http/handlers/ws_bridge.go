@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"time"
 
 	"nidaw-backend/internal/shared/eventbus"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // WSBridge connects the Kafka event stream to the WebSocket hub. Without it,
@@ -23,19 +26,51 @@ import (
 //
 // The client-side subscription filter reads payload["topic"], so the topic
 // field must be set for delivery (see websocket_handler.run()).
+// HubIntf is the minimal surface WSBridge needs from the WebSocket hub. The
+// concrete *WebSocketHandler satisfies it; tests substitute a recorder.
+type HubIntf interface {
+	BroadcastToRide(rideID uuid.UUID, message Message)
+	BroadcastToDriver(driverID uuid.UUID, message Message)
+	BroadcastToTopic(topic string, payload map[string]interface{}) error
+}
+
 type WSBridge struct {
-	hub    *WebSocketHandler
-	logger interface{ Warnf(format string, args ...interface{}) }
+	hub    HubIntf
+	logger *zap.Logger
 }
 
 // NewWSBridge creates the bridge for a hub. logger may be nil.
-func NewWSBridge(hub *WebSocketHandler) *WSBridge {
+func NewWSBridge(hub HubIntf) *WSBridge {
 	return &WSBridge{hub: hub}
 }
 
-// SetLogger attaches an optional printf-style warn logger.
-func (b *WSBridge) SetLogger(l interface{ Warnf(format string, args ...interface{}) }) {
+// SetLogger attaches an optional structured warn logger.
+func (b *WSBridge) SetLogger(l *zap.Logger) {
 	b.logger = l
+}
+
+// Subscribe registers the bridge on the bus so every event published to the
+// canonical topic ("nidaw.events" — KafkaBus.Publish writes all events there
+// regardless of the logical topic argument) is fanned out to the WS hub.
+// This is the wiring that keeps the hub from being an island: without it,
+// clients connect and subscribe to topics but receive nothing (§ live ride
+// updates / driver offer feed). Call exactly once at boot, after the hub and
+// bus exist. Errors from Handle are logged and swallowed by design: a dropped
+// live update never affects money movement (REST + ledger stay authoritative).
+func (b *WSBridge) Subscribe(ctx context.Context, bus eventbus.EventBus) error {
+	if b == nil || b.hub == nil || bus == nil {
+		return nil
+	}
+	return bus.Subscribe(ctx, "nidaw.events", func(ev eventbus.Event) {
+		if err := b.Handle(ev); err != nil {
+			if b.logger != nil {
+				b.logger.Warn("ws bridge: broadcast failed",
+					zap.String("event_type", ev.Type), zap.Error(err))
+			} else {
+				log.Printf("ws bridge: broadcast failed for %s: %v", ev.Type, err)
+			}
+		}
+	})
 }
 
 // Handle processes one bus event. Unknown types are ignored. Returns nil
@@ -51,14 +86,10 @@ func (b *WSBridge) Handle(ev eventbus.Event) error {
 	switch ev.Type {
 	case "ride.requested":
 		// Offer feed: notify all subscribed drivers that a new ride exists.
-		b.hub.broadcast <- Message{
-			Type: "ride_offer_new",
-			Payload: map[string]interface{}{
-				"topic":   "driver:offers",
-				"ride_id": rideID.String(),
-			},
-			Timestamp: time.Now().Unix(),
-		}
+		_ = b.hub.BroadcastToTopic("driver:offers", map[string]interface{}{
+			"topic":   "driver:offers",
+			"ride_id": rideID.String(),
+		})
 
 	case "ride.matched", "ride.started", "ride.completed", "ride.cancelled":
 		data := map[string]interface{}{

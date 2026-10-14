@@ -128,6 +128,27 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 		})
 		return err
 
+	case "driver.arriving":
+		// §1.4 event wiring: produced by the DriverArrivingWatcher when a
+		// matched driver's GPS ping lands within the arrival radius of the
+		// pickup (and again inside the final-approach radius). Rides are
+		// announced at most once per radius tier (deduped in the watcher),
+		// so this case never spams the rider.
+		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
+			UserID:   userID,
+			Category: domain.CategoryDriverArriving,
+			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			Payload: map[string]interface{}{
+				"ride_id":       ev.Payload["ride_id"],
+				"distance_m":    ev.Payload["distance_m"],
+				"approach_tier": ev.Payload["approach_tier"],
+			},
+			Vars: map[string]string{
+				"driver_name": driverDisplayName(ctx, ev.Payload["driver_name"]),
+			},
+		})
+		return err
+
 	default:
 		return nil
 	}
