@@ -402,6 +402,9 @@ type CompleteRideResult struct {
 	DriverEarnings float64
 	Tip            float64
 	Settled        bool // true when the ride.completed event hit the bus directly
+	// §3.1: true for cash rides — the fare is owed in hand, ledger settlement
+	// is deferred until the driver confirms collection.
+	PendingCashCollection bool
 }
 
 type CompleteRideHandler struct {
@@ -461,6 +464,13 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 	platformFee := computePlatformFee(finalFare)
 	driverEarnings := round2(finalFare - platformFee)
 
+	// §3.1 Cash rides: the fare is collected in hand at completion, so ledger
+	// settlement must NOT be enqueued here — it is deferred until the driver
+	// confirms physical collection (ConfirmCashCollectionHandler). The ride
+	// still reaches 'completed'; pending_cash_collection is derived as
+	// completed + cash + cash_collected_at IS NULL (see Ride.IsPendingCashCollection).
+	isCash := ride.IsCashRide()
+
 	// Driver ledger identity: the ledger keys balances by USER id, while
 	// rides reference the DRIVER profile id — translate before settling.
 	var driverUserID uuid.UUID
@@ -470,16 +480,18 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 
 	completedAt := time.Now().UTC()
 	payload := map[string]interface{}{
-		"ride_id":           ride.ID.String(),
-		"driver_id":         driverUserID.String(), // ledger identity (user id)
-		"user_id":           ride.UserID.String(),
-		"actual_distance":   distance,
-		"actual_duration":   duration,
-		"final_fare":        finalFare,
-		"driver_earnings":   driverEarnings,
-		"platform_fee":      platformFee,
-		"currency":          ride.Currency,
-		"completed_at_unix": completedAt.Unix(),
+		"ride_id":                 ride.ID.String(),
+		"driver_id":               driverUserID.String(), // ledger identity (user id)
+		"user_id":                 ride.UserID.String(),
+		"actual_distance":         distance,
+		"actual_duration":         duration,
+		"final_fare":              finalFare,
+		"driver_earnings":         driverEarnings,
+		"platform_fee":            platformFee,
+		"currency":                ride.Currency,
+		"completed_at_unix":       completedAt.Unix(),
+		"payment_method_type":     ride.PaymentMethodType,
+		"pending_cash_collection": isCash,
 	}
 
 	rec := settlementRecord{
@@ -493,24 +505,31 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 	// Try a synchronous publish first (fast path). On broker failure we still
 	// commit the completion + outbox row; the background re-publisher drains
 	// pending rows later, so settlement is eventually guaranteed.
+	// Cash rides skip both paths entirely (§3.1 deferral).
 	settled := false
-	if err := h.publishRideCompleted(ctx, payload); err == nil {
-		settled = true
-		rec.DirectPublished = true
-		rec.PublishedAt = &completedAt
+	if !isCash {
+		if err := h.publishRideCompleted(ctx, payload); err == nil {
+			settled = true
+			rec.DirectPublished = true
+			rec.PublishedAt = &completedAt
+		}
 	}
 
-	if err := h.recordCompleted(ctx, ride.ID, finalFare, platformFee, ride.TipAmount, distance, duration, rec); err != nil {
+	if err := h.recordCompleted(ctx, ride.ID, finalFare, platformFee, ride.TipAmount, distance, duration, rec, isCash); err != nil {
 		return nil, err
 	}
 
 	// Observability parity with ledger Phase E/F/G workers: completion volume
-	// plus which settlement path was taken (inline publish vs durable outbox).
+	// plus which settlement path was taken (inline publish vs durable outbox
+	// vs deferred-cash).
 	nm := observability.Nidus()
 	nm.RidesCompletedTotal.Inc()
-	if settled {
+	switch {
+	case isCash:
+		nm.RecordSettlement("cash_deferred")
+	case settled:
 		nm.RecordSettlement("settled")
-	} else {
+	default:
 		nm.RecordSettlement("queued")
 	}
 
@@ -522,12 +541,18 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 	}
 
 	res := &CompleteRideResult{
-		RideID:         ride.ID,
-		FinalFare:      finalFare,
-		PlatformFee:    platformFee,
-		DriverEarnings: driverEarnings,
-		Tip:            ride.TipAmount,
-		Settled:        settled,
+		RideID:                ride.ID,
+		FinalFare:             finalFare,
+		PlatformFee:           platformFee,
+		DriverEarnings:        driverEarnings,
+		Tip:                   ride.TipAmount,
+		Settled:               settled,
+		PendingCashCollection: isCash,
+	}
+	if isCash {
+		// Cash completion is a clean success: settlement is intentionally
+		// deferred until the driver confirms collection — not a fallback.
+		return res, nil
 	}
 	if !settled {
 		// Completion succeeded; settlement will flow through the outbox.
@@ -536,6 +561,157 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		return res, ErrSettlementFallback
 	}
 	return res, nil
+}
+
+// ============================================================================
+// CONFIRM CASH COLLECTION (driver) — §3.1 completes the cash loop
+// ============================================================================
+
+type ConfirmCashCollectionCommand struct {
+	DriverUserID uuid.UUID // authenticated JWT subject (a user id owning a driver row)
+	RideID       uuid.UUID
+}
+
+// ConfirmCashCollectionResult reports the transition outcome. AlreadyCollected
+// marks the idempotent replay: the second call succeeds without restamping.
+type ConfirmCashCollectionResult struct {
+	RideID           uuid.UUID
+	Status           string
+	CashCollectedAt  time.Time
+	AlreadyCollected bool
+}
+
+type ConfirmCashCollectionHandler struct{ lifecycleBase }
+
+func NewConfirmCashCollectionHandler(db *database.Postgres, eventBus eventbus.EventBus) *ConfirmCashCollectionHandler {
+	return &ConfirmCashCollectionHandler{lifecycleBase: lifecycleBase{db: db, eventBus: eventBus}}
+}
+
+// Execute stamps cash_collected_at and moves the ride completed -> paid, then
+// emits the deferred settlement event so the ledger pays the driver exactly
+// once. Preconditions (checked against the DB row inside one transaction):
+//   - caller is the matched driver of this ride (else 403);
+//   - ride status is 'completed' AND payment_method_type = 'cash'
+//     AND cash_collected_at IS NULL (else conflict/not-found mapping).
+//
+// Idempotency: the UPDATE is guarded by cash_collected_at IS NULL, so a
+// concurrent/retried confirm either wins (and publishes settlement with a
+// deterministic event key the ledger dedupes on "ride:debit:<ride_id>") or
+// observes the already-collected row and returns success without side effects.
+func (h *ConfirmCashCollectionHandler) Execute(ctx context.Context, cmd *ConfirmCashCollectionCommand) (*ConfirmCashCollectionResult, error) {
+	driverID, err := h.resolveDriverID(ctx, cmd.DriverUserID)
+	if err != nil {
+		return nil, err
+	}
+	ride, err := h.loadRide(ctx, cmd.RideID)
+	if err != nil {
+		return nil, err
+	}
+	if ride.DriverID == nil || *ride.DriverID != driverID {
+		return nil, ErrForbidden
+	}
+	if !ride.IsCashRide() {
+		return nil, ErrNotACashRide
+	}
+	switch ride.Status {
+	case entities.RideStatusPaid:
+		// Already collected + settled: idempotent success.
+		at := time.Now().UTC()
+		if ride.CashCollectedAt != nil {
+			at = *ride.CashCollectedAt
+		}
+		return &ConfirmCashCollectionResult{RideID: ride.ID, Status: string(ride.Status), CashCollectedAt: at, AlreadyCollected: true}, nil
+	case entities.RideStatusCompleted:
+		// expected state for pending_cash_collection
+	default:
+		return nil, ErrRideNotEligibleForCashCollection
+	}
+
+	var collectedAt time.Time
+	var wonFirst bool
+	err = h.db.WithTx(ctx, func(tx *database.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE rides
+			   SET status = 'paid', cash_collected_at = NOW(), updated_at = NOW()
+			 WHERE id = $1 AND status = 'completed'
+			   AND payment_method_type = 'cash'
+			   AND cash_collected_at IS NULL`, ride.ID)
+		if err != nil {
+			return err
+		}
+		wonFirst = tag.RowsAffected() == 1
+		if !wonFirst {
+			return nil // lost the race / replay: read back below
+		}
+		return tx.QueryRow(ctx, `SELECT cash_collected_at FROM rides WHERE id = $1`, ride.ID).Scan(&collectedAt)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !wonFirst {
+		// Row moved under us (duplicate request). Re-read and report honestly.
+		fresh, rerr := h.loadRide(ctx, cmd.RideID)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if fresh.CashCollectedAt == nil {
+			return nil, ErrRideNotEligibleForCashCollection
+		}
+		return &ConfirmCashCollectionResult{RideID: fresh.ID, Status: string(fresh.Status), CashCollectedAt: *fresh.CashCollectedAt, AlreadyCollected: true}, nil
+	}
+
+	// Emit the deferred settlement now that money physically changed hands.
+	// Same payload shape the ledger consumer already handles; deterministic
+	// event key keeps this exactly-once even if publish retries.
+	var driverUserID uuid.UUID
+	if err := h.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id = $1`, driverID).Scan(&driverUserID); err != nil {
+		// Collection already recorded; settlement identity failure must not
+		// fail the endpoint. Log and let the outbox re-publisher stay silent —
+		// ops alert surfaces via the warning line, matching existing style.
+		fmt.Printf("warning: cash ride %s collected but driver identity unresolved for settlement: %v\n", ride.ID, err)
+		return &ConfirmCashCollectionResult{RideID: ride.ID, Status: string(entities.RideStatusPaid), CashCollectedAt: collectedAt}, nil
+	}
+
+	payload := map[string]interface{}{
+		"ride_id":                 ride.ID.String(),
+		"driver_id":               driverUserID.String(),
+		"user_id":                 ride.UserID.String(),
+		"actual_distance":         ride.DistanceKm,
+		"actual_duration":         ride.DurationMinutes,
+		"final_fare":              ride.FareAmount,
+		"driver_earnings":         round2(ride.FareAmount - computePlatformFee(ride.FareAmount)),
+		"platform_fee":            computePlatformFee(ride.FareAmount),
+		"currency":                ride.Currency,
+		"completed_at_unix":       collectedAt.Unix(),
+		"payment_method_type":     "cash",
+		"pending_cash_collection": false,
+	}
+	rec := settlementRecord{
+		EventID:      ride.ID,
+		RideID:       ride.ID,
+		DriverUserID: driverUserID,
+		Currency:     ride.Currency,
+		Payload:      payload,
+	}
+	published := false
+	if err := h.publishRideCompleted(ctx, payload); err == nil {
+		published = true
+		rec.DirectPublished = true
+		rec.PublishedAt = &collectedAt
+	}
+	if err := h.db.WithTx(ctx, func(tx *database.Tx) error {
+		return enqueueRideCompleted(ctx, tx, rec)
+	}); err != nil {
+		fmt.Printf("warning: cash ride %s settlement outbox insert failed: %v\n", ride.ID, err)
+	}
+	nm := observability.Nidus()
+	if published {
+		nm.RecordSettlement("cash_settled")
+	} else {
+		nm.RecordSettlement("cash_queued")
+	}
+
+	return &ConfirmCashCollectionResult{RideID: ride.ID, Status: string(entities.RideStatusPaid), CashCollectedAt: collectedAt}, nil
 }
 
 func round2(v float64) float64 {
