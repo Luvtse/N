@@ -64,6 +64,7 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 			distance_km, duration_minutes,
 			requested_at, matched_at, started_at, completed_at,
 			rating, review, tip_amount,
+			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 			created_at, updated_at
 		FROM rides
 		WHERE id = $1
@@ -75,6 +76,10 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	var fareAmount, distanceKm pgtype.Float8
 	var durationMinutes, rating pgtype.Int4
 	var tipAmount pgtype.Float8
+	// §3.1/§3.6 money + scheduling columns: nullable so legacy rows (created
+	// before migrations 007/008) scan cleanly into zero values / nil pointers.
+	var paymentMethodType pgtype.Text
+	var cashCollectedAt, scheduledAt pgtype.Timestamptz
 
 	err := q.db.QueryRow(ctx, query, rideID).Scan(
 		&ride.ID,
@@ -99,6 +104,9 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&rating,
 		&review,
 		&tipAmount,
+		&paymentMethodType,
+		&cashCollectedAt,
+		&scheduledAt,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
 	)
@@ -142,6 +150,17 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	}
 	if tipAmount.Valid {
 		ride.TipAmount = tipAmount.Float64
+	}
+	// §3.1/§3.6: money + scheduling columns. COALESCE above guarantees the
+	// method type is never SQL-NULL; the timestamps stay nil for legacy rows.
+	ride.PaymentMethodType = paymentMethodType.String
+	if cashCollectedAt.Valid {
+		t := cashCollectedAt.Time
+		ride.CashCollectedAt = &t
+	}
+	if scheduledAt.Valid {
+		t := scheduledAt.Time
+		ride.ScheduledAt = &t
 	}
 
 	return &ride, nil

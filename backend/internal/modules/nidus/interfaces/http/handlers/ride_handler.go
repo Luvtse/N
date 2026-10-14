@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/commands"
@@ -183,6 +184,17 @@ type RideResponse struct {
 	// rider. Omitted (nil) when the feature is off/unwired — clients then show
 	// their honest "verification unavailable" state, never a fabricated one.
 	PreSelfie *PreSelfieInfo `json:"pre_selfie,omitempty"`
+	// §3.1 Cash Payment Option money fields, all honest omitempty pointers:
+	// absent means "not applicable / not available", never zero-filled fakes.
+	// PaymentMethodType is the request-time snapshot ("wallet"|"card"|"cash");
+	// CashCollectedAt is stamped only after the driver confirms collection;
+	// PendingCashCollection is true exactly while a completed cash ride awaits
+	// that confirmation (collect-on-completion state).
+	PaymentMethodType     *string    `json:"payment_method_type,omitempty"`
+	CashCollectedAt       *time.Time `json:"cash_collected_at,omitempty"`
+	PendingCashCollection *bool      `json:"pending_cash_collection,omitempty"`
+	// §3.6 Scheduled Rides: requested pickup time; omitted for on-demand rides.
+	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
 }
 
 // DriverInfo contains driver details for a ride response. §2.4: the rider-facing
@@ -259,6 +271,23 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §3.6 Scheduled rides: parse the optional RFC3339 pickup time before the
+	// command runs, so a malformed value is a client error (400) rather than a
+	// silent drop. An empty string means an on-demand ride (nil pointer). The
+	// booking-window rules (>= 15 min, <= 30 days) are enforced in one place —
+	// RequestRideHandler.validateCommand — and surfaced here as stable codes.
+	var scheduledAt *time.Time
+	if s := strings.TrimSpace(req.ScheduledAt); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_SCHEDULED_AT",
+				"scheduled_at must be an RFC3339 timestamp, e.g. 2026-11-01T08:30:00Z")
+			return
+		}
+		utc := t.UTC()
+		scheduledAt = &utc
+	}
+
 	// Execute command
 	result, err := h.requestRideCmd.Execute(ctx, &commands.RequestRideCommand{
 		UserID:          userID,
@@ -270,6 +299,7 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 		DropoffAddress:  req.DropoffAddress,
 		RideType:        req.RideType,
 		PaymentMethodID: req.PaymentMethodID,
+		ScheduledAt:     scheduledAt,
 	})
 	if err != nil {
 		status, code, msg := mapCommandError(err)
@@ -1020,6 +1050,27 @@ func toRideResponse(ride *entities.Ride) RideResponse {
 	resp.CancelledBy = ride.CancelledBy
 	resp.CancelReason = ride.CancelReason
 
+	// §3.1 money fields. Honest omitempty pointers: payment_method_type is
+	// omitted for legacy rides (empty snapshot), cash_collected_at only once the
+	// driver confirmed physical collection, and pending_cash_collection is the
+	// derived collect-on-completion state (completed + cash + not yet collected).
+	// Clients never recompute this from status strings.
+	if ride.PaymentMethodType != "" {
+		t := ride.PaymentMethodType
+		resp.PaymentMethodType = &t
+	}
+	if ride.CashCollectedAt != nil {
+		c := *ride.CashCollectedAt
+		resp.CashCollectedAt = &c
+	}
+	if ride.IsPendingCashCollection() {
+		p := true
+		resp.PendingCashCollection = &p
+	}
+	// §3.6 scheduled rides: omitted for on-demand rides (nil pointer), present
+	// verbatim for scheduled ones so History can render the "Scheduled" chip.
+	resp.ScheduledAt = ride.ScheduledAt
+
 	return resp
 }
 
@@ -1029,10 +1080,20 @@ func mapCommandError(err error) (int, string, string) {
 		return http.StatusServiceUnavailable, "NO_DRIVERS", "no drivers available nearby"
 	case errors.Is(err, commands.ErrInvalidPaymentMethod):
 		return http.StatusBadRequest, "INVALID_PAYMENT", "invalid payment method"
+	case errors.Is(err, commands.ErrNoPaymentMethods):
+		return http.StatusBadRequest, "NO_PAYMENT_METHODS", err.Error()
+	case errors.Is(err, commands.ErrPaymentUnavailable):
+		return http.StatusServiceUnavailable, "PAYMENT_UNAVAILABLE", "payment method unavailable"
 	case errors.Is(err, commands.ErrPaymentFailed):
 		return http.StatusPaymentRequired, "PAYMENT_FAILED", "payment processing failed"
 	case errors.Is(err, commands.ErrInvalidLocation):
 		return http.StatusBadRequest, "INVALID_LOCATION", "invalid pickup or dropoff location"
+	case errors.Is(err, commands.ErrSamePickupAndDropoff):
+		return http.StatusBadRequest, "SAME_LOCATIONS", "pickup and dropoff locations must be different"
+	case errors.Is(err, commands.ErrScheduledTooSoon):
+		return http.StatusBadRequest, "SCHEDULED_TOO_SOON", err.Error()
+	case errors.Is(err, commands.ErrScheduledTooFar):
+		return http.StatusBadRequest, "SCHEDULED_TOO_FAR_OUT", err.Error()
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}
