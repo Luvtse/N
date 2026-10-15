@@ -10,6 +10,8 @@ import (
 	"nidaw-backend/internal/modules/nidus/application/services"
 	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidusHttp "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	promoapp "nidaw-backend/internal/modules/promotions/application"
+	promohttp "nidaw-backend/internal/modules/promotions/interfaces/http/handlers"
 	paymentsapp "nidaw-backend/internal/modules/payments/application"
 	payhttp "nidaw-backend/internal/modules/payments/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
@@ -49,6 +51,21 @@ type Dependencies struct {
 	PaymentMethods   niduscmds.PaymentMethodResolver
 	CashEnabled      bool
 	PaymentMethodSvc *paymentsapp.PaymentMethodService // nil => registry routes not mounted
+	// Â§3.2 Promo Codes & Coupons. Promotions is the port RequestRideHandler
+	// consumes at request time (consume the rider's projection, bind it to the
+	// freshly minted ride id); nil or PromosEnabled==false means a supplied
+	// promo code is rejected with PROMOTIONS_DISABLED rather than silently
+	// ignored â an honest "promos unavailable" state, never a fake discount.
+	// PromoFinalizer adjusts the discount against the final fare at receipt
+	// time; nil leaves the request-time snapshot untouched. PromoHandler backs
+	// POST /promotions/redeem and GET /promotions/mine; nil => those routes are
+	// not mounted at all. main.go wires these from the promotions module; the
+	// ports are declared structurally in commands so nidus only borrows the
+	// service type here at composition, mirroring PaymentMethodSvc above.
+	Promotions     niduscmds.PromoApplier
+	PromosEnabled  bool
+	PromoFinalizer niduscmds.PromoFinalizer
+	PromoHandler   *promohttp.Handler
 	// WSHub backs GET /ws (§1.5 router cleanup: the hub existed but was never
 	// mounted). main.go constructs one shared hub here and reuses it as the
 	// notifications module's InAppBroadcaster (§1.4). nil => no /ws route.
@@ -175,7 +192,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 
 	rideHandler := nidusHttp.NewRideHandler(
 		deps.DB,
-		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService, deps.PaymentMethods, deps.CashEnabled),
+		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService, deps.PaymentMethods, deps.CashEnabled, deps.Promotions, deps.PromosEnabled),
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
@@ -185,7 +202,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 	rideHandler.SetLifecycle(nidusHttp.LifecycleCommands{
 		Accept:   commands.NewAcceptRideHandler(deps.DB, deps.EventBus, deps.MatchingEngine, deps.PricingService),
 		Start:    commands.NewStartRideHandler(deps.DB, deps.EventBus),
-		Complete: commands.NewCompleteRideHandler(deps.DB, deps.EventBus, deps.PricingService),
+		Complete: commands.NewCompleteRideHandler(deps.DB, deps.EventBus, deps.PricingService, deps.PromoFinalizer),
 		Cancel:   commands.NewCancelRideHandler(deps.DB, deps.EventBus),
 		Rate:     rateRideCmd,
 		// §3.1: driver-side cash-collection confirm (completed -> paid + deferred
