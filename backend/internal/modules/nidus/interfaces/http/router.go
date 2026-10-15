@@ -55,7 +55,7 @@ type Dependencies struct {
 	// consumes at request time (consume the rider's projection, bind it to the
 	// freshly minted ride id); nil or PromosEnabled==false means a supplied
 	// promo code is rejected with PROMOTIONS_DISABLED rather than silently
-	// ignored â an honest "promos unavailable" state, never a fake discount.
+	// ignored — an honest "promos unavailable" state, never a fake discount.
 	// PromoFinalizer adjusts the discount against the final fare at receipt
 	// time; nil leaves the request-time snapshot untouched. PromoHandler backs
 	// POST /promotions/redeem and GET /promotions/mine; nil => those routes are
