@@ -153,10 +153,10 @@ func (h *SplitHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		inviteeUser = &uid
 	}
 	inv, err := h.svc.Accept(ctx, &services.AcceptSplitCommand{Token: token, InviteeUserID: inviteeUser})
-if err == nil && inv.Status == services.SplitPending {
-// service returned truth without transitioning — defensive, should not happen
-err = services.ErrSplitBadState
-}
+	if err == nil && inv.Status == services.SplitPending {
+		// service returned truth without transitioning — defensive, should not happen
+		err = services.ErrSplitBadState
+	}
 	if err != nil {
 		status, code, msg := mapSplitError(err)
 		writeError(w, status, code, msg)

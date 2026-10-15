@@ -378,6 +378,28 @@
           "abTestId": null,
           "killSwitch": "Set FEATURE_PROMOTIONS=false and redeploy; redeem/mine routes are not mounted and receipt-time application is skipped (discount_applied stays persisted on completed rides for accounting). No user-visible fake discount states are shown while off."
         }
+      },
+      "split_fare": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-15T00:00:00Z",
+          "expires": null,
+          "description": "§3.3 split fare (POST/GET /api/v1/nidus/rides/{rideId}/split owner actions + public tokenized POST /api/v1/split/{token}/accept). Kill switch: FEATURE_SPLIT_FARE=false (env) unmounts all three routes at next boot; pending invites remain in Postgres and simply 404 until re-enabled — no partial state is shown in-app. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set FEATURE_SPLIT_FARE=false and redeploy; SplitSvc stays nil so the route group is not mounted. Accepted-but-unpaid shares are untouched in ride_split_invites."
+        }
       }
     },
     "ai_ml_features": {
