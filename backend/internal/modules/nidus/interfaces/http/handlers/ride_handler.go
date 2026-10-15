@@ -209,6 +209,32 @@ type RideResponse struct {
 	// ride record genuinely carries them.
 	PromoCode     *string  `json:"promo_code,omitempty"`
 	PromoDiscount *float64 `json:"promo_discount,omitempty"`
+	// §3.4 Itemized Receipt (Global Rule: no suppressed itemization). The five
+	// fare components are the server-snapshot persisted at request time and
+	// finalized at completion; they are omitted individually when the ride
+	// record genuinely lacks them (legacy rows) — never zero-filled fakes.
+	// FareBreakdown is nil only when NO component exists at all, which the
+	// receipt renders as an honest "itemization unavailable" state with retry.
+	// BaseFare already includes any minimum-fare uplift so that
+	// base+distance+time+surge+service_fee == the pre-promo gross fare;
+	// gross - promo_discount + tip == total charged.
+	FareBreakdown *FareBreakdownInfo `json:"fare_breakdown,omitempty"`
+}
+
+// FareBreakdownInfo carries the itemized receipt lines computed by the pricing
+// service. Every line is a pointer: absent means "unavailable for this ride",
+// never 0. Currency rides alongside the ride's currency field. Toll amounts
+// are not yet produced by the pricing service, so no toll line is exposed —
+// the client must not fabricate one.
+type FareBreakdownInfo struct {
+	Base          *float64 `json:"base,omitempty"`
+	Distance      *float64 `json:"distance,omitempty"`
+	Time          *float64 `json:"time,omitempty"`
+	Surge         *float64 `json:"surge,omitempty"`
+	ServiceFee    *float64 `json:"service_fee,omitempty"`
+	PromoDiscount *float64 `json:"promo_discount,omitempty"`
+	Tip           *float64 `json:"tip,omitempty"`
+	Total         *float64 `json:"total,omitempty"`
 }
 
 // DriverInfo contains driver details for a ride response. §2.4: the rider-facing
@@ -1149,7 +1175,49 @@ func toRideResponse(ride *entities.Ride) RideResponse {
 		resp.PromoDiscount = &pd
 	}
 
+	// §3.4 itemized receipt lines. The breakdown is emitted only when the
+	// ride record genuinely carries at least one persisted component; a
+	// fully-legacy row keeps fare_breakdown absent (the receipt then shows
+	// its "itemization unavailable" state — never fabricated zeros). Within
+	// the struct, each line is an honest pointer: a NULL column serializes
+	// as omitted, not 0. Total mirrors the authoritative FareAmount and Tip
+	// mirrors the persisted tip, both from the same record the client pays.
+	if anyFareComponent(ride) {
+		fb := &FareBreakdownInfo{
+			Base:       ride.BaseFareComponent,
+			Distance:   ride.DistanceFareComponent,
+			Time:       ride.TimeFareComponent,
+			Surge:      ride.SurgeFareComponent,
+			ServiceFee: ride.ServiceFeeComponent,
+		}
+		if ride.PromoDiscount > 0 {
+			pdfb := ride.PromoDiscount
+			fb.PromoDiscount = &pdfb
+		}
+		if ride.TipAmount > 0 {
+			tp := ride.TipAmount
+			fb.Tip = &tp
+		}
+		if ride.FareAmount > 0 {
+			tt := ride.FareAmount
+			fb.Total = &tt
+		}
+		resp.FareBreakdown = fb
+	}
+
 	return resp
+}
+
+// anyFareComponent reports whether the ride record carries at least one
+// persisted §3.4 fare-component snapshot. All-nil means the row predates
+// migration 010 (or was written by a legacy path) and itemization is
+// genuinely unavailable for it.
+func anyFareComponent(ride *entities.Ride) bool {
+	return ride.BaseFareComponent != nil ||
+		ride.DistanceFareComponent != nil ||
+		ride.TimeFareComponent != nil ||
+		ride.SurgeFareComponent != nil ||
+		ride.ServiceFeeComponent != nil
 }
 
 func mapCommandError(err error) (int, string, string) {

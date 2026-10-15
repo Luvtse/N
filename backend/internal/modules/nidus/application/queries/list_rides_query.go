@@ -144,6 +144,8 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 			rating, review, tip_amount,
 			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 			COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
+			base_fare_component, distance_fare_component, time_fare_component,
+			surge_fare_component, service_fee_component,
 			created_at, updated_at
 		FROM rides
 		WHERE %s
@@ -195,6 +197,10 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	// 009) scan as empty-string / zero-discount rather than erroring.
 	var promoCode pgtype.Text
 	var promoDiscount pgtype.Float8
+	// §3.4 fare-component columns: nullable so legacy rows (pre-migration 010)
+	// scan as nil pointers — history/receipt rows then render "itemization
+	// unavailable" instead of fabricated zeros (Global Rule 2).
+	var baseFareComponent, distanceFareComponent, timeFareComponent, surgeFareComponent, serviceFeeComponent pgtype.Float8
 
 	err := rows.Scan(
 		&ride.ID,
@@ -223,6 +229,11 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 		&scheduledAt,
 		&promoCode,
 		&promoDiscount,
+		&baseFareComponent,
+		&distanceFareComponent,
+		&timeFareComponent,
+		&surgeFareComponent,
+		&serviceFeeComponent,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
 	)
