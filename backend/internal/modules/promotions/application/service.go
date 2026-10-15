@@ -57,15 +57,15 @@ type RedeemInput struct {
 // on the fare card before confirmation ("Show the projected discount on the
 // fare card before confirmation", §3.2).
 type RedeemedCode struct {
-	Code                string    `json:"code"`
-	Type                string    `json:"type"`
-	Value               float64   `json:"value"`
-	ProjectedDiscount   float64   `json:"projected_discount"`
-	Currency            string    `json:"currency"`
-	MaxDiscount         *float64  `json:"max_discount,omitempty"`
-	MinFare             float64   `json:"min_fare"`
+	Code                string     `json:"code"`
+	Type                string     `json:"type"`
+	Value               float64    `json:"value"`
+	ProjectedDiscount   float64    `json:"projected_discount"`
+	Currency            string     `json:"currency"`
+	MaxDiscount         *float64   `json:"max_discount,omitempty"`
+	MinFare             float64    `json:"min_fare"`
 	ValidTo             *time.Time `json:"valid_to,omitempty"`
-	ApplicableRideTypes []string  `json:"applicable_ride_types,omitempty"`
+	ApplicableRideTypes []string   `json:"applicable_ride_types,omitempty"`
 }
 
 // Redeem validates a code against a projected fare WITHOUT consuming it.
@@ -196,6 +196,20 @@ func (s *Service) FinalizeAtCompletion(ctx context.Context, rideID uuid.UUID, fi
 		return 0, err
 	}
 	return discount, nil
+}
+
+// UpdateRedemptionDiscount syncs the stored redemption discount after receipt
+// finalization changed it (fare moved during the trip). Optional-port surface
+// consumed by the nidus completion hook via structural assertion; repositories
+// that do not support it simply leave the projection value in place.
+func (s *Service) UpdateRedemptionDiscount(ctx context.Context, rideID uuid.UUID, discountApplied float64) error {
+	syncer, ok := s.repo.(interface {
+		UpdateRedemptionDiscount(ctx context.Context, rideID uuid.UUID, discountApplied float64) error
+	})
+	if !ok {
+		return nil
+	}
+	return syncer.UpdateRedemptionDiscount(ctx, rideID, discountApplied)
 }
 
 // Mine returns the codes the user can currently redeem (GET /promotions/mine).

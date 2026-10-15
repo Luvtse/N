@@ -9,6 +9,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -191,6 +192,23 @@ func (r *InMemoryRepository) FinalizeRedemption(_ context.Context, rideID uuid.U
 		}
 	}
 	return false, nil
+}
+
+// UpdateRedemptionDiscount rewrites the stored discount for a ride-bound
+// redemption without touching its ride binding. Used by receipt finalization
+// when the finalized discount differs from the request-time projection, so the
+// ledger row and the ride snapshot never disagree. Returns ErrRedemptionNotFound
+// if no bound row exists — callers treat that as best-effort noise.
+func (r *InMemoryRepository) UpdateRedemptionDiscount(_ context.Context, rideID uuid.UUID, discountApplied float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, red := range r.redemptions {
+		if red.RideID != nil && *red.RideID == rideID {
+			red.DiscountApplied = discountApplied
+			return nil
+		}
+	}
+	return errors.New("no bound promo redemption found for ride " + rideID.String())
 }
 
 // UpsertCode implements the same extra-atomic surface the Postgres repository
