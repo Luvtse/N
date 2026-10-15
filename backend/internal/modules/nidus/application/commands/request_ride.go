@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"nidaw-backend/internal/modules/nidus/application/services"
-	paydomain "nidaw-backend/internal/modules/payments/domain"
 	"nidaw-backend/internal/modules/nidus/domain/entities"
+	paydomain "nidaw-backend/internal/modules/payments/domain"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
 
@@ -275,8 +275,8 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		// §3.6: requested pickup time for a scheduled ride; nil = on-demand.
 		ScheduledAt: cmd.ScheduledAt,
 		RequestedAt: now,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// 4. Persist ride to database. If the INSERT fails while a redemption was
@@ -318,7 +318,9 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 // bound to a nonexistent ride id, which the receipt-time finalizer treats as
 // "no promo on this ride". Never fails the request path further.
 func detachFromRide(ctx context.Context, applier PromoApplier, rideID uuid.UUID) {
-	d, ok := applier.(interface{ DetachFromRide(ctx context.Context, rideID uuid.UUID) error })
+	d, ok := applier.(interface {
+		DetachFromRide(ctx context.Context, rideID uuid.UUID) error
+	})
 	if !ok {
 		return
 	}

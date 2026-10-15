@@ -101,6 +101,8 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		       COALESCE(distance_km, 0), COALESCE(duration_minutes, 0),
 		       COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 		       COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
+		       base_fare_component, distance_fare_component, time_fare_component,
+		       surge_fare_component, service_fee_component,
 		       requested_at, matched_at, started_at, completed_at,
 		       COALESCE(rating, 0), created_at, updated_at
 		FROM rides WHERE id = $1`, rideID).Scan(
@@ -113,6 +115,8 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&r.DistanceKm, &r.DurationMinutes,
 		&r.PaymentMethodType, &r.CashCollectedAt, &r.ScheduledAt,
 		&r.PromoCode, &r.PromoDiscount,
+		&r.BaseFareComponent, &r.DistanceFareComponent, &r.TimeFareComponent,
+		&r.SurgeFareComponent, &r.ServiceFeeComponent,
 		&r.RequestedAt, &r.MatchedAt, &r.StartedAt, &r.CompletedAt,
 		&r.Rating, &r.CreatedAt, &r.UpdatedAt,
 	)
@@ -163,16 +167,24 @@ func (b *lifecycleBase) updateStatus(ctx context.Context, rideID uuid.UUID, stat
 // confirms collection via ConfirmCashCollectionHandler (§3.1), which emits
 // the same settlement event at that point. Non-cash rides settle immediately
 // as before.
-func (b *lifecycleBase) recordCompleted(ctx context.Context, rideID uuid.UUID, fare, fee, tip float64, distance float64, duration int, ev settlementRecord, isCash bool) error {
+func (b *lifecycleBase) recordCompleted(ctx context.Context, rideID uuid.UUID, fare, fee, tip float64, distance float64, duration int, components *CompletionFareComponents, ev settlementRecord, isCash bool) error {
 	return b.db.WithTx(ctx, func(tx *database.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			UPDATE rides
 			   SET status = 'completed',
 			       fare_amount = $2, currency = $3, tip_amount = $4,
 			       distance_km = $5, duration_minutes = $6,
+			       service_fee_component = $7,
+			       promo_discount = $8,
+			       base_fare_component     = COALESCE($9,  base_fare_component),
+			       distance_fare_component = COALESCE($10, distance_fare_component),
+			       time_fare_component     = COALESCE($11, time_fare_component),
+			       surge_fare_component    = COALESCE($12, surge_fare_component),
 			       completed_at = NOW(), updated_at = NOW()
-			 WHERE id = $1 AND status = 'in_progress'`,
-			rideID, fare, ev.Currency, tip, distance, duration); err != nil {
+			WHERE id = $1 AND status = 'in_progress'`,
+			rideID, fare, ev.Currency, tip, distance, duration,
+			components.ServiceFee, components.PromoDiscount,
+			components.Base, components.Distance, components.Time, components.Surge); err != nil {
 			return err
 		}
 		if isCash {
@@ -180,6 +192,24 @@ func (b *lifecycleBase) recordCompleted(ctx context.Context, rideID uuid.UUID, f
 		}
 		return enqueueRideCompleted(ctx, tx, ev)
 	})
+}
+
+// CompletionFareComponents carries the §3.4 receipt-time snapshot written back
+// onto the ride row in recordCompleted so GET /rides/{id} can serve an itemized
+// receipt whose lines reconcile with fare_amount without recomputation. The
+// four variable lines are *float64 pointers: when completion did NOT re-price
+// the trip they are nil, and the UPDATE leaves the request-time snapshot in
+// place (COALESCE-free passthrough); when it DID re-price them from actuals,
+// the new values overwrite. ServiceFee/PromoDiscount always exist at
+// completion time (platform fee is a function of the FINAL fare; the promo
+// discount is finalized against it), so they are plain floats.
+type CompletionFareComponents struct {
+	Base          *float64
+	Distance      *float64
+	Time          *float64
+	Surge         *float64
+	ServiceFee    float64
+	PromoDiscount float64
 }
 
 // settlementRecord is the durable outbox representation of the ride.completed
@@ -479,6 +509,7 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 	}
 
 	finalFare := ride.FareAmount
+	var repricedEst *services.FareEstimate
 	if h.pricingService != nil && cmd.ActualDistanceKm > 0 {
 		est, perr := h.pricingService.CalculateFare(ctx,
 			ride.PickupLat, ride.PickupLng, ride.DropoffLat, ride.DropoffLng,
@@ -488,6 +519,7 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		}
 		if est != nil {
 			finalFare = float64(est.TotalFare) / 100.0
+			repricedEst = est
 		}
 	}
 	if finalFare <= 0 {
@@ -544,6 +576,23 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 	// completed + cash + cash_collected_at IS NULL (see Ride.IsPendingCashCollection).
 	isCash := ride.IsCashRide()
 
+	// §3.4 receipt-time component snapshot. When completion re-priced the trip
+	// (actual distance/duration reported), the request-time variable lines are
+	// stale; we recompute them from the SAME pricing result that produced
+	// finalFare so base+distance+time+surge+service_fee reconciles with
+	// fare_amount exactly. When no re-pricing happened, the request-time
+	// snapshot already sums to FareAmount and is left untouched — only the
+	// service-fee line (a function of the final fare) is added. minFareUplift
+	// is folded into the base line identically to request time.
+	baseComp, distComp, timeComp, surgeComp := ride.BaseFareComponent, ride.DistanceFareComponent, ride.TimeFareComponent, ride.SurgeFareComponent
+	if repricedEst != nil {
+		uplift := minFareUpliftCents(repricedEst)
+		baseComp = ptrFenToF(repricedEst.BaseFare + uplift)
+		distComp = ptrFenToF(repricedEst.DistanceFare)
+		timeComp = ptrFenToF(repricedEst.TimeFare)
+		surgeComp = ptrFenToF(repricedEst.SurgeAmount)
+	}
+
 	// Driver ledger identity: the ledger keys balances by USER id, while
 	// rides reference the DRIVER profile id — translate before settling.
 	var driverUserID uuid.UUID
@@ -595,7 +644,15 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		}
 	}
 
-	if err := h.recordCompleted(ctx, ride.ID, finalFare, platformFee, ride.TipAmount, distance, duration, rec, isCash); err != nil {
+	if err := h.recordCompleted(ctx, ride.ID, finalFare, platformFee, ride.TipAmount, distance, duration,
+		&CompletionFareComponents{
+			Base:          baseComp,
+			Distance:      distComp,
+			Time:          timeComp,
+			Surge:         surgeComp,
+			ServiceFee:    platformFee,
+			PromoDiscount: promoDiscount,
+		}, rec, isCash); err != nil {
 		return nil, err
 	}
 

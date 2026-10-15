@@ -12,11 +12,11 @@ import (
 	"nidaw-backend/internal/modules/nidus/application/services"
 	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidusHttp "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	paymentsapp "nidaw-backend/internal/modules/payments/application"
+	payhttp "nidaw-backend/internal/modules/payments/interfaces/http/handlers"
 	promoapp "nidaw-backend/internal/modules/promotions/application"
 	promodomain "nidaw-backend/internal/modules/promotions/domain"
 	promohttp "nidaw-backend/internal/modules/promotions/interfaces/http/handlers"
-	paymentsapp "nidaw-backend/internal/modules/payments/application"
-	payhttp "nidaw-backend/internal/modules/payments/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
@@ -43,8 +43,8 @@ type Dependencies struct {
 	MatchingEngine *services.MatchingEngine
 	ETAService     *services.ETAService
 	PricingService *services.PricingService
-	TipSettler     niduscmds.TipSettler      // ledger-backed tip settlement (nil => tips rejected)
-	CORSOrigins    []string                  // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
+	TipSettler     niduscmds.TipSettler // ledger-backed tip settlement (nil => tips rejected)
+	CORSOrigins    []string             // Phase B/B4: env-driven allowlist (CORS_ORIGINS)
 	// §3.1 Cash Payment Option. PaymentMethods is the payments-module port that
 	// validates and snapshots the rider's chosen method at request time; nil
 	// (flag off / module unwired) preserves legacy behaviour — rides are created
