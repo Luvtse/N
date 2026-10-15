@@ -26,6 +26,8 @@ import (
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
 	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
 	paymentsapp "nidaw-backend/internal/modules/payments/application"
+	promoapp "nidaw-backend/internal/modules/promotions/application"
+	promodomain "nidaw-backend/internal/modules/promotions/domain"
 	notificationapp "nidaw-backend/internal/modules/notifications/application"
 	notificationinfra "nidaw-backend/internal/modules/notifications/infrastructure"
 	notificationifaces "nidaw-backend/internal/modules/notifications/interfaces"
@@ -221,6 +223,36 @@ func main() {
 	nidusDeps.PaymentMethodSvc = paymentMethodSvc
 	nidusDeps.PaymentMethods = paymentMethodSvc
 	nidusDeps.CashEnabled = cfg.Features.EnableCashPayment
+	// §3.2 Promo Codes & Coupons: construct the promotions service (Postgres-
+	// backed, migration 009) and hand it to the nidus router through narrow
+	// function-literal adapters so the nidus command layer never names a
+	// promotions type. When FEATURE_PROMOTIONS is off, Promotions/PromoFinalizer
+	// stay nil and the redeem/mine routes are not mounted — RequestRide then
+	// rejects any supplied code with PROMO_DISABLED (honest unavailable state,
+	// never a silently dropped money-affecting input).
+	if cfg.Features.EnablePromotions {
+		promoSvc := promoapp.NewService(promoapp.NewPostgresRepository(db), eventBus)
+		promoSvcRef := promoSvc // captured for the closures below
+		nidusDeps.PromosEnabled = true
+		nidusDeps.PromoSvc = promoSvc
+		nidusDeps.Promotions = nidushttp.NewPromoApplier(
+			func(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, finalFare float64) (string, float64, error) {
+				applied, err := promoSvcRef.ApplyAtRequest(ctx, userID, code, rideID, finalFare)
+				if err != nil {
+					return "", 0, err
+				}
+				if applied == nil {
+					return "", 0, promodomain.ErrCodeNotFound
+				}
+				return applied.Code, applied.Discount, nil
+			},
+		)
+		nidusDeps.PromoFinalizer = nidushttp.NewPromoFinalizer(
+			func(ctx context.Context, rideID uuid.UUID, finalFare float64, code string) (float64, error) {
+				return promoSvcRef.FinalizeAtCompletion(ctx, rideID, finalFare, code)
+			},
+		)
+	}
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
 
 	// Phase 1 audit fix: wire the WS bridge. Without this the hub is an

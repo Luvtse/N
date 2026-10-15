@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -10,8 +12,10 @@ import (
 	"nidaw-backend/internal/modules/nidus/application/services"
 	niduscache "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidusHttp "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
+	promoapp "nidaw-backend/internal/modules/promotions/application"
+	promodomain "nidaw-backend/internal/modules/promotions/domain"
+	promohttp "nidaw-backend/internal/modules/promotions/interfaces/http/handlers"
 	paymentsapp "nidaw-backend/internal/modules/payments/application"
-	paydomain "nidaw-backend/internal/modules/payments/domain"
 	payhttp "nidaw-backend/internal/modules/payments/interfaces/http/handlers"
 	"nidaw-backend/internal/shared/auth"
 	"nidaw-backend/internal/shared/database"
@@ -50,25 +54,22 @@ type Dependencies struct {
 	PaymentMethods   niduscmds.PaymentMethodResolver
 	CashEnabled      bool
 	PaymentMethodSvc *paymentsapp.PaymentMethodService // nil => registry routes not mounted
-	// Â§3.2 Promo Codes & Coupons. Promotions is the port RequestRideHandler
+	// §3.2 Promo Codes & Coupons. Promotions is the port RequestRideHandler
 	// consumes at request time (consume the rider's projection, bind it to the
 	// freshly minted ride id); nil or PromosEnabled==false means a supplied
 	// promo code is rejected with PROMOTIONS_DISABLED rather than silently
 	// ignored — an honest "promos unavailable" state, never a fake discount.
 	// PromoFinalizer adjusts the discount against the final fare at receipt
-	// time; nil leaves the request-time snapshot untouched. PromoRedeemer /
-	// PromoMiner back POST /promotions/redeem and GET /promotions/mine via the
-	// promotions HTTP handler (declared as structural method values so this
-	// package never needs to name the concrete service type); if either is nil
-	// those routes are not mounted at all. main.go wires everything from the
-	// promotions module; the command-side ports are declared structurally in
-	// commands so nidus only borrows types here at composition, mirroring
-	// PaymentMethodSvc above.
+	// time; nil leaves the request-time snapshot untouched. PromoSvc backs
+	// POST /promotions/redeem and GET /promotions/mine via the promotions
+	// HTTP handler; if nil those routes are not mounted at all. main.go wires
+	// everything from the promotions module; the command-side ports are
+	// declared structurally in commands so nidus only borrows types here at
+	// composition, mirroring PaymentMethodSvc above.
 	Promotions     niduscmds.PromoApplier
 	PromosEnabled  bool
 	PromoFinalizer niduscmds.PromoFinalizer
-	PromoRedeemer  func(w http.ResponseWriter, r *http.Request)
-	PromoMiner     func(w http.ResponseWriter, r *http.Request)
+	PromoSvc       *promoapp.Service // nil => redeem/mine routes not mounted
 	// WSHub backs GET /ws (§1.5 router cleanup: the hub existed but was never
 	// mounted). main.go constructs one shared hub here and reuses it as the
 	// notifications module's InAppBroadcaster (§1.4). nil => no /ws route.
@@ -136,59 +137,105 @@ func NewPreSelfieAttacher(
 // COMPOSITION ADAPTERS
 // ============================================================================
 
-// promoApplierAdapter converts the promotions module's applied result into the
-// structural PromoApplication shape the nidus commands layer consumes, so the
-// port boundary never leaks a promotions-module type into request_ride.go and
-// the two modules stay decoupled (same dependency direction as
-// PaymentMethodResolver). A nil inner degrades to ErrPromoNotFound — an honest
-// "code unavailable" error, never a silent zero discount. The inner field is
-// typed `any` and asserted at call time because Go method signatures are
-// invariant in named return types: *promotions/app.Service returns
-// *promoapp.AppliedPromo, which has the same underlying layout as the
-// anonymous struct below but is not assignable through a concrete interface.
-// The runtime assertion makes the conversion explicit; a failed assertion is
-// treated as ErrPromoNotFound rather than a panic or a fake discount.
+// ============================================================================
+// COMPOSITION ADAPTERS (§3.2 Promotions)
+//
+// The nidus command layer must never import the promotions module (dependency
+// direction rule). But Go interface satisfaction is invariant in *named*
+// return types: promotions/app.Service returns *promoapp.AppliedPromo while
+// the niduscmds.PromoApplier port demands *niduscmds.PromoApplication — same
+// fields, different names, NOT assignable through an interface method set.
+// Worse, (*Service).Method as a bound method value has a *named* result type
+// that is not convertible to an anonymous-struct func alias either. So these
+// adapters take plain function literals instead: main.go writes the one-line
+// conversion at composition time and this package never mentions any
+// promotions named type in a signature position that would fail assignability.
+//
+// Error mapping (single source of truth for both adapters):
+//   - promodomain.ErrCodeNotFound       -> niduscmds.ErrPromoNotFound
+//   - promoapp.ErrRedemptionNotFound    -> niduscmds.ErrRedemptionNotFound
+//   - anything else                     -> passed through unchanged (the
+//     command layer already downgrades unknown errors to "ride proceeds
+//     without a discount"; we invent nothing here)
+//
+// A nil inner degrades to ErrPromoNotFound / (0, nil): an honest "code
+// unavailable" error, never a silent zero discount and never a panic.
+// ============================================================================
+
+// ApplyAtRequestFunc is the shape main.go provides at composition: given the
+// rider, code, freshly minted ride id and projected fare, consume the open
+// projection and return the authoritative discount snapshot.
+type ApplyAtRequestFunc = func(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, finalFare float64) (string, float64, error)
+
 type promoApplierAdapter struct {
-	inner any
+	apply ApplyAtRequestFunc
 }
 
-// NewPromoApplier adapts *promotions/app.Service (any value exposing
-// ApplyAtRequest(ctx, userID, code, rideID, finalFare) returning
-// (*{Code string; Discount float64}, error)) to the niduscmds.PromoApplier
-// port. main.go wires this when FEATURE_PROMOTIONS is on; passing nil or
-// leaving it unwired keeps rides promo-free.
-func NewPromoApplier(svc any) niduscmds.PromoApplier {
-	return &promoApplierAdapter{inner: svc}
+// NewPromoApplier adapts an ApplyAtRequestFunc to the niduscmds.PromoApplier
+// port. Wire only when FEATURE_PROMOTIONS is on; passing nil keeps rides
+// promo-free (RequestRide then rejects any supplied code with PROMO_DISABLED —
+// see request_ride.go).
+func NewPromoApplier(apply ApplyAtRequestFunc) niduscmds.PromoApplier {
+	return &promoApplierAdapter{apply: apply}
 }
-
-type promoApplyFunc = func(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, finalFare float64) (*struct {
-	Code     string
-	Discount float64
-}, error)
 
 func (a *promoApplierAdapter) ApplyAtRequest(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, finalFare float64) (*niduscmds.PromoApplication, error) {
-	if a.inner == nil {
+	if a.apply == nil {
 		return nil, niduscmds.ErrPromoNotFound
 	}
-	fn, ok := a.inner.(interface {
-		ApplyAtRequest(context.Context, uuid.UUID, string, uuid.UUID, float64) (*struct {
-			Code     string
-			Discount float64
-		}, error)
-	})
-	_ = fn
-	_ = promoApplyFunc(nil)
-	if !ok {
-		return nil, niduscmds.ErrPromoNotFound
-	}
-	applied, err := fn.ApplyAtRequest(ctx, userID, code, rideID, finalFare)
+	appliedCode, discount, err := a.apply(ctx, userID, code, rideID, finalFare)
 	if err != nil {
-		return nil, err
+		return nil, mapPromoErr(err)
 	}
-	if applied == nil {
+	if appliedCode == "" {
 		return nil, niduscmds.ErrPromoNotFound
 	}
-	return &niduscmds.PromoApplication{Code: applied.Code, Discount: applied.Discount}, nil
+	return &niduscmds.PromoApplication{Code: appliedCode, Discount: discount}, nil
+}
+
+// FinalizeAtCompletionFunc is the shape main.go provides: recompute the
+// discount for a completed ride against its final fare. Returns
+// ErrRedemptionNotFound when the ride carries no redemption row (the command
+// layer treats 0 + that error as "no promo on this ride").
+type FinalizeAtCompletionFunc = func(ctx context.Context, rideID uuid.UUID, finalFare float64, code string) (float64, error)
+
+type promoFinalizerAdapter struct {
+	finalize FinalizeAtCompletionFunc
+}
+
+// NewPromoFinalizer adapts a FinalizeAtCompletionFunc to the
+// niduscmds.PromoFinalizer port. Passing nil yields a nil port => receipt-time
+// adjustment disabled; the request-time snapshot stands.
+func NewPromoFinalizer(finalize FinalizeAtCompletionFunc) niduscmds.PromoFinalizer {
+	if finalize == nil {
+		return nil
+	}
+	return &promoFinalizerAdapter{finalize: finalize}
+}
+
+func (a *promoFinalizerAdapter) FinalizeAtCompletion(ctx context.Context, rideID uuid.UUID, finalFare float64, code string) (float64, error) {
+	if a.finalize == nil {
+		return 0, nil
+	}
+	discount, err := a.finalize(ctx, rideID, finalFare, code)
+	if err != nil {
+		return 0, mapPromoErr(err)
+	}
+	return discount, nil
+}
+
+// mapPromoErr translates promotions-module sentinel errors into the nidus
+// command-boundary vocabulary via errors.Is identity against the exported
+// vars from the promotions packages.
+func mapPromoErr(err error) error {
+	switch {
+	case errors.Is(err, promodomain.ErrCodeNotFound):
+		return niduscmds.ErrPromoNotFound
+	case errors.Is(err, promoapp.ErrRedemptionNotFound):
+		return niduscmds.ErrRedemptionNotFound
+	default:
+		return err
+	}
 }
 
 // ============================================================================
@@ -385,6 +432,24 @@ func NewRouter(deps *Dependencies) http.Handler {
 					r.Post("/", paymentMethodHandler.Create)
 					r.Delete("/{id}", paymentMethodHandler.Delete)
 					r.Patch("/{id}/default", paymentMethodHandler.SetDefault)
+				})
+			}
+
+			// ====================================================================
+			// PROMOTIONS (§3.2 Promo Codes & Coupons). Mounted only when the
+			// promotions module is wired into composition (main.go) AND the
+			// FEATURE_PROMOTIONS kill switch is on — same binary, env flips the
+			// behaviour. POST /promotions/redeem validates + projects a discount
+			// WITHOUT consuming it (consumption happens at ride creation); GET
+			// /promotions/mine lists codes the caller can currently redeem. When
+			// unmounted clients get a clean 404 and the promo row renders its
+			// honest "promos unavailable" state, never a fake code list.
+			// ====================================================================
+			if deps.PromoSvc != nil && deps.PromosEnabled {
+				promoHandler := promohttp.NewHandler(deps.PromoSvc)
+				r.Route("/promotions", func(r chi.Router) {
+					r.Post("/redeem", promoHandler.Redeem)
+					r.Get("/mine", promoHandler.Mine)
 				})
 			}
 
