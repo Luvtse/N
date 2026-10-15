@@ -1135,6 +1135,20 @@ func toRideResponse(ride *entities.Ride) RideResponse {
 	// verbatim for scheduled ones so History can render the "Scheduled" chip.
 	resp.ScheduledAt = ride.ScheduledAt
 
+	// §3.2 promo fields. Honest omitempty pointers: both are omitted when no
+	// code was applied (empty snapshot / zero discount), never an empty-string
+	// fake. When present they are the server-computed values persisted at
+	// request time and finalized at completion — clients render them verbatim
+	// on the receipt and must not recompute discounts locally.
+	if ride.PromoCode != "" {
+		pc := ride.PromoCode
+		resp.PromoCode = &pc
+	}
+	if ride.PromoDiscount > 0 {
+		pd := ride.PromoDiscount
+		resp.PromoDiscount = &pd
+	}
+
 	return resp
 }
 
@@ -1158,6 +1172,18 @@ func mapCommandError(err error) (int, string, string) {
 		return http.StatusBadRequest, "SCHEDULED_TOO_SOON", err.Error()
 	case errors.Is(err, commands.ErrScheduledTooFar):
 		return http.StatusBadRequest, "SCHEDULED_TOO_FAR_OUT", err.Error()
+	// §3.2 promo error vocabulary. An unknown/expired/rejected code is a
+	// client-correctable 400 carrying the server's own reason string; the
+	// redeem/mine routes are mounted only behind FEATURE_PROMOTIONS, but the
+	// command port can still be nil/unwired mid-deploy, hence PROMOTIONS_DISABLED
+	// maps to 503 so the Flutter promo row shows its honest retry state
+	// instead of silently dropping the user's code.
+	case errors.Is(err, commands.ErrPromoNotFound):
+		return http.StatusBadRequest, "PROMO_NOT_FOUND", err.Error()
+	case errors.Is(err, commands.ErrPromoLimitHit):
+		return http.StatusBadRequest, "PROMO_LIMIT_REACHED", err.Error()
+	case errors.Is(err, commands.ErrPromotionsDisabled):
+		return http.StatusServiceUnavailable, "PROMOTIONS_DISABLED", "promotions are currently unavailable"
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}

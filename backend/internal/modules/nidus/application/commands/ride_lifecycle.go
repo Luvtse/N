@@ -515,6 +515,20 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		} else {
 			promoDiscount = round2(finalized)
 		}
+		// Keep the redemption ledger in agreement with the finalized snapshot.
+		// recordCompleted persists promo_discount on the ride row; this optional
+		// port call keeps promo_redemptions.discount_applied honest so analytics
+		// and GET /promotions/mine never read a stale projection. Best-effort:
+		// a ledger-sync failure is logged, the authoritative ride row still wins.
+		if promoDiscount != ride.PromoDiscount {
+			if syncer, ok := h.promoFinalizer.(interface {
+				UpdateRedemptionDiscount(ctx context.Context, rideID uuid.UUID, discountApplied float64) error
+			}); ok {
+				if serr := syncer.UpdateRedemptionDiscount(ctx, ride.ID, promoDiscount); serr != nil {
+					fmt.Printf("warning: redemption ledger sync failed for ride %s (code %s): %v\n", ride.ID, promoCode, serr)
+				}
+			}
+		}
 	}
 	// Money actually charged to the rider after the discount. Never negative:
 	// a misconfigured code cannot mint a credit.

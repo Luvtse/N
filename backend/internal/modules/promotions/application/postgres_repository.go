@@ -136,6 +136,20 @@ func (r *PostgresRepository) FinalizeRedemption(ctx context.Context, rideID uuid
 	return tag.RowsAffected() > 0, nil
 }
 
+// UpdateRedemptionDiscount rewrites discount_applied for the ride-bound row
+// without touching its binding. Receipt finalization calls it when the
+// finalized discount differs from the request-time projection so the ledger
+// and the ride snapshot agree. Best-effort: zero rows affected is not an error
+// here (rides legitimately may have no redemption row; the caller only invokes
+// this when the ride carries a promo code).
+func (r *PostgresRepository) UpdateRedemptionDiscount(ctx context.Context, rideID uuid.UUID, discountApplied float64) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE promo_redemptions SET discount_applied = $2
+		 WHERE ride_id = $1`,
+		rideID, discountApplied)
+	return err
+}
+
 // UpsertCode creates or refreshes a catalog entry, keyed on the normalized
 // code (the partial-unique index uq_promo_codes_code). Used by Service.Grant.
 func (r *PostgresRepository) UpsertCode(ctx context.Context, c *domain.PromoCode) error {
