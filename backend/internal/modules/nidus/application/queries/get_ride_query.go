@@ -65,6 +65,7 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 			requested_at, matched_at, started_at, completed_at,
 			rating, review, tip_amount,
 			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
+			COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
 			created_at, updated_at
 		FROM rides
 		WHERE id = $1
@@ -80,6 +81,10 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	// before migrations 007/008) scan cleanly into zero values / nil pointers.
 	var paymentMethodType pgtype.Text
 	var cashCollectedAt, scheduledAt pgtype.Timestamptz
+	// §3.2 promo snapshot columns: COALESCE'd so legacy rows (pre-migration
+	// 009) scan as empty-string / zero-discount rather than erroring.
+	var promoCode pgtype.Text
+	var promoDiscount pgtype.Float8
 
 	err := q.db.QueryRow(ctx, query, rideID).Scan(
 		&ride.ID,
@@ -107,6 +112,8 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&paymentMethodType,
 		&cashCollectedAt,
 		&scheduledAt,
+		&promoCode,
+		&promoDiscount,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
 	)
@@ -161,6 +168,12 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	if scheduledAt.Valid {
 		t := scheduledAt.Time
 		ride.ScheduledAt = &t
+	}
+	// §3.2: promo snapshot. COALESCE above guarantees non-NULL, so these are
+	// plain zero values for rides without a discount — never fabricated.
+	ride.PromoCode = promoCode.String
+	if promoDiscount.Valid {
+		ride.PromoDiscount = promoDiscount.Float64
 	}
 
 	return &ride, nil
