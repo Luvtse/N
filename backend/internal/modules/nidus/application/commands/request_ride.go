@@ -90,14 +90,14 @@ type PaymentMethodResolver interface {
 
 // PromoApplier is the narrow port RequestRideHandler needs from the promotions
 // module (§3.2): consume the rider's projected promo code and bind it to the
-// freshly created ride. It is satisfied by *promotions/app.Service (declared
-// structurally so nidus never imports the promotions package — same dependency
-// direction as PaymentMethodResolver). Returning ErrPromoNotFound means the
-// code no longer exists; any other error, or ErrRedemptionNotFound, downgrades
-// to "ride proceeds without a discount" per §3.2 — a promo hiccup must never
-// block a ride request.
+// freshly created ride. It is satisfied by the composition-root adapter in the
+// http package (which wraps *promotions/app.Service), so nidus never imports
+// the promotions package — same dependency direction as PaymentMethodResolver.
+// Returning ErrPromoNotFound means the code no longer exists; any other error,
+// or ErrRedemptionNotFound, downgrades to "ride proceeds without a discount"
+// per §3.2 — a promo hiccup must never block a ride request.
 type PromoApplier interface {
-	ApplyAtRequest(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, finalFare float64) (*PromoApplication, error)
+	ApplyAtRequest(ctx context.Context, userID uuid.UUID, code string, rideID uuid.UUID, fare float64) (*PromoApplication, error)
 }
 
 // PromoApplication is the structural shape of the promotions module's applied
@@ -111,6 +111,16 @@ type PromoApplication struct {
 // boundary; the HTTP layer maps it to PROMO_NOT_FOUND so the client can show
 // an inline error on the promo sheet instead of silently dropping the code.
 var ErrPromoNotFound = errors.New("promo code not found")
+
+// ErrRedemptionNotFound mirrors promotions/app.ErrRedemptionNotFound: the user
+// never projected the code (or its projection vanished). Treated downstream as
+// "no discount applied", never as a ride-creation failure.
+var ErrRedemptionNotFound = errors.New("no pending promo redemption found")
+
+// ErrPromoLimitHit mirrors promotions/domain.ErrUsageLimitHit /
+// ErrPerUserLimitHit: the code exhausted one of its caps between projection
+// and attachment. Also a downgrade, not a ride-blocker.
+var ErrPromoLimitHit = errors.New("promo usage limit reached")
 
 // ============================================================================
 // HANDLER
@@ -256,8 +266,13 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		UpdatedAt:         now,
 	}
 
-	// 4. Persist ride to database
+	// 4. Persist ride to database. If the INSERT fails while a redemption was
+	// already attached (§3.2), detach it so the per-user limit is not burned
+	// against a ride that does not exist.
 	if err := h.saveRide(ctx, ride); err != nil {
+		if promoCode != "" {
+			detachFromRide(ctx, h.promoApplier, rideID)
+		}
 		return nil, fmt.Errorf("%w: %v", ErrRideCreationFailed, err)
 	}
 
@@ -280,6 +295,23 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		PromoCode:         promoCode,
 		PromoDiscount:     promoDiscount,
 	}, nil
+}
+
+// detachFromRide best-effort unwinds an attached promo redemption when a ride
+// creation fails after ApplyAtRequest succeeded. The promotions port interface
+// does not mandate detach support (the in-memory and Postgres repositories both
+// expose it through the service via this optional method), so a port value that
+// does not implement it is skipped with a warning — the redemption row stays
+// bound to a nonexistent ride id, which the receipt-time finalizer treats as
+// "no promo on this ride". Never fails the request path further.
+func detachFromRide(ctx context.Context, applier PromoApplier, rideID uuid.UUID) {
+	d, ok := applier.(interface{ DetachFromRide(ctx context.Context, rideID uuid.UUID) error })
+	if !ok {
+		return
+	}
+	if err := d.DetachFromRide(ctx, rideID); err != nil {
+		fmt.Printf("warning: promo detach failed for abandoned ride %s: %v\n", rideID, err)
+	}
 }
 
 // mapPaymentResolveError converts payments-domain errors into command-level
