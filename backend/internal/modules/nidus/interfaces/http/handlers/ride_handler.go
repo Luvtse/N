@@ -201,6 +201,14 @@ type RideResponse struct {
 	PendingCashCollection *bool      `json:"pending_cash_collection,omitempty"`
 	// §3.6 Scheduled Rides: requested pickup time; omitted for on-demand rides.
 	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
+	// §3.2 Promo Codes & Coupons. PromoCode is the server-normalized code that
+	// was actually applied to this ride (omitted when no discount was applied —
+	// never an empty-string fake); PromoDiscount is the amount subtracted from
+	// the fare, recomputed against the final fare at completion time. The client
+	// renders these as the receipt's promo line item; both are absent until the
+	// ride record genuinely carries them.
+	PromoCode     *string  `json:"promo_code,omitempty"`
+	PromoDiscount *float64 `json:"promo_discount,omitempty"`
 }
 
 // DriverInfo contains driver details for a ride response. §2.4: the rider-facing

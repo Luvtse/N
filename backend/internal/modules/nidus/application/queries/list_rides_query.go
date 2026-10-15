@@ -129,8 +129,10 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 
 	// Build main query. §3.1/§3.6: payment_method_type, cash_collected_at and
 	// scheduled_at are scanned so the history list can show the Cash badge and
-	// the Scheduled chip without an extra round-trip per ride. COALESCE keeps
-	// legacy rows (pre-migration 007) scanning cleanly into empty strings.
+	// the Scheduled chip without an extra round-trip per ride. §3.2: promo_code
+	// and promo_discount are scanned so the receipt/history rows can render the
+	// discount line item. COALESCE keeps legacy rows (pre-migrations 007/009)
+	// scanning cleanly into empty strings / zeros.
 	mainQuery := fmt.Sprintf(`
 		SELECT 
 			id, user_id, driver_id,
@@ -141,6 +143,7 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 			requested_at, matched_at, completed_at,
 			rating, review, tip_amount,
 			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
+			COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
 			created_at, updated_at
 		FROM rides
 		WHERE %s
@@ -188,6 +191,10 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	// before migrations 007/008) scan cleanly into zero values / nil pointers.
 	var paymentMethodType pgtype.Text
 	var cashCollectedAt, scheduledAt pgtype.Timestamptz
+	// §3.2 promo snapshot columns: COALESCE'd so legacy rows (pre-migration
+	// 009) scan as empty-string / zero-discount rather than erroring.
+	var promoCode pgtype.Text
+	var promoDiscount pgtype.Float8
 
 	err := rows.Scan(
 		&ride.ID,
@@ -214,6 +221,8 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 		&paymentMethodType,
 		&cashCollectedAt,
 		&scheduledAt,
+		&promoCode,
+		&promoDiscount,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
 	)
@@ -263,6 +272,12 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	if scheduledAt.Valid {
 		t := scheduledAt.Time
 		ride.ScheduledAt = &t
+	}
+	// §3.2: promo snapshot. COALESCE in the SELECT guarantees non-NULL, so
+	// rides without a discount scan as empty string / zero — never fabricated.
+	ride.PromoCode = promoCode.String
+	if promoDiscount.Valid {
+		ride.PromoDiscount = promoDiscount.Float64
 	}
 
 	return &ride, nil

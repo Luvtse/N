@@ -100,6 +100,7 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		       COALESCE(cancel_fee, 0), COALESCE(cancelled_by, ''), COALESCE(cancel_reason, ''),
 		       COALESCE(distance_km, 0), COALESCE(duration_minutes, 0),
 		       COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
+		       COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
 		       requested_at, matched_at, started_at, completed_at,
 		       COALESCE(rating, 0), created_at, updated_at
 		FROM rides WHERE id = $1`, rideID).Scan(
@@ -111,6 +112,7 @@ func (b *lifecycleBase) loadRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&r.CancelFee, &r.CancelledBy, &r.CancelReason,
 		&r.DistanceKm, &r.DurationMinutes,
 		&r.PaymentMethodType, &r.CashCollectedAt, &r.ScheduledAt,
+		&r.PromoCode, &r.PromoDiscount,
 		&r.RequestedAt, &r.MatchedAt, &r.StartedAt, &r.CompletedAt,
 		&r.Rating, &r.CreatedAt, &r.UpdatedAt,
 	)
@@ -553,9 +555,9 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		// actual fare and the amount charged to the rider after it. Consumers
 		// that ignore unknown keys are unaffected; the receipt surface reads
 		// these instead of recomputing.
-		"promo_code":        promoCode,
-		"promo_discount":    promoDiscount,
-		"charge_amount":     chargeAmount,
+		"promo_code":     promoCode,
+		"promo_discount": promoDiscount,
+		"charge_amount":  chargeAmount,
 	}
 
 	rec := settlementRecord{
