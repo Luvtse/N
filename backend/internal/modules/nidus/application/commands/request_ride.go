@@ -253,6 +253,19 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		Currency:        fareEstimate.Currency,
 		DistanceKm:      fareEstimate.DistanceKm,
 		DurationMinutes: fareEstimate.DurationMinutes,
+		// §3.4: itemized-receipt component snapshot from the SAME pricing result
+		// that produced FareAmount, so the receipt lines sum to the quoted total
+		// without re-pricing. The pricing service may lift the total to a
+		// configured minimum fare; that uplift is folded into the base line so
+		// the four variable components always reconcile against FareAmount
+		// exactly. ServiceFeeComponent stays nil at request time — the platform
+		// fee is a completion-time function of the FINAL fare and we never
+		// persist a guessed value (Global Rule 2).
+		BaseFareComponent:     ptrFenToF(fareEstimate.BaseFare + minFareUpliftCents(fareEstimate)),
+		DistanceFareComponent: ptrFenToF(fareEstimate.DistanceFare),
+		TimeFareComponent:     ptrFenToF(fareEstimate.TimeFare),
+		SurgeFareComponent:    ptrFenToF(fareEstimate.SurgeAmount),
+		ServiceFeeComponent:   nil,
 		// §3.1: method snapshot resolved before creation (empty when the
 		// payments module is not wired — legacy rides behave as before).
 		PaymentMethodType: paymentType,
@@ -398,10 +411,13 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 			pickup_address, dropoff_address, ride_type, status,
 			fare_amount, currency, distance_km, duration_minutes,
 			payment_method_type, scheduled_at, promo_code, promo_discount,
+			base_fare_component, distance_fare_component, time_fare_component,
+			surge_fare_component, service_fee_component,
 			requested_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+			$11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+			$21, $22, $23, $24, $25, $26
 		)
 	`
 
@@ -417,10 +433,57 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 		ride.PaymentMethodType, ride.ScheduledAt,
 		// §3.2 promo snapshot columns (migration 009); empty/0 = no code.
 		ride.PromoCode, ride.PromoDiscount,
+		// §3.4 itemized-receipt component snapshot (migration 010). Nullable:
+		// a nil pointer persists SQL NULL, which the read paths surface as an
+		// honest "itemization unavailable" state rather than a fabricated zero.
+		ride.BaseFareComponent, ride.DistanceFareComponent, ride.TimeFareComponent,
+		ride.SurgeFareComponent, ride.ServiceFeeComponent,
 		ride.RequestedAt, ride.CreatedAt, ride.UpdatedAt,
 	)
 
 	return err
+}
+
+// ============================================================================
+// §3.4 FARE-COMPONENT HELPERS
+// ============================================================================
+
+// minFareUpliftCents returns the cents by which the pricing service lifted the
+// computed total to its configured minimum fare (0 when no lift occurred).
+// Folding this into the base line keeps base+distance+time+surge == TotalFare
+// exactly, so receipt lines always reconcile against the charged amount.
+func minFareUpliftCents(est *services.FareEstimate) int64 {
+	if est == nil {
+		return 0
+	}
+	computed := est.Subtotal + est.SurgeAmount
+	if est.TotalFare > computed {
+		return est.TotalFare - computed
+	}
+	return 0
+}
+
+// ptrFenToF converts a cent amount to a float64 dollar pointer for entity
+// persistence (NUMERIC(10,2) columns). Always non-nil — a priced ride has a
+// known component value, even if that value is genuinely 0 (e.g. no surge).
+func ptrFenToF(cents int64) *float64 {
+	v := round2(float64(cents) / 100.0)
+	return &v
+}
+
+// ptrF2 returns a rounded float64 pointer.
+func ptrF2(v float64) *float64 {
+	r := round2(v)
+	return &r
+}
+
+// derefF reads a possibly-nil float pointer as 0 — used when recomputing
+// totals from component snapshots at completion time.
+func derefF(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // ============================================================================

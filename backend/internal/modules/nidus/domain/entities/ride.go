@@ -101,6 +101,20 @@ type Ride struct {
 	Currency   string  `json:"currency" db:"currency"`
 	TipAmount  float64 `json:"tip_amount,omitempty" db:"tip_amount"`
 
+	// §3.4 Itemized Receipt fare components (migration 010). Snapshotted at
+	// request time from the pricing service's FareEstimate and recomputed
+	// against the actual distance/duration at completion. Every field is a
+	// pointer so a legacy ride (or one priced before this column existed)
+	// keeps nil — the receipt then shows an honest "itemization unavailable"
+	// state instead of fabricated zeros (Global Rule 2). The sum of the five
+	// components equals FareAmount by construction: any minimum-fare uplift
+	// is folded into BaseFareComponent at snapshot time.
+	BaseFareComponent     *float64 `json:"base_fare_component,omitempty" db:"base_fare_component"`
+	DistanceFareComponent *float64 `json:"distance_fare_component,omitempty" db:"distance_fare_component"`
+	TimeFareComponent     *float64 `json:"time_fare_component,omitempty" db:"time_fare_component"`
+	SurgeFareComponent    *float64 `json:"surge_fare_component,omitempty" db:"surge_fare_component"`
+	ServiceFeeComponent   *float64 `json:"service_fee_component,omitempty" db:"service_fee_component"`
+
 	// §3.1 Cash Payment Option. PaymentMethodType is the method snapshot taken
 	// at request time ("wallet" | "card" | "cash"; empty = legacy ride).
 	// CashCollectedAt is stamped by the driver-app collection confirmation;
