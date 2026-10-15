@@ -27,6 +27,7 @@ import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../../features/auth/presentation/bloc/legal_consent_bloc.dart';
 import '../../features/nidus/data/repositories/chat_repository.dart';
 import '../../features/nidus/data/repositories/pre_selfie_repository.dart';
+import '../../features/nidus/data/repositories/phase2_money_repository.dart';
 import '../../features/nidus/data/repositories/ride_repository.dart';
 import '../../features/nidus/data/repositories/safety_repository.dart';
 import '../../features/nidus/domain/usecases/request_ride_usecase.dart';
@@ -202,6 +203,13 @@ void _registerRepositories() {
       apiClient: getIt<ApiClient>(),
       webSocketClient: getIt<WebSocketClient>(),
     ),
+  );
+
+  // Phase 2 money surface (§3.1 payment-method registry + cash confirm,
+  // §3.2 promotions). Registered right after RideRepository so any widget
+  // can resolve it via getIt without extra plumbing.
+  getIt.registerLazySingleton<Phase2MoneyRepository>(
+    () => Phase2MoneyRepository(apiClient: getIt<ApiClient>()),
   );
 
   // Safety Repository (SOS, trip sharing, trusted contacts)
