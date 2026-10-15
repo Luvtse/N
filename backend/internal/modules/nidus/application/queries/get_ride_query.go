@@ -66,6 +66,8 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 			rating, review, tip_amount,
 			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 			COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
+			base_fare_component, distance_fare_component, time_fare_component,
+			surge_fare_component, service_fee_component,
 			created_at, updated_at
 		FROM rides
 		WHERE id = $1
@@ -85,6 +87,10 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	// 009) scan as empty-string / zero-discount rather than erroring.
 	var promoCode pgtype.Text
 	var promoDiscount pgtype.Float8
+	// §3.4 fare-component columns: nullable so legacy rows (pre-migration 010)
+	// scan as nil pointers — the receipt then renders "itemization unavailable"
+	// instead of fabricated zeros (Global Rule 2).
+	var baseFareComponent, distanceFareComponent, timeFareComponent, surgeFareComponent, serviceFeeComponent pgtype.Float8
 
 	err := q.db.QueryRow(ctx, query, rideID).Scan(
 		&ride.ID,
@@ -114,6 +120,11 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&scheduledAt,
 		&promoCode,
 		&promoDiscount,
+		&baseFareComponent,
+		&distanceFareComponent,
+		&timeFareComponent,
+		&surgeFareComponent,
+		&serviceFeeComponent,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
 	)
@@ -175,8 +186,26 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	if promoDiscount.Valid {
 		ride.PromoDiscount = promoDiscount.Float64
 	}
+	// §3.4: fare-component snapshots. Each column stays nil unless the row
+	// genuinely carries it (request-time snapshot persisted post-migration 010);
+	// the receipt renders "itemization unavailable" when all five are nil.
+	ride.BaseFareComponent = floatPtrFromPg(baseFareComponent)
+	ride.DistanceFareComponent = floatPtrFromPg(distanceFareComponent)
+	ride.TimeFareComponent = floatPtrFromPg(timeFareComponent)
+	ride.SurgeFareComponent = floatPtrFromPg(surgeFareComponent)
+	ride.ServiceFeeComponent = floatPtrFromPg(serviceFeeComponent)
 
 	return &ride, nil
+}
+
+// floatPtrFromPg converts a nullable pgtype.Float8 into an honest *float64:
+// NULL in → nil out (never a zero-filled fake, per Global Rule 2).
+func floatPtrFromPg(v pgtype.Float8) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	f := v.Float64
+	return &f
 }
 
 // hasAccess checks if the user can view this ride
