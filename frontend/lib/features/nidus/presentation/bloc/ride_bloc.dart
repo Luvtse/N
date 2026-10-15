@@ -32,6 +32,18 @@ class RequestRide extends RideEvent {
   final String rideType;
   final String? paymentMethodId;
 
+  /// §3.1: registry rail type ('wallet' | 'card' | 'cash') paired with
+  /// [paymentMethodId]. Null means the server resolves the rider's default.
+  final String? paymentMethodType;
+
+  /// §3.2: promo code validated by POST /promotions/redeem before booking.
+  final String? promoCode;
+
+  /// §3.6: scheduled pickup time (local); null = on-demand. The use case
+  /// serializes it to RFC3339 UTC and the backend enforces the ≥15 min /
+  /// ≤30 day window, returning SCHEDULED_TOO_SOON / SCHEDULED_TOO_FAR.
+  final DateTime? scheduledAt;
+
   const RequestRide({
     required this.pickupLat,
     required this.pickupLng,
@@ -41,12 +53,16 @@ class RequestRide extends RideEvent {
     this.dropoffAddress,
     this.rideType = 'standard',
     this.paymentMethodId,
+    this.paymentMethodType,
+    this.promoCode,
+    this.scheduledAt,
   });
 
   @override
   List<Object?> get props => [
         pickupLat, pickupLng, dropoffLat, dropoffLng,
         pickupAddress, dropoffAddress, rideType, paymentMethodId,
+        paymentMethodType, promoCode, scheduledAt,
       ];
 }
 
@@ -258,15 +274,21 @@ class RideRequested extends RideState {
   final int etaMinutes;
   final DateTime requestedAt;
 
+  /// §3.2: discount the server applied at request time. Null when no promo
+  /// was attached — rendered as an absent line, never as "0 saved".
+  final double? promoDiscount;
+
   const RideRequested({
     required this.rideId,
     required this.fare,
     required this.etaMinutes,
     required this.requestedAt,
+    this.promoDiscount,
   });
 
   @override
-  List<Object?> get props => [rideId, fare, etaMinutes, requestedAt];
+  List<Object?> get props =>
+      [rideId, fare, etaMinutes, requestedAt, promoDiscount];
 }
 
 /// Driver matched
@@ -631,6 +653,9 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         dropoffAddress: event.dropoffAddress,
         rideType: event.rideType,
         paymentMethodId: event.paymentMethodId,
+        paymentMethodType: event.paymentMethodType,
+        promoCode: event.promoCode,
+        scheduledAt: event.scheduledAt,
       );
 
       if (result.isFailure) {
@@ -661,6 +686,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         fare: result.fare!,
         etaMinutes: result.eta!,
         requestedAt: DateTime.now(),
+        promoDiscount: result.promoDiscount,
       ));
 
       // Automatically subscribe to updates
