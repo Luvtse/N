@@ -25,7 +25,7 @@ class RequestRideUseCase {
   ///
   /// Throws:
   /// - [Exception]: If validation fails or request fails
-  Future<Ride> execute({
+  Future<RideResult> execute({
     required double pickupLat,
     required double pickupLng,
     required double dropoffLat,
@@ -34,6 +34,9 @@ class RequestRideUseCase {
     String? dropoffAddress,
     String rideType = 'standard',
     String? paymentMethodId,
+    String? paymentMethodType,
+    String? promoCode,
+    DateTime? scheduledAt,
   }) async {
     // Validate inputs
     _validateInputs(
@@ -76,6 +79,9 @@ class RequestRideUseCase {
         dropoffAddress: dropoffAddress,
         rideType: rideType,
         paymentMethodId: paymentMethodId,
+        paymentMethodType: paymentMethodType,
+        promoCode: promoCode,
+        scheduledAt: scheduledAt?.toUtc().toIso860String(),
       );
     } on Exception {
       // Preserve coded failures (PAYMENT_FAILED, NO_DRIVERS, ...) for the Bloc.

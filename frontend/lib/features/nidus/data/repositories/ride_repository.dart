@@ -14,6 +14,15 @@ import 'pre_selfie_repository.dart';
 /// Abstract repository interface for ride operations
 abstract class RideRepository {
   /// Request a new ride
+  ///
+  /// Phase 2 additions (§3.1 / §3.2 / §3.6): [paymentMethodType] is the
+  /// registry rail ('wallet' | 'card' | 'cash') chosen on the selector;
+  /// [promoCode] is the §3.2 code already validated by POST /promotions/redeem
+  /// (the server re-validates and applies the discount authoritatively);
+  /// [scheduledAt] is the §3.6 pickup time as RFC3339 UTC — null means
+  /// on-demand. All three serialize to snake_case keys the backend handler
+  /// parses; absent fields stay out of the payload rather than sending
+  /// fabricated defaults.
   Future<RideResult> requestRide({
     required double pickupLat,
     required double pickupLng,
@@ -23,6 +32,9 @@ abstract class RideRepository {
     String? dropoffAddress,
     String rideType = 'standard',
     String? paymentMethodId,
+    String? paymentMethodType,
+    String? promoCode,
+    String? scheduledAt,
   });
 
   /// Get ride details by ID
@@ -497,6 +509,11 @@ class RideResult {
   final String? error;
   final String? errorCode;
 
+  /// §3.2: the discount the server actually applied at request time
+  /// (recomputed against the quoted fare). Null when no promo was sent or
+  /// the response omits it — never defaulted to 0.
+  final double? promoDiscount;
+
   const RideResult._({
     this.rideId,
     this.status,
@@ -504,6 +521,7 @@ class RideResult {
     this.eta,
     this.error,
     this.errorCode,
+    this.promoDiscount,
   });
 
   const RideResult.success({
@@ -511,6 +529,7 @@ class RideResult {
     required this.status,
     required this.fare,
     required this.eta,
+    this.promoDiscount,
   }) : error = null,
        errorCode = null;
 
@@ -520,7 +539,8 @@ class RideResult {
   }) : rideId = null,
        status = null,
        fare = null,
-       eta = null;
+       eta = null,
+       promoDiscount = null;
 
   bool get isSuccess => rideId != null;
   bool get isFailure => error != null;
@@ -789,20 +809,39 @@ class RideRepositoryImpl implements RideRepository {
     String? dropoffAddress,
     String rideType = 'standard',
     String? paymentMethodId,
+    String? paymentMethodType,
+    String? promoCode,
+    String? scheduledAt,
   }) async {
     try {
+      final payload = <String, dynamic>{
+        'pickup_lat': pickupLat,
+        'pickup_lng': pickupLng,
+        'dropoff_lat': dropoffLat,
+        'dropoff_lng': dropoffLng,
+        'pickup_address': pickupAddress,
+        'dropoff_address': dropoffAddress,
+        'ride_type': rideType,
+        'payment_method_id': paymentMethodId,
+      };
+      // Phase 2 fields are added only when genuinely present. Sending an
+      // empty string or a fabricated default would contradict the backend's
+      // omitempty contract and could mis-flag a cash ride (§3.1), apply a
+      // blank promo (§3.2) or convert an on-demand request into a scheduled
+      // one (§3.6).
+      if (paymentMethodType != null && paymentMethodType.isNotEmpty) {
+        payload['payment_method_type'] = paymentMethodType;
+      }
+      if (promoCode != null && promoCode.trim().isNotEmpty) {
+        payload['promo_code'] = promoCode.trim();
+      }
+      if (scheduledAt != null && scheduledAt.isNotEmpty) {
+        payload['scheduled_at'] = scheduledAt;
+      }
+
       final response = await _apiClient.post<Map<String, dynamic>>(
         '/api/v1/nidus/rides',
-        data: {
-          'pickup_lat': pickupLat,
-          'pickup_lng': pickupLng,
-          'dropoff_lat': dropoffLat,
-          'dropoff_lng': dropoffLng,
-          'pickup_address': pickupAddress,
-          'dropoff_address': dropoffAddress,
-          'ride_type': rideType,
-          'payment_method_id': paymentMethodId,
-        },
+        data: payload,
       );
 
       final body = response.data;
@@ -823,6 +862,7 @@ class RideRepositoryImpl implements RideRepository {
       final status = data['status'] as String?;
       final fareRaw = data['fare'] ?? data['fare_amount'];
       final etaRaw = data['eta'] ?? data['eta_minutes'];
+      final promoRaw = data['promo_discount'];
 
       if (rideId == null || fareRaw is! num) {
         return RideResult.failure(
@@ -836,6 +876,7 @@ class RideRepositoryImpl implements RideRepository {
         status: status ?? 'requested',
         fare: fareRaw.toDouble(),
         eta: etaRaw is num ? etaRaw.toInt() : 0,
+        promoDiscount: promoRaw is num ? promoRaw.toDouble() : null,
       );
     } on ApiException catch (e) {
       return RideResult.failure(
