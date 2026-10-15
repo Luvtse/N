@@ -143,9 +143,9 @@ func TestConfirmCashCollection_SentinelsMapToConflictCodes(t *testing.T) {
 	// ErrNotACashRide -> 409 NOT_A_CASH_RIDE, ErrRideNotEligible... -> 409
 	// CASH_NOT_ELIGIBLE. These codes are what the driver app branches on.
 	for _, tc := range []struct {
-		err      error
-		status   int
-		code     string
+		err    error
+		status int
+		code   string
 	}{
 		{niduscmds.ErrNotACashRide, http.StatusConflict, "NOT_A_CASH_RIDE"},
 		{niduscmds.ErrRideNotEligibleForCashCollection, http.StatusConflict, "CASH_NOT_ELIGIBLE"},

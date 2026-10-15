@@ -66,7 +66,7 @@ func (b *captureBus) Publish(_ context.Context, _ string, ev eventbus.Event) err
 	return nil
 }
 func (b *captureBus) Subscribe(context.Context, string, func(eventbus.Event)) error { return nil }
-func (b *captureBus) Close() error                                                   { return nil }
+func (b *captureBus) Close() error                                                  { return nil }
 
 // pickup at Bole Sq roundabout, Addis Ababa.
 const (

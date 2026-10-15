@@ -129,11 +129,11 @@ func (h *EstimateHandler) serveEstimates(w http.ResponseWriter, ctx context.Cont
 		display := services.RideTypeDisplayFor(estimate.RideType)
 		total := float64(estimate.TotalFare) / 100 // cents to currency units
 		response.Estimates = append(response.Estimates, FareEstimateResponse{
-			RideType:      string(estimate.RideType),
-			DisplayName:   display.DisplayName,
-			Description:   display.Description,
-			Capacity:      display.Capacity,
-			IconKey:       display.IconKey,
+			RideType:    string(estimate.RideType),
+			DisplayName: display.DisplayName,
+			Description: display.Description,
+			Capacity:    display.Capacity,
+			IconKey:     display.IconKey,
 			// Honest price band: +/-5% around the computed point estimate.
 			// This is a real confidence band derived from the fare the
 			// pricing service produced — not a fabricated "$12-15".
