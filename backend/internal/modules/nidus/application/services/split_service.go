@@ -70,14 +70,14 @@ type SplitInvite struct {
 // client. If no split exists, Exists=false and the UI shows the "start a
 // split" affordance rather than zeros.
 type SplitView struct {
-	Exists          bool          `json:"exists"`
-	RideID          uuid.UUID     `json:"ride_id"`
-	Fare            float64       `json:"fare"`
-	Currency        string        `json:"currency"`
-	InviterShare    float64       `json:"inviter_share"`
-	TotalSplit      float64       `json:"total_split"`
-	RemainingToPay  float64       `json:"remaining_to_pay"` // accepted-but-unpaid shares
-	Invitees        []SplitInvite `json:"invitees"`
+	Exists         bool          `json:"exists"`
+	RideID         uuid.UUID     `json:"ride_id"`
+	Fare           float64       `json:"fare"`
+	Currency       string        `json:"currency"`
+	InviterShare   float64       `json:"inviter_share"`
+	TotalSplit     float64       `json:"total_split"`
+	RemainingToPay float64       `json:"remaining_to_pay"` // accepted-but-unpaid shares
+	Invitees       []SplitInvite `json:"invitees"`
 }
 
 // CreateSplitInput is one requested share inside CreateSplitCommand.
@@ -88,10 +88,10 @@ type CreateSplitInput struct {
 
 // CreateSplitCommand creates (or replaces) the invite set for a ride.
 type CreateSplitCommand struct {
-	RideID  uuid.UUID
-	UserID  uuid.UUID // must be the ride owner
+	RideID   uuid.UUID
+	UserID   uuid.UUID // must be the ride owner
 	Currency string
-	Shares  []CreateSplitInput
+	Shares   []CreateSplitInput
 }
 
 // AcceptSplitCommand carries the tokenized public-accept payload. InviteeUserID

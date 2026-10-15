@@ -136,6 +136,38 @@ class Ride {
   /// retry state, never a fabricated photo or URL.
   final PreSelfieInfo? preSelfie;
 
+  /// §3.1 Cash Payment Option. Server-sourced snapshot of the payment rail
+  /// chosen at request time ("wallet" | "card" | "cash"). Null on legacy rows
+  /// and rides created before the registry existed — the UI then shows no
+  /// badge rather than assuming wallet.
+  final String? paymentMethodType;
+
+  /// §3.1: stamped only after the driver confirms physical cash collection.
+  final DateTime? cashCollectedAt;
+
+  /// §3.1: true exactly while a completed cash ride awaits the driver's
+  /// collection confirmation (collect-on-completion state). Absent (null)
+  /// means the server did not report it — never rendered as false-by-default
+  /// on cash rides.
+  final bool? pendingCashCollection;
+
+  /// §3.6 Scheduled Rides: requested pickup time; null for on-demand rides.
+  final DateTime? scheduledAt;
+
+  /// §3.2 Promo Codes & Coupons. The normalized code actually applied to this
+  /// ride (null when none) and the discount subtracted from the fare,
+  /// recomputed against the final fare at completion time. Both are absent
+  /// until the ride record genuinely carries them — never faked client-side.
+  final String? promoCode;
+  final double? promoDiscount;
+
+  /// §3.4 Itemized Receipt. Null when the ride record carries no component
+  /// snapshot at all (legacy row) — the receipt then renders its honest
+  /// "itemization unavailable" state instead of inventing lines.
+  final FareBreakdown? fareBreakdown;
+
+  bool get isCashRide => paymentMethodType == 'cash';
+
   const Ride({
     required this.id,
     required this.userId,
@@ -157,7 +189,19 @@ class Ride {
     this.completedAt,
     this.driver,
     this.preSelfie,
+    this.paymentMethodType,
+    this.cashCollectedAt,
+    this.pendingCashCollection,
+    this.scheduledAt,
+    this.promoCode,
+    this.promoDiscount,
+    this.fareBreakdown,
   });
+
+  static DateTime? _parseDate(Object? v) =>
+      v is String ? DateTime.tryParse(v) : null;
+
+  static double? _parseDouble(Object? v) => v is num ? v.toDouble() : null;
 
   factory Ride.fromJson(Map<String, dynamic> json) {
     return Ride(
@@ -193,6 +237,62 @@ class Ride {
       preSelfie: json['pre_selfie'] != null
           ? PreSelfieInfo.fromJson(json['pre_selfie'] as Map<String, dynamic>)
           : null,
+      // Phase 2 money fields — every one is an honest nullable read of the
+      // omitempty pointer the backend emits. Absent stays null; we never
+      // default a missing payment type to "wallet" or a missing discount to 0.
+      paymentMethodType: json['payment_method_type'] as String?,
+      cashCollectedAt: _parseDate(json['cash_collected_at']),
+      pendingCashCollection: json['pending_cash_collection'] as bool?,
+      scheduledAt: _parseDate(json['scheduled_at']),
+      promoCode: json['promo_code'] as String?,
+      promoDiscount: _parseDouble(json['promo_discount']),
+      fareBreakdown: json['fare_breakdown'] is Map<String, dynamic>
+          ? FareBreakdown.fromJson(
+              json['fare_breakdown'] as Map<String, dynamic>)
+          : null,
+    );
+  }
+}
+
+/// §3.4 Itemized receipt lines as persisted server-side at request time and
+/// finalized at completion. Each line is nullable because the backend emits
+/// omitempty pointers: a null line means "unavailable for this ride" (legacy
+/// row) and renders as an explicit em-dash in the receipt, never as ETB 0.00.
+/// Toll amounts are not produced by the pricing service yet, so there is no
+/// toll field — the client must not fabricate one.
+class FareBreakdown {
+  final double? base;
+  final double? distance;
+  final double? time;
+  final double? surge;
+  final double? serviceFee;
+  final double? promoDiscount;
+  final double? tip;
+
+  const FareBreakdown({
+    this.base,
+    this.distance,
+    this.time,
+    this.surge,
+    this.serviceFee,
+    this.promoDiscount,
+    this.tip,
+  });
+
+  factory FareBreakdown.fromJson(Map<String, dynamic> json) {
+    double? read(String key) {
+      final v = json[key];
+      return v is num ? v.toDouble() : null;
+    }
+
+    return FareBreakdown(
+      base: read('base'),
+      distance: read('distance'),
+      time: read('time'),
+      surge: read('surge'),
+      serviceFee: read('service_fee'),
+      promoDiscount: read('promo_discount'),
+      tip: read('tip'),
     );
   }
 }

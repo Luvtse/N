@@ -25,13 +25,13 @@ import (
 	nidusinfra "nidaw-backend/internal/modules/nidus/infrastructure/cache"
 	nidushttp "nidaw-backend/internal/modules/nidus/interfaces/http"
 	nidushandlers "nidaw-backend/internal/modules/nidus/interfaces/http/handlers"
-	paymentsapp "nidaw-backend/internal/modules/payments/application"
-	promoapp "nidaw-backend/internal/modules/promotions/application"
-	promodomain "nidaw-backend/internal/modules/promotions/domain"
 	notificationapp "nidaw-backend/internal/modules/notifications/application"
 	notificationinfra "nidaw-backend/internal/modules/notifications/infrastructure"
 	notificationifaces "nidaw-backend/internal/modules/notifications/interfaces"
 	notificationhttp "nidaw-backend/internal/modules/notifications/interfaces/http"
+	paymentsapp "nidaw-backend/internal/modules/payments/application"
+	promoapp "nidaw-backend/internal/modules/promotions/application"
+	promodomain "nidaw-backend/internal/modules/promotions/domain"
 	selfieapp "nidaw-backend/internal/modules/selfie/application"
 	selfieinfra "nidaw-backend/internal/modules/selfie/infrastructure"
 	selfiehttp "nidaw-backend/internal/modules/selfie/interfaces/http"
@@ -48,7 +48,6 @@ import (
 	"nidaw-backend/internal/shared/observability"
 
 	notifs "nidaw-backend/internal/shared/integrations/notifications"
-
 
 	"github.com/google/uuid"
 
@@ -252,6 +251,13 @@ func main() {
 				return promoSvcRef.FinalizeAtCompletion(ctx, rideID, finalFare, code)
 			},
 		)
+	}
+	// §3.3 Split Fare: construct the split service (Postgres-backed, migration
+	// 011) and hand it to the nidus router. The split routes mount only when
+	// FEATURE_SPLIT_FARE is on; with the flag off SplitSvc stays nil and the
+	// routes are absent entirely (clients get 404, never a fake success).
+	if cfg.Features.EnableSplitFare {
+		nidusDeps.SplitSvc = nidusservices.NewSplitService(db)
 	}
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
 
