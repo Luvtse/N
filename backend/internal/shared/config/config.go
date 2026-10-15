@@ -232,6 +232,17 @@ type FeatureFlags struct {
 	// charging full fare without notice. Default false in production per
 	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnablePromotions bool
+	// EnableSplitFare gates the §3.3 split-fare surface (POST/GET
+	// /api/v1/nidus/rides/{rideId}/split for the ride owner and the public
+	// tokenized POST /api/v1/split/{token}/accept). Kill switch: set
+	// FEATURE_SPLIT_FARE=false to unmount all three routes at next boot;
+	// existing ride_split_invites rows remain in Postgres, outstanding invite
+	// links then return a clean 404 and the receipt sheet renders its honest
+	// "split unavailable" state — the inviter is never stranded because their
+	// own share is only reduced through the payment settlement path once an
+	// invite is accepted. Default false in production per
+	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableSplitFare bool
 }
 
 // ============================================================================
@@ -434,6 +445,7 @@ func (c *Config) loadFeatures() {
 		EnablePreSelfie:          getBoolEnvOrDefault("FEATURE_PRE_SELFIE", false),
 		EnableCashPayment:        getBoolEnvOrDefault("FEATURE_CASH_PAYMENT", false),
 		EnablePromotions:         getBoolEnvOrDefault("FEATURE_PROMOTIONS", false),
+		EnableSplitFare:          getBoolEnvOrDefault("FEATURE_SPLIT_FARE", false),
 	}
 }
 

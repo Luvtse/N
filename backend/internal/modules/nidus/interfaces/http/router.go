@@ -82,6 +82,11 @@ type Dependencies struct {
 	// the client then shows its honest "verification unavailable" state rather
 	// than a fabricated one.
 	PreSelfie nidusHttp.PreSelfieAttacher
+	// §3.3 Split Fare. SplitSvc backs POST/GET /nidus/rides/{rideID}/split and
+	// the public tokenized POST /split/{token}/accept routes. nil => the routes
+	// are not mounted at all, so clients get a clean 404 and the receipt page
+	// renders its honest "split unavailable" state — never a fake invite list.
+	SplitSvc *services.SplitService // nil => split routes not mounted
 }
 
 // SelfieRiderView is the structural shape of selfie/application.RiderView. It
@@ -373,6 +378,26 @@ func NewRouter(deps *Dependencies) http.Handler {
 			r.Get("/rides/estimates", estimateHandler.Estimates)
 		})
 
+		// §3.3 Split Fare — public tokenized accept. Mounted OUTSIDE
+		// AuthRequired: possession of the random 192-bit invite token IS the
+		// authorization (invitees may not have Nidus accounts). If a bearer
+		// session happens to hit it, ExtractUserToContext still runs so the
+		// handler can bind invitee_user_id; anonymous accepts leave it NULL.
+		// When SplitSvc is unwired the routes are absent entirely — clients get
+		// a clean 404, never a fake accept page. splitHandler lives in the outer
+		// NewRouter scope so the protected /nidus/rides group below can mount
+		// Create/Get on the same instance.
+		var splitHandler *nidusHttp.SplitHandler
+		if deps.SplitSvc != nil {
+			splitHandler = nidusHttp.NewSplitHandler(deps.SplitSvc)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.ExtractUserToContext)
+				r.Route("/split", func(r chi.Router) {
+					r.Post("/{token}/accept", splitHandler.Accept)
+				})
+			})
+		}
+
 		// Protected endpoints (require authentication)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.AuthRequired(deps.AuthService))
@@ -403,6 +428,16 @@ func NewRouter(deps *Dependencies) http.Handler {
 				// the tracking page never shows a confirm affordance.
 				if deps.CashEnabled {
 					r.Post("/{rideID}/confirm-cash-collection", rideHandler.ConfirmCashCollection)
+				}
+				// §3.3 Split Fare (rider/owner surface): POST creates/replaces the
+				// pending invite set on a completed ride; GET returns the
+				// authoritative split view (server-computed inviter share, never
+				// trusted from a client). Mounted only when SplitSvc is wired —
+				// otherwise a clean 404 and the receipt sheet renders its honest
+				// "split unavailable" state.
+				if deps.SplitSvc != nil {
+					r.Post("/{rideID}/split", splitHandler.Create)
+					r.Get("/{rideID}/split", splitHandler.Get)
 				}
 			})
 
