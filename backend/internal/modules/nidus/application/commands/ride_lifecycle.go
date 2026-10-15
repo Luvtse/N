@@ -427,13 +427,24 @@ type CompleteRideResult struct {
 	PendingCashCollection bool
 }
 
+// PromoFinalizer is the narrow port CompleteRideHandler needs from the
+// promotions module (§3.2 "automatic application at receipt time"): adjust the
+// stored discount to the actual final fare when the ride completes. Declared
+// structurally so nidus never imports the promotions package. A nil port (or
+// a ride with no promo code) leaves the request-time snapshot untouched —
+// legacy behaviour, unchanged.
+type PromoFinalizer interface {
+	FinalizeAtCompletion(ctx context.Context, rideID uuid.UUID, finalFare float64, code string) (float64, error)
+}
+
 type CompleteRideHandler struct {
 	lifecycleBase
 	pricingService *services.PricingService
+	promoFinalizer PromoFinalizer // nil => receipt-time promo adjustment disabled
 }
 
-func NewCompleteRideHandler(db *database.Postgres, eventBus eventbus.EventBus, ps *services.PricingService) *CompleteRideHandler {
-	return &CompleteRideHandler{lifecycleBase: lifecycleBase{db: db, eventBus: eventBus}, pricingService: ps}
+func NewCompleteRideHandler(db *database.Postgres, eventBus eventbus.EventBus, ps *services.PricingService, promoFinalizer PromoFinalizer) *CompleteRideHandler {
+	return &CompleteRideHandler{lifecycleBase: lifecycleBase{db: db, eventBus: eventBus}, pricingService: ps, promoFinalizer: promoFinalizer}
 }
 
 func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideCommand) (*CompleteRideResult, error) {
@@ -484,6 +495,32 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 	platformFee := computePlatformFee(finalFare)
 	driverEarnings := round2(finalFare - platformFee)
 
+	// §3.2 receipt-time application: when the ride carries a promo code, the
+	// discount is recomputed against the FINAL fare (the projection was made
+	// against the estimate). The finalized amount replaces the request-time
+	// snapshot on both the ride row and the settlement payload, so the ledger
+	// debits exactly what the rider's receipt will show. Failure policy: if
+	// finalization errors, keep the request-time snapshot and log — the rider
+	// already saw that number at booking; silently changing money mid-ride is
+	// worse than a stale-but-shown discount. A missing redemption row returns
+	// discount=0 with no error, which we treat as "no promo on this ride".
+	promoCode := ride.PromoCode
+	promoDiscount := ride.PromoDiscount
+	if h.promoFinalizer != nil && promoCode != "" {
+		finalized, ferr := h.promoFinalizer.FinalizeAtCompletion(ctx, ride.ID, finalFare, promoCode)
+		if ferr != nil {
+			fmt.Printf("warning: promo finalization failed for ride %s (code %s), keeping request-time discount %.2f: %v\n", ride.ID, promoCode, promoDiscount, ferr)
+		} else {
+			promoDiscount = round2(finalized)
+		}
+	}
+	// Money actually charged to the rider after the discount. Never negative:
+	// a misconfigured code cannot mint a credit.
+	chargeAmount := round2(finalFare - promoDiscount)
+	if chargeAmount < 0 {
+		chargeAmount = 0
+	}
+
 	// §3.1 Cash rides: the fare is collected in hand at completion, so ledger
 	// settlement must NOT be enqueued here — it is deferred until the driver
 	// confirms physical collection (ConfirmCashCollectionHandler). The ride
@@ -512,6 +549,13 @@ func (h *CompleteRideHandler) Execute(ctx context.Context, cmd *CompleteRideComm
 		"completed_at_unix":       completedAt.Unix(),
 		"payment_method_type":     ride.PaymentMethodType,
 		"pending_cash_collection": isCash,
+		// §3.2 receipt-time promo fields: the discount finalized against the
+		// actual fare and the amount charged to the rider after it. Consumers
+		// that ignore unknown keys are unaffected; the receipt surface reads
+		// these instead of recomputing.
+		"promo_code":        promoCode,
+		"promo_discount":    promoDiscount,
+		"charge_amount":     chargeAmount,
 	}
 
 	rec := settlementRecord{
