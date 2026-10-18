@@ -59,6 +59,7 @@ abstract class RideRepository {
     required double pickupLng,
     required double dropoffLat,
     required double dropoffLng,
+    String? rideType,
   });
 
   /// §2.6: per-type ride-option estimates for the request carousel.
@@ -980,6 +981,7 @@ class RideRepositoryImpl implements RideRepository {
     required double pickupLng,
     required double dropoffLat,
     required double dropoffLng,
+    String? rideType,
   }) async {
     try {
       final response = await _apiClient.post(
@@ -989,6 +991,10 @@ class RideRepositoryImpl implements RideRepository {
           'pickup_lng': pickupLng,
           'dropoff_lat': dropoffLat,
           'dropoff_lng': dropoffLng,
+          // §2.6 fix: the selected type is now carried on the estimate call;
+          // omitted (not defaulted) when unset so the server's own default
+          // applies instead of a fabricated one.
+          if (rideType != null && rideType.isNotEmpty) 'ride_type': rideType,
         },
       );
 
