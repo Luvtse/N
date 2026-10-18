@@ -55,6 +55,12 @@ dependencies:
   permission_handler: ^11.1.0
   share_plus: ^7.2.1
 
+  # §3.4 Receipt PDF: generated client-side from the ride DTO and saved via
+  # path_provider; printing provides the PdfDoc -> bytes pipeline.
+  pdf: ^3.10.8
+  printing: ^5.12.0
+  path_provider: ^2.1.2
+
   # Firebase
   firebase_core: ^2.24.2
   firebase_messaging: ^14.7.9
