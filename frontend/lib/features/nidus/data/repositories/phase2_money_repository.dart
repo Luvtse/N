@@ -240,6 +240,42 @@ class Phase2MoneyRepository {
       );
     }
   }
+
+  // ==========================================================================
+  // §3.4 Email receipt
+  //   POST /api/v1/nidus/rides/{rideId}/email-receipt
+  // The backend renders the itemized HTML from its own authoritative ride
+  // record and dispatches through the notification module's email adapter —
+  // the client never sends amounts, only which ride to email.
+  // ==========================================================================
+
+  Future<EmailReceiptResult> emailReceipt(String rideId) async {
+    try {
+      final response = await _apiClient.post<Map<String, dynamic>>(
+        '/api/v1/nidus/rides/$rideId/email-receipt',
+      );
+      // Backend answers 202 Accepted with {"status": "queued", ...}. Queued
+      // is the honest success signal — delivery happens asynchronously via
+      // the notification dispatcher, so we never claim "sent".
+      final status = response.data?['status']?.toString();
+      if (status != 'queued') {
+        return const EmailReceiptResult.failure(
+          message: 'The server did not accept the receipt for delivery.',
+          code: 'INVALID_RESPONSE',
+        );
+      }
+      return const EmailReceiptResult.success();
+    } on ApiException catch (e) {
+      // RECEIPT_EMAIL_UNAVAILABLE / RIDE_NOT_COMPLETED are honest terminal
+      // answers; anything else is transport and shows retry.
+      return EmailReceiptResult.failure(message: e.message, code: e.errorCode);
+    } catch (e) {
+      return EmailReceiptResult.failure(
+        message: 'Could not send the receipt email: $e',
+        code: 'UNKNOWN_ERROR',
+      );
+    }
+  }
 }
 
 // ============================================================================
@@ -337,6 +373,23 @@ class CashConfirmResult {
       : this._(ok: true, status: status);
 
   const CashConfirmResult.failure({required String message, required String code})
+      : this._(message: message, code: code);
+}
+
+/// Result of POST /nidus/rides/{id}/email-receipt (§3.4). Success means the
+/// server QUEUED the durable email copy — never that it already landed in
+/// the inbox, which we cannot know from here.
+@immutable
+class EmailReceiptResult {
+  final bool ok;
+  final String? message;
+  final String? code;
+
+  const EmailReceiptResult._({this.ok = false, this.message, this.code});
+
+  const EmailReceiptResult.success() : this._(ok: true);
+
+  const EmailReceiptResult.failure({required String message, required String code})
       : this._(message: message, code: code);
 }
 
