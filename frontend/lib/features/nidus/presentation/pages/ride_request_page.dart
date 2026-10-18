@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'package:get_it/get_it.dart';
 
+import '../../../../core/config/feature_flag_service.dart';
 import '../../../../core/di/injection.dart';
 import '../../../../core/geocoding/geocoding_models.dart';
 import '../../../../core/geocoding/geocoding_service.dart';
@@ -19,6 +20,7 @@ import '../widgets/location_input.dart';
 import '../widgets/location_permission_gate.dart';
 import '../widgets/place_autocomplete_sheet.dart';
 import '../widgets/payment_method_selector.dart';
+import '../widgets/promo_code_sheet.dart';
 import '../widgets/ride_type_selector.dart';
 
 /// Request surface, rebuilt on the Foundation substrate:
@@ -61,6 +63,20 @@ class _RideRequestPageState extends State<RideRequestPage>
   bool _gpsUnavailableBanner = false;
   String _selectedRideType = 'standard';
   String? _selectedPaymentMethodId;
+
+  /// §3.1: rail type of the selected registry method ('wallet' | 'card' |
+  /// 'cash'). Null when nothing is selected — the server then resolves the
+  /// rider's default instead of the client inventing one.
+  String? _selectedPaymentMethodType;
+
+  /// §3.2: code validated by POST /promotions/redeem + its server-projected
+  /// discount. The projection is display-only; the authoritative number is
+  /// recomputed by the backend at booking time.
+  String? _promoCode;
+  double? _projectedDiscount;
+
+  /// §3.6: scheduled pickup time (local); null = on-demand.
+  DateTime? _scheduledAt;
 
   LatLng get _cameraCenter => _pickup.hasCoordinates
       ? LatLng(_pickup.lat!, _pickup.lng!)
@@ -351,6 +367,9 @@ class _RideRequestPageState extends State<RideRequestPage>
                                       pickupLng: _pickup.lng!,
                                       dropoffLat: _dropoff.lat!,
                                       dropoffLng: _dropoff.lng!,
+                                      // §2.6 fix: the estimate now honors the
+                                      // selected type instead of ignoring it.
+                                      rideType: _selectedRideType,
                                     ),
                                   );
                             }
@@ -361,10 +380,21 @@ class _RideRequestPageState extends State<RideRequestPage>
 
                         PaymentMethodSelector(
                           selectedPaymentMethodId: _selectedPaymentMethodId,
-                          onChanged: (methodId) {
-                            setState(() => _selectedPaymentMethodId = methodId);
+                          onChanged: (methodId, methodType) {
+                            setState(() {
+                              _selectedPaymentMethodId = methodId;
+                              _selectedPaymentMethodType = methodType;
+                            });
                           },
                         ),
+
+                        const SizedBox(height: 16),
+
+                        _buildPromoRow(),
+
+                        const SizedBox(height: 16),
+
+                        _buildScheduleRow(state),
 
                         const SizedBox(height: 24),
 
@@ -482,6 +512,7 @@ class _RideRequestPageState extends State<RideRequestPage>
               pickupLng: _pickup.lng!,
               dropoffLat: _dropoff.lat!,
               dropoffLng: _dropoff.lng!,
+              rideType: _selectedRideType,
             ),
           );
     }
@@ -656,8 +687,227 @@ class _RideRequestPageState extends State<RideRequestPage>
             dropoffAddress: _dropoff.display,
             rideType: _selectedRideType,
             paymentMethodId: _selectedPaymentMethodId,
+            // §3.1 / §3.2 / §3.6: the registry rail type, the validated promo
+            // code and the scheduled pickup time now travel with the request.
+            // Each is null unless genuinely chosen — the backend resolves
+            // defaults rather than the client fabricating them.
+            paymentMethodType: _selectedPaymentMethodType,
+            promoCode: _promoCode,
+            scheduledAt: _scheduledAt,
           ),
         );
+  }
+
+  // ==========================================================================
+  // §3.2 Promo row + §3.6 Schedule toggle (Request page)
+  // ==========================================================================
+
+  /// Estimated fare currently on screen, used as the redeem projection input.
+  /// Null until a real estimate has loaded — never guessed.
+  double? get _currentEstimatedFare {
+    final state = context.read<RideBloc>().state;
+    if (state is FareEstimateLoaded && _canRequest) {
+      return state.estimate.totalFare;
+    }
+    return null;
+  }
+
+  String get _estimateCurrency {
+    final state = context.read<RideBloc>().state;
+    if (state is FareEstimateLoaded) return state.estimate.currency;
+    return 'ETB';
+  }
+
+  /// "Promo code" row that opens [PromoCodeSheet]. Hidden entirely when the
+  /// FEATURE_PROMOTIONS client flag is off (mirrors the backend kill switch).
+  Widget _buildPromoRow() {
+    if (!getIt<FeatureFlagService>().isEnabled('promotions')) {
+      return const SizedBox.shrink();
+    }
+    final hasCode = _promoCode != null;
+    return Material(
+      color: AppColors.surfaceMuted ?? AppColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => PromoCodeSheet.show(
+          context,
+          estimatedFare: _currentEstimatedFare,
+          currency: _estimateCurrency,
+          rideType: _selectedRideType,
+          currentCode: _promoCode,
+          onApplied: (code, discount) {
+            setState(() {
+              _promoCode = code;
+              _projectedDiscount = discount;
+            });
+          },
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.local_offer_outlined,
+                size: 20,
+                color: AppColors.textSecondary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  hasCode
+                      ? '${_promoCode!} applied'
+                      : 'Add promo code',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: hasCode ? FontWeight.w700 : FontWeight.w400,
+                    color: hasCode
+                        ? AppColors.primary
+                        : AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              // Server-projected discount only — shown after a successful
+              // POST /promotions/redeem, never computed on-device.
+              if (hasCode && _projectedDiscount != null)
+                Text(
+                  '-${_estimateCurrency} ${_projectedDiscount!.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.success,
+                  ),
+                )
+              else if (hasCode)
+                const Text(
+                  'discount confirmed at booking',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// §3.6 "Schedule" toggle with a date-time picker constrained to
+  /// ≥15 min from now and ≤30 days out — the same window the backend
+  /// enforces, so the picker cannot offer a time the server would reject.
+  Widget _buildScheduleRow(RideState state) {
+    final isScheduled = _scheduledAt != null;
+    return Material(
+      color: AppColors.surfaceMuted ?? AppColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _pickSchedule,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              const Text(
+                'Schedule',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+              Switch(
+                value: isScheduled,
+                activeColor: AppColors.primary,
+                onChanged: (on) {
+                  if (on) {
+                    _pickSchedule();
+                  } else {
+                    setState(() => _scheduledAt = null);
+                  }
+                },
+              ),
+              Expanded(
+                child: Text(
+                  isScheduled
+                      ? _formatScheduled(_scheduledAt!)
+                      : 'Now (on-demand)',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickSchedule() async {
+    // Backend window (§1/§3.6): first selectable moment is now + 15 min,
+    // last is now + 30 days. Mirror it here so users never see an option
+    // that would come back SCHEDULED_TOO_SOON / SCHEDULED_TOO_FAR.
+    final now = DateTime.now();
+    final earliest = now.add(const Duration(minutes: 15));
+    final latest = now.add(const Duration(days: 30));
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _scheduledAt != null &&
+              _scheduledAt!.isAfter(earliest) &&
+              _scheduledAt!.isBefore(latest)
+          ? _scheduledAt!
+          : earliest,
+      firstDate: earliest,
+      lastDate: latest,
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(
+        _scheduledAt ?? earliest,
+      ),
+    );
+    if (time == null || !mounted) return;
+
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+
+    if (picked.isBefore(earliest)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Scheduled pickups must be at least 15 minutes away.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (picked.isAfter(latest)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Scheduled pickups can go up to 30 days ahead.'),
+          ),
+        );
+      }
+      return;
+    }
+    setState(() => _scheduledAt = picked);
+  }
+
+  String _formatScheduled(DateTime t) {
+    final d = '${t.day.toString().padLeft(2, '0')}/'
+        '${t.month.toString().padLeft(2, '0')}';
+    final hm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+    return '$d $hm';
   }
 
   void _handleRideState(BuildContext context, RideState state) {

@@ -151,15 +151,22 @@ class GetFareEstimate extends RideEvent {
   final double dropoffLat;
   final double dropoffLng;
 
+  /// §2.6: the rider's currently selected ride type. The estimate is now
+  /// computed for THIS type instead of the backend default — previously the
+  /// selection was silently ignored by the single-estimate fetch.
+  final String? rideType;
+
   const GetFareEstimate({
     required this.pickupLat,
     required this.pickupLng,
     required this.dropoffLat,
     required this.dropoffLng,
+    this.rideType,
   });
 
   @override
-  List<Object?> get props => [pickupLat, pickupLng, dropoffLat, dropoffLng];
+  List<Object?> get props =>
+      [pickupLat, pickupLng, dropoffLat, dropoffLng, rideType];
 }
 
 /// §2.6: load per-type ride-option estimates for the request carousel.
@@ -907,6 +914,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         pickupLng: event.pickupLng,
         dropoffLat: event.dropoffLat,
         dropoffLng: event.dropoffLng,
+        rideType: event.rideType,
       );
 
       if (estimate == null) {

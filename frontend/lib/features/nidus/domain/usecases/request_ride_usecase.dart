@@ -81,7 +81,7 @@ class RequestRideUseCase {
         paymentMethodId: paymentMethodId,
         paymentMethodType: paymentMethodType,
         promoCode: promoCode,
-        scheduledAt: scheduledAt?.toUtc().toIso860String(),
+        scheduledAt: scheduledAt?.toUtc().toIso8601String(),
       );
     } on Exception {
       // Preserve coded failures (PAYMENT_FAILED, NO_DRIVERS, ...) for the Bloc.
