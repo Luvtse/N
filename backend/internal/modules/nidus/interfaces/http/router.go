@@ -87,6 +87,13 @@ type Dependencies struct {
 	// are not mounted at all, so clients get a clean 404 and the receipt page
 	// renders its honest "split unavailable" state — never a fake invite list.
 	SplitSvc *services.SplitService // nil => split routes not mounted
+	// §3.4 Email Receipt. ReceiptMailer backs POST /nidus/rides/{rideID}/email-receipt.
+	// Injected into RideHandler via SetReceiptMailer at mount time; nil (or the
+	// notifications flag off) means the route still mounts but honestly returns
+	// 503 RECEIPT_EMAIL_UNAVAILABLE — never a fake "sent" confirmation. main.go
+	// adapts the notifications Dispatcher to this structural port so nidus
+	// never imports the notifications application package.
+	ReceiptMailer nidusHttp.ReceiptMailer
 }
 
 // SelfieRiderView is the structural shape of selfie/application.RiderView. It
@@ -329,6 +336,11 @@ func NewRouter(deps *Dependencies) http.Handler {
 	if deps.PreSelfie != nil {
 		rideHandler.SetPreSelfieAttacher(deps.PreSelfie)
 	}
+	// §3.4: inject the email-receipt port when main.go wired one (nil-safe —
+	// the route then honestly reports 503 RECEIPT_EMAIL_UNAVAILABLE).
+	if deps.ReceiptMailer != nil {
+		rideHandler.SetReceiptMailer(deps.ReceiptMailer)
+	}
 
 	driverHandler := nidusHttp.NewDriverHandler(
 		deps.MatchingEngine,
@@ -439,6 +451,12 @@ func NewRouter(deps *Dependencies) http.Handler {
 					r.Post("/{rideID}/split", splitHandler.Create)
 					r.Get("/{rideID}/split", splitHandler.Get)
 				}
+				// §3.4 Email Receipt: dispatches the itemized receipt through the
+				// notifications module's email adapter. Always mounted (the handler
+				// itself reports 503 RECEIPT_EMAIL_UNAVAILABLE when no mailer was
+				// injected), so the Flutter receipt page can offer the action and
+				// show an honest retry state instead of hiding it per-environment.
+				r.Post("/{rideID}/email-receipt", rideHandler.EmailReceipt)
 			})
 
 			// ====================================================================

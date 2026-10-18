@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"nidaw-backend/internal/modules/nidus/application/queries"
 	"nidaw-backend/internal/modules/nidus/domain/entities"
@@ -43,6 +44,19 @@ type ReceiptMailer interface {
 // pattern as SplitHandler.SetDispatcher). nil-safe: the route then reports
 // the channel as unavailable.
 func (h *RideHandler) SetReceiptMailer(m ReceiptMailer) { h.receiptMailer = m }
+
+// logError writes an operator-visible failure line when a logger is wired;
+// tests that construct handlers directly leave h.logger nil and this no-ops.
+func (h *RideHandler) logError(msg string, kv ...interface{}) {
+	if h.logger == nil {
+		return
+	}
+	fields := make([]zap.Field, 0, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		fields = append(fields, zap.Any(fmt.Sprint(kv[i]), kv[i+1]))
+	}
+	h.logger.Error(msg, fields...)
+}
 
 // EmailReceiptRequest is the request body. Recipient is accepted only when it
 // is the rider's own account contact — see resolveReceiptRecipient; any other
@@ -117,7 +131,7 @@ func (h *RideHandler) EmailReceipt(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.receiptMailer.SendReceiptEmail(r.Context(), userID,
 		receiptTemplateVars(ride), receiptPayload(ride)); err != nil {
-		h.Logger.Error("receipt email dispatch failed",
+		h.logError("receipt email dispatch failed",
 			"ride_id", rideID.String(), "user_id", userID.String(), "err", err.Error())
 		writeError(w, http.StatusBadGateway, "RECEIPT_EMAIL_FAILED",
 			"the email provider rejected the send — retry from the receipt page")

@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // ============================================================================
@@ -44,6 +45,15 @@ type RideHandler struct {
 	confirmCashCmd *commands.ConfirmCashCollectionHandler
 	preSelfie      PreSelfieAttacher
 	etaService     *services.ETAService
+	// receiptMailer is the §3.4 optional email-receipt port (see
+	// email_receipt_handler.go). Injected post-construction via
+	// SetReceiptMailer; nil means the route honestly reports 503
+	// RECEIPT_EMAIL_UNAVAILABLE instead of faking a send.
+	receiptMailer ReceiptMailer
+	// logger is the optional structured logger for operator-visible failure
+	// lines (receipt email dispatch, etc.). Injected post-construction via
+	// SetLogger; every use site nil-checks so tests can omit it.
+	logger *zap.Logger
 }
 
 // PreSelfieAttacher is the minimal port RideHandler needs from the selfie
