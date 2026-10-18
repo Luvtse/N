@@ -28,6 +28,7 @@ import '../../features/auth/presentation/bloc/legal_consent_bloc.dart';
 import '../../features/nidus/data/repositories/chat_repository.dart';
 import '../../features/nidus/data/repositories/pre_selfie_repository.dart';
 import '../../features/nidus/data/repositories/phase2_money_repository.dart';
+import '../../features/nidus/data/repositories/split_fare_repository.dart';
 import '../../features/nidus/data/repositories/ride_repository.dart';
 import '../../features/nidus/data/repositories/safety_repository.dart';
 import '../../features/nidus/domain/usecases/request_ride_usecase.dart';
@@ -210,6 +211,11 @@ void _registerRepositories() {
   // can resolve it via getIt without extra plumbing.
   getIt.registerLazySingleton<Phase2MoneyRepository>(
     () => Phase2MoneyRepository(apiClient: getIt<ApiClient>()),
+  );
+
+  // §3.3 Split fare surface (create invites, status, tokenized accept).
+  getIt.registerLazySingleton<SplitFareRepository>(
+    () => SplitFareRepository(apiClient: getIt<ApiClient>()),
   );
 
   // Safety Repository (SOS, trip sharing, trusted contacts)

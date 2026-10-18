@@ -4,6 +4,9 @@ import '../../../../core/di/injection.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/repositories/phase2_money_repository.dart';
 import '../../data/repositories/ride_repository.dart';
+import '../../data/repositories/split_fare_repository.dart';
+import '../widgets/split_fare_sheet.dart';
+import 'receipt_pdf_document.dart';
 
 /// Post-trip receipt detail. Itemizes the fare from the Ride entity returned
 /// by GET /nidus/rides/{id} and links into the existing wallet dispute flow
@@ -194,6 +197,25 @@ class ReceiptDetailPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+
+          // ---- §3.3 Split fare ---------------------------------------------
+          if (getIt<FeatureFlagService>().isEnabled('split_fare') &&
+              ride.status == 'completed')
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => SplitFareSheet.open(
+                  context,
+                  rideId: ride.id,
+                  fare: ride.fareAmount ?? 0,
+                  currency: ride.currency,
+                ),
+                icon: const Icon(Icons.call_split, size: 18),
+                label: const Text('Split fare'),
+              ),
+            ),
+          const SizedBox(height: 12),
+
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -217,14 +239,15 @@ class ReceiptDetailPage extends StatelessWidget {
   /// Client-side PDF generation from the DTO (plan §3.4: "The PDF is
   /// generated client-side from the DTO"). The printable document lives in
   /// receipt_pdf_document.dart so this page stays presentational.
-  void _downloadPdf(BuildContext context) {
+  Future<void> _downloadPdf(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      saveReceiptPdf(ride);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Receipt saved.')),
+      final file = await saveReceiptPdf(ride);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Receipt saved to ${file.path}')),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Could not save the PDF: $e')),
       );
     }
