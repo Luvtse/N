@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
+import '../../data/repositories/ride_repository.dart' show Ride;
 import '../widgets/cancel_ride_sheet.dart';
 import '../widgets/driver_card.dart';
 import '../widgets/payment_method_selector.dart';
@@ -349,6 +350,15 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                       // Status Indicator
                       _buildStatusIndicator(state),
 
+                      // §3.1 Cash badge — shown only when the backend says
+                      // this ride is cash-paid. Three honest states, all
+                      // server-sourced: awaiting collection (driver has not
+                      // confirmed yet) vs collected at a real timestamp.
+                      if (state is RideInProgress && state.ride.isCashRide) ...[
+                        const SizedBox(height: 8),
+                        _CashRideBadge(ride: state.ride),
+                      ],
+
                       const SizedBox(height: 24),
 
                       // Driver Card (matched or en route)
@@ -536,6 +546,62 @@ class _FollowingChip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// §3.1 Cash-ride badge for the tracking sheet. Every state is derived from
+/// server fields only — `payment_method_type`, `cash_collected_at` — never a
+/// fabricated amount or status. When collection is pending the rider sees the
+/// honest "collect at drop-off" note; once the driver confirms, the real
+/// collected timestamp is rendered.
+class _CashRideBadge extends StatelessWidget {
+  final Ride ride;
+
+  const _CashRideBadge({required this.ride});
+
+  @override
+  Widget build(BuildContext context) {
+    final collected = ride.cashCollectedAt;
+    final pending = ride.pendingCashCollection ?? collected == null;
+    final icon = collected != null
+        ? Icons.receipt_long
+        : (pending ? Icons.payments_outlined : Icons.hourglass_empty);
+    final label = collected != null
+        ? 'Cash collected ${_formatCollected(collected)}'
+        : 'Cash ride — pay the driver at drop-off';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.accentLight.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.accent),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: AppColors.accentDark),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatCollected(DateTime value) {
+    final local = value.toLocal();
+    final h = local.hour.toString().padLeft(2, '0');
+    final m = local.minute.toString().padLeft(2, '0');
+    return 'at $h:$m';
   }
 }
 

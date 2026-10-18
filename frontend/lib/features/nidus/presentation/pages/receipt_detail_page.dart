@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/di/injection.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../data/repositories/phase2_money_repository.dart';
 import '../../data/repositories/ride_repository.dart';
 
 /// Post-trip receipt detail. Itemizes the fare from the Ride entity returned
@@ -34,9 +36,12 @@ class ReceiptDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fare = ride.fareAmount ?? 0;
-    // Backend ledger splits are not carried on the Ride DTO, so show the
-    // known components and label the remainder honestly instead of inventing
-    // a breakdown that could contradict the escrowed charge.
+    // §3.4: when the backend sends fare_breakdown we render every line it
+    // carries and omit the ones it does not. When absent (legacy rides or
+    // pre-§3.4 records) we show only the known components and label the
+    // remainder honestly instead of inventing a breakdown that could
+    // contradict the escrowed charge.
+    final breakdown = ride.fareBreakdown;
     final distanceKm = ride.distanceKm;
     final durationMin = ride.durationMinutes;
 
@@ -67,6 +72,18 @@ class ReceiptDetailPage extends StatelessWidget {
                   style: const TextStyle(
                       fontSize: 12, color: AppColors.textSecondary),
                 ),
+                if (ride.isCashRide) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    ride.cashCollectedAt != null
+                        ? 'Paid in cash • collected ${_formatTime(ride.cashCollectedAt!)}'
+                        : 'Cash payment pending driver confirmation',
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accentDark),
+                  ),
+                ],
               ],
             ),
           ),
@@ -90,13 +107,93 @@ class ReceiptDetailPage extends StatelessWidget {
           if (durationMin != null)
             _Line(label: 'Duration', value: '$durationMin min'),
           _Line(label: 'Ride type', value: ride.rideType),
-          const Divider(height: 32),
+
+          // ---- §3.4 Itemized fare breakdown -------------------------------
+          if (breakdown != null) ...[
+            const Divider(height: 32),
+            const Text(
+              'Fare breakdown',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            if (breakdown.base != null)
+              _Line(label: 'Base fare', value: _formatMoney(breakdown.base!)),
+            if (breakdown.distance != null)
+              _Line(
+                  label: 'Distance',
+                  value: _formatMoney(breakdown.distance!)),
+            if (breakdown.time != null)
+              _Line(label: 'Time', value: _formatMoney(breakdown.time!)),
+            if (breakdown.surge != null && breakdown.surge! > 0)
+              _Line(
+                  label: 'Surge', value: _formatMoney(breakdown.surge!)),
+            if (breakdown.serviceFee != null)
+              _Line(
+                  label: 'Service fee',
+                  value: _formatMoney(breakdown.serviceFee!)),
+            if (breakdown.promoDiscount != null &&
+                breakdown.promoDiscount! > 0)
+              _Line(
+                label: 'Promo discount${ride.promoCode != null ? ' (${ride.promoCode})' : ''}',
+                value: '-${_formatMoney(breakdown.promoDiscount!)}',
+                positive: false,
+              ),
+            if (breakdown.tip != null && breakdown.tip! > 0)
+              _Line(label: 'Tip', value: _formatMoney(breakdown.tip!)),
+            const Divider(height: 24),
+            _Line(
+              label: 'Total',
+              value: _formatMoney(fare),
+              emphasize: true,
+            ),
+          ] else ...[
+            if (ride.promoDiscount != null && ride.promoDiscount! > 0)
+              _Line(
+                label:
+                    'Promo discount${ride.promoCode != null ? ' (${ride.promoCode})' : ''}',
+                value: '-${_formatMoney(ride.promoDiscount!)}',
+                positive: false,
+              ),
+            const Divider(height: 32),
+            const Text(
+              'This ride predates itemized receipts — only the total and the '
+              'discount above are available. Charges settle through the '
+              'escrow ledger.',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+
+          const SizedBox(height: 16),
           const Text(
-            'Charges settle through the escrow ledger. If something looks '
-            'wrong, file a dispute within 72 hours of completion.',
+            'If something looks wrong, file a dispute within 72 hours of '
+            'completion.',
             style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 16),
+
+          // ---- §3.4 actions ------------------------------------------------
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _downloadPdf(context),
+                  icon: const Icon(Icons.picture_as_pdf, size: 18),
+                  label: const Text('Download PDF'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: ride.status == 'completed'
+                      ? () => _emailReceipt(context)
+                      : null,
+                  icon: const Icon(Icons.mail_outline, size: 18),
+                  label: const Text('Email receipt'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -115,6 +212,43 @@ class ReceiptDetailPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Client-side PDF generation from the DTO (plan §3.4: "The PDF is
+  /// generated client-side from the DTO"). The printable document lives in
+  /// receipt_pdf_document.dart so this page stays presentational.
+  void _downloadPdf(BuildContext context) {
+    try {
+      saveReceiptPdf(ride);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Receipt saved.')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save the PDF: $e')),
+      );
+    }
+  }
+
+  Future<void> _emailReceipt(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result =
+        await getIt<Phase2MoneyRepository>().emailReceipt(ride.id);
+    if (result.ok) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Receipt queued for delivery to your account email.'),
+        ),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(result.message ??
+              'Receipt email unavailable — try again later.'),
+        ),
+      );
+    }
   }
 }
 
@@ -181,7 +315,19 @@ class _Line extends StatelessWidget {
   final String label;
   final String value;
 
-  const _Line({required this.label, required this.value});
+  /// Discounts render in the success color with an explicit minus sign so a
+  /// negative line can never be mistaken for a charge.
+  final bool positive;
+
+  /// Total row gets heavier type.
+  final bool emphasize;
+
+  const _Line({
+    required this.label,
+    required this.value,
+    this.positive = true,
+    this.emphasize = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -192,12 +338,20 @@ class _Line extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
-                fontSize: 14, color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+              fontWeight: emphasize ? FontWeight.w700 : FontWeight.w400,
+            ),
           ),
           Text(
             value,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: emphasize ? 16 : 14,
+              fontWeight:
+                  emphasize ? FontWeight.w800 : FontWeight.w600,
+              color: positive ? null : AppColors.success,
+            ),
           ),
         ],
       ),
