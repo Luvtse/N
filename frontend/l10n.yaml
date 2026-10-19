@@ -1,0 +1,11 @@
+# §4.3 Localization configuration.
+# ARB sources live under lib/l10n (not the default root l10n/) so all Dart-
+# facing assets stay inside lib/ per repo convention. Generated accessor is
+# AppLocalizations, committed output goes to lib/l10n/generated/ and is
+# imported by widgets via package:nidaw_app/l10n/l10n.dart.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+output-dir: lib/l10n/generated
+nullable-getter: false

@@ -330,6 +330,12 @@ type DriverInfo struct {
 	RatingCount       *int      `json:"rating_count,omitempty"`
 	VerificationBadge *bool     `json:"verification_badge,omitempty"`
 	YearsActive       *int      `json:"years_active,omitempty"`
+	// EtaConfidence is the ETA service's reliability score (0.0–1.0) for the
+	// live ETAMinutes above, carried through for §4.5 RideCheck anomaly
+	// detection. Nil when the ETA service is unwired or errored — the client
+	// then treats confidence as unknown and does NOT fire a low-confidence
+	// check-in on missing data (never fabricate).
+	EtaConfidence *float64 `json:"eta_confidence,omitempty"`
 }
 
 // ListRidesResponse wraps a list of rides with pagination
@@ -1462,6 +1468,8 @@ func (h *RideHandler) attachDriverCard(ctx context.Context, resp *RideResponse) 
 	if h.etaService != nil && resp.Status == string(entities.RideStatusDriverEnRoute) {
 		if eta, err := h.etaService.CalculateETA(ctx, driver.CurrentLat, driver.CurrentLng, resp.PickupLat, resp.PickupLng); err == nil && eta != nil {
 			info.ETAMinutes = eta.DurationMinutes
+			confidence := eta.Confidence
+			info.EtaConfidence = &confidence
 		}
 	}
 	resp.Driver = info

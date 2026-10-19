@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'core/di/injection.dart';
@@ -12,6 +13,7 @@ import 'features/auth/presentation/bloc/auth_bloc.dart';
 import 'features/auth/presentation/bloc/legal_consent_bloc.dart';
 import 'features/nidus/presentation/bloc/ride_bloc.dart';
 import 'features/profile/presentation/bloc/profile_bloc.dart';
+import 'l10n/l10n.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,13 +58,29 @@ class NidawApp extends StatelessWidget {
           create: (_) => getIt<ProfileBloc>(),
         ),
       ],
-      child: MaterialApp.router(
-        title: 'NIDAW',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
-        darkTheme: AppTheme.dark,
-        themeMode: ThemeMode.system,
-        routerConfig: getIt<AppRouter>().router,
+      // §4.3 Localization: the settings language switcher writes through
+      // LocaleController.saveCode(), which pushes onto this notifier. The
+      // root rebuilds with the new locale immediately; null = system default.
+      child: ValueListenableBuilder<Locale?>(
+        valueListenable: LocaleController.apply,
+        builder: (context, savedLocale, _) {
+          return MaterialApp.router(
+            title: 'NIDAW',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.light,
+            darkTheme: AppTheme.dark,
+            themeMode: ThemeMode.system,
+            routerConfig: getIt<AppRouter>().router,
+            locale: savedLocale,
+            supportedLocales: LocaleController.supportedLocales,
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+          );
+        },
       ),
     );
   }

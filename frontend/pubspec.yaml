@@ -10,6 +10,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # §4.3 Localization (Amharic / Oromo). gen-l10n reads lib/l10n/*.arb via
+  # l10n.yaml; intl is already pinned below for message formatting.
+  flutter_localizations:
+    sdk: flutter
 
   # State Management
   flutter_bloc: ^8.1.3
