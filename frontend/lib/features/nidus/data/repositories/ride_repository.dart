@@ -15,14 +15,16 @@ import 'pre_selfie_repository.dart';
 abstract class RideRepository {
   /// Request a new ride
   ///
-  /// Phase 2 additions (§3.1 / §3.2 / §3.6): [paymentMethodType] is the
+  /// Phase 2 additions (§3.1 / §3.2 / §3.5 / §3.6): [paymentMethodType] is the
   /// registry rail ('wallet' | 'card' | 'cash') chosen on the selector;
   /// [promoCode] is the §3.2 code already validated by POST /promotions/redeem
   /// (the server re-validates and applies the discount authoritatively);
   /// [scheduledAt] is the §3.6 pickup time as RFC3339 UTC — null means
-  /// on-demand. All three serialize to snake_case keys the backend handler
-  /// parses; absent fields stay out of the payload rather than sending
-  /// fabricated defaults.
+  /// on-demand. [stops] are the §3.5 intermediate waypoints in visit order
+  /// (max 3, enforced server-side with TOO_MANY_STOPS; empty/null serializes
+  /// to no `stops` key so an on-demand request is byte-identical to before).
+  /// All serialize to snake_case keys the backend handler parses; absent
+  /// fields stay out of the payload rather than sending fabricated defaults.
   Future<RideResult> requestRide({
     required double pickupLat,
     required double pickupLng,
@@ -35,6 +37,21 @@ abstract class RideRepository {
     String? paymentMethodType,
     String? promoCode,
     String? scheduledAt,
+    List<RideStop> stops = const [],
+  });
+
+  /// §3.5 Mid-trip destination change. PATCHes the authoritative endpoint;
+  /// the SERVER recomputes the fare over pickup -> existing stops -> new
+  /// dropoff and returns both previous and new fares. The client never
+  /// estimates the new price locally (Global Rule 2). Returns a
+  /// DestinationChangeResult carrying the server money on success, or the
+  /// error code (DESTINATION_NOT_CHANGEABLE => caller re-fetches the ride)
+  /// on failure.
+  Future<DestinationChangeResult> changeDestination({
+    required String rideId,
+    required double dropoffLat,
+    required double dropoffLng,
+    String? dropoffAddress,
   });
 
   /// Get ride details by ID
@@ -179,6 +196,11 @@ class Ride {
   /// "itemization unavailable" state instead of inventing lines.
   final FareBreakdown? fareBreakdown;
 
+  /// §3.5 Stopovers. Intermediate waypoints in visit order, loaded from the
+  /// server's always-array `stops` field (empty list for direct trips — an
+  /// empty array is honest here because the backend guarantees the key).
+  final List<RideStop> stops;
+
   bool get isCashRide => paymentMethodType == 'cash';
 
   const Ride({
@@ -209,12 +231,25 @@ class Ride {
     this.promoCode,
     this.promoDiscount,
     this.fareBreakdown,
+    this.stops = const [],
   });
 
   static DateTime? _parseDate(Object? v) =>
       v is String ? DateTime.tryParse(v) : null;
 
   static double? _parseDouble(Object? v) => v is num ? v.toDouble() : null;
+
+  /// §3.5: parse the always-array `stops` field defensively. A missing key
+  /// (legacy server build) yields an empty list — the ride then behaves as a
+  /// direct trip, which matches what the rider will experience, rather than
+  /// crashing or fabricating waypoints.
+  static List<RideStop> _parseStops(Object? v) {
+    if (v is! List) return const [];
+    return [
+      for (final e in v)
+        if (e is Map<String, dynamic>) RideStop.fromJson(e),
+    ];
+  }
 
   factory Ride.fromJson(Map<String, dynamic> json) {
     return Ride(
@@ -263,8 +298,94 @@ class Ride {
           ? FareBreakdown.fromJson(
               json['fare_breakdown'] as Map<String, dynamic>)
           : null,
+      stops: _parseStops(json['stops']),
     );
   }
+}
+
+/// §3.5 Stopovers — one intermediate waypoint between pickup and dropoff,
+/// in visit order (seq 1..3). Mirrors the backend `ride_stops` row and the
+/// RideStopResponse DTO: seq, coordinates, resolved address, and the moment
+/// the driver confirmed arrival at the stop (null until it happens — never
+/// rendered as "arrived" by default).
+class RideStop {
+  final int seq;
+  final double lat;
+  final double lng;
+  final String? address;
+  final DateTime? arrivedAt;
+
+  const RideStop({
+    required this.seq,
+    required this.lat,
+    required this.lng,
+    this.address,
+    this.arrivedAt,
+  });
+
+  factory RideStop.fromJson(Map<String, dynamic> json) => RideStop(
+        seq: json['seq'] is num ? (json['seq'] as num).toInt() : 0,
+        lat: (json['lat'] as num).toDouble(),
+        lng: (json['lng'] as num).toDouble(),
+        address: json['address'] as String?,
+        arrivedAt: json['arrived_at'] is String
+            ? DateTime.tryParse(json['arrived_at'] as String)
+            : null,
+      );
+
+  /// Request-payload shape accepted by POST /rides (`stops[]`).
+  Map<String, dynamic> toRequestJson() => {
+        'lat': lat,
+        'lng': lng,
+        if (address != null && address!.isNotEmpty) 'address': address,
+      };
+}
+
+/// §3.5 result of PATCH /rides/{id}/destination. On success the fares are
+/// the SERVER's authoritative before/after numbers — the confirmation sheet
+/// shows exactly what the rider will pay, per Global Rule 2. [errorCode]
+/// mirrors the documented wire contract: DESTINATION_NOT_CHANGEABLE means a
+/// state race (ride moved on) and the caller must re-fetch; FORBIDDEN /
+/// NOT_FOUND map to navigation-level failures; anything else is a plain
+/// retryable error surfaced with [error].
+class DestinationChangeResult {
+  final String? rideId;
+  final double? previousFare;
+  final double? newFare;
+  final String? currency;
+  final double? distanceKm;
+  final String? error;
+  final String? errorCode;
+
+  const DestinationChangeResult._({
+    this.rideId,
+    this.previousFare,
+    this.newFare,
+    this.currency,
+    this.distanceKm,
+    this.error,
+    this.errorCode,
+  });
+
+  const DestinationChangeResult.success({
+    required this.rideId,
+    required this.previousFare,
+    required this.newFare,
+    required this.currency,
+    this.distanceKm,
+  })  : error = null,
+        errorCode = null;
+
+  const DestinationChangeResult.failure({
+    required this.error,
+    this.errorCode,
+  })  : rideId = null,
+        previousFare = null,
+        newFare = null,
+        currency = null,
+        distanceKm = null;
+
+  bool get isSuccess => rideId != null && newFare != null;
 }
 
 /// §3.4 Itemized receipt lines as persisted server-side at request time and
@@ -813,6 +934,7 @@ class RideRepositoryImpl implements RideRepository {
     String? paymentMethodType,
     String? promoCode,
     String? scheduledAt,
+    List<RideStop> stops = const [],
   }) async {
     try {
       final payload = <String, dynamic>{
@@ -829,7 +951,9 @@ class RideRepositoryImpl implements RideRepository {
       // empty string or a fabricated default would contradict the backend's
       // omitempty contract and could mis-flag a cash ride (§3.1), apply a
       // blank promo (§3.2) or convert an on-demand request into a scheduled
-      // one (§3.6).
+      // one (§3.6). Same for §3.5: an empty stops list sends no key at all,
+      // so a direct-trip request is byte-identical to the pre-stopovers wire
+      // format (and never trips the STOPOVERS_DISABLED kill switch).
       if (paymentMethodType != null && paymentMethodType.isNotEmpty) {
         payload['payment_method_type'] = paymentMethodType;
       }
@@ -838,6 +962,9 @@ class RideRepositoryImpl implements RideRepository {
       }
       if (scheduledAt != null && scheduledAt.isNotEmpty) {
         payload['scheduled_at'] = scheduledAt;
+      }
+      if (stops.isNotEmpty) {
+        payload['stops'] = [for (final s in stops) s.toRequestJson()];
       }
 
       final response = await _apiClient.post<Map<String, dynamic>>(
@@ -901,6 +1028,70 @@ class RideRepositoryImpl implements RideRepository {
     } catch (e) {
       debugPrint('Failed to get ride: $e');
       return null;
+    }
+  }
+
+  @override
+  Future<DestinationChangeResult> changeDestination({
+    required String rideId,
+    required double dropoffLat,
+    required double dropoffLng,
+    String? dropoffAddress,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'dropoff_lat': dropoffLat,
+        'dropoff_lng': dropoffLng,
+        if (dropoffAddress != null && dropoffAddress.isNotEmpty)
+          'dropoff_address': dropoffAddress,
+      };
+      final response = await _apiClient.patch<Map<String, dynamic>>(
+        '/api/v1/nidus/rides/$rideId/destination',
+        data: payload,
+      );
+
+      final body = response.data;
+      if (body == null) {
+        return const DestinationChangeResult.failure(
+          error: 'Server returned an empty response',
+          errorCode: 'EMPTY_RESPONSE',
+        );
+      }
+      var data = body;
+      final inner = body['data'];
+      if (inner is Map<String, dynamic>) data = inner;
+
+      final rid = (data['ride_id'] ?? data['id']) as String?;
+      final prev = data['previous_fare'];
+      final next = data['new_fare'];
+      final cur = data['currency'] as String?;
+      if (rid == null || prev is! num || next is! num) {
+        // Malformed money response: fail honestly rather than display a
+        // partial or fabricated fare on the confirmation sheet.
+        return DestinationChangeResult.failure(
+          error: 'Unexpected destination response shape: ${body.toString()}',
+          errorCode: 'INVALID_RESPONSE',
+        );
+      }
+      return DestinationChangeResult.success(
+        rideId: rid,
+        previousFare: prev.toDouble(),
+        newFare: next.toDouble(),
+        currency: cur ?? 'USD',
+        distanceKm: data['distance_km'] is num
+            ? (data['distance_km'] as num).toDouble()
+            : null,
+      );
+    } on ApiException catch (e) {
+      return DestinationChangeResult.failure(
+        error: e.message,
+        errorCode: e.errorCode,
+      );
+    } catch (e) {
+      return DestinationChangeResult.failure(
+        error: 'Failed to change destination: ${e.toString()}',
+        errorCode: 'UNKNOWN_ERROR',
+      );
     }
   }
 
