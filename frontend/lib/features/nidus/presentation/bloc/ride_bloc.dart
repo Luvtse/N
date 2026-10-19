@@ -44,6 +44,12 @@ class RequestRide extends RideEvent {
   /// ≤30 day window, returning SCHEDULED_TOO_SOON / SCHEDULED_TOO_FAR.
   final DateTime? scheduledAt;
 
+  /// §3.5: intermediate waypoints in visit order (max 3, enforced client-side
+  /// in the use case with the same wording as the server's TOO_MANY_STOPS).
+  /// Empty for direct trips — the repository then omits the `stops` key so
+  /// the request body stays byte-identical to a pre-stopovers request.
+  final List<RideStop> stops;
+
   const RequestRide({
     required this.pickupLat,
     required this.pickupLng,
@@ -56,13 +62,14 @@ class RequestRide extends RideEvent {
     this.paymentMethodType,
     this.promoCode,
     this.scheduledAt,
+    this.stops = const [],
   });
 
   @override
   List<Object?> get props => [
         pickupLat, pickupLng, dropoffLat, dropoffLng,
         pickupAddress, dropoffAddress, rideType, paymentMethodId,
-        paymentMethodType, promoCode, scheduledAt,
+        paymentMethodType, promoCode, scheduledAt, stops,
       ];
 }
 
@@ -663,6 +670,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         paymentMethodType: event.paymentMethodType,
         promoCode: event.promoCode,
         scheduledAt: event.scheduledAt,
+        stops: event.stops,
       );
 
       if (result.isFailure) {

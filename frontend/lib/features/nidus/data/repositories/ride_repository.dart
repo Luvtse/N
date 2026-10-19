@@ -303,6 +303,12 @@ class Ride {
   }
 }
 
+/// §3.5 hard cap on intermediate waypoints, mirroring the backend
+/// `entities.MaxRideStops` constant and the `CHECK (seq <= 3)` constraint in
+/// migration 012. The UI enforces the same number client-side so riders never
+/// pick a fourth stop only to be rejected server-side.
+const int maxRideStops = 3;
+
 /// §3.5 Stopovers — one intermediate waypoint between pickup and dropoff,
 /// in visit order (seq 1..3). Mirrors the backend `ride_stops` row and the
 /// RideStopResponse DTO: seq, coordinates, resolved address, and the moment
