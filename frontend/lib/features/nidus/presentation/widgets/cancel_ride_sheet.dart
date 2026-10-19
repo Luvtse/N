@@ -328,7 +328,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
       BuildContext context, bool showFeeLine, CancellationQuote? quote) {
     if (showFeeLine && quote != null && quote.fee > 0) {
       return context.l10n.cancelSheetConfirmWithFee(
-          quote.currency, quote.fee.toStringAsFixed(2));
+          amount: quote.fee.toStringAsFixed(2), currency: quote.currency);
     }
     return context.l10n.cancelSheetConfirm;
   }
@@ -401,7 +401,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
           q.isFree
               ? context.l10n.cancelSheetNoFee
               : context.l10n.cancelSheetCostNow(
-                  q.currency, q.fee.toStringAsFixed(2)),
+                  amount: q.fee.toStringAsFixed(2), currency: q.currency),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,

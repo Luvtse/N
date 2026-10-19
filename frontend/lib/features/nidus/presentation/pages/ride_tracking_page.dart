@@ -13,6 +13,7 @@ import '../../../../core/geocoding/geocoding_service.dart';
 import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 import '../bloc/ride_bloc.dart';
 import '../../data/repositories/ride_repository.dart'
     show
@@ -636,26 +637,25 @@ class _RideTrackingPageState extends State<RideTrackingPage>
 
   /// Honest, measurement-only detail line for the prompt. Meters and
   /// confidence are shown only when the detector actually measured them —
-  /// never zeros, never fabricated precision.
-  String _anomalyDetail(RideAnomaly anomaly) {
+  /// never zeros, never fabricated precision. When a measurement is missing
+  /// the ARB catalog's unmeasured variant is used; nothing is invented.
+  String _anomalyDetail(BuildContext context, RideAnomaly anomaly) {
+    final l10n = context.l10n;
     switch (anomaly.kind) {
       case RideAnomalyKind.longStop:
-        return 'Your driver has been stopped for over 3 minutes away from '
-            'the pickup or dropoff point.';
+        return l10n.ridecheckBodyStopped;
       case RideAnomalyKind.routeDeviation:
         final meters = anomaly.detailMeters;
         if (meters == null) {
-          return 'The vehicle has moved noticeably off the expected route.';
+          return l10n.ridecheckBodyDeviationUnmeasured;
         }
-        return 'The vehicle is ${meters.toStringAsFixed(0)} m off the '
-            'expected route.';
+        return l10n.ridecheckBodyDeviationMeasured(meters);
       case RideAnomalyKind.lowEtaConfidence:
         final c = anomaly.confidence;
         if (c == null) {
-          return 'The arrival estimate for this trip became unreliable.';
+          return l10n.ridecheckBodyLowConfidenceUnmeasured;
         }
-        return 'The arrival estimate for this trip became unreliable '
-            '(confidence ${(c * 100).toStringAsFixed(0)}%).';
+        return l10n.ridecheckBodyLowConfidence((c * 100).round());
     }
   }
 
@@ -672,19 +672,20 @@ class _RideTrackingPageState extends State<RideTrackingPage>
       context: context,
       barrierDismissible: true, // treated as "OK" below — never silent-drop
       builder: (dialogContext) {
+        final l10n = dialogContext.l10n;
         return Semantics(
           label: 'RideCheck safety prompt',
           child: AlertDialog(
             icon: const Icon(Icons.error_outline, color: AppColors.accent),
-            title: const Text('Is everything OK?'),
-            content: Text(_anomalyDetail(anomaly)),
+            title: Text(l10n.ridecheckTitle),
+            content: Text(_anomalyDetail(dialogContext, anomaly)),
             actions: [
               TextButton(
                 onPressed: () {
                   Navigator.of(dialogContext).pop();
                   bloc.add(const DismissRideCheckPrompt.ok());
                 },
-                child: const Text("I'm OK"),
+                child: Text(l10n.ridecheckImOK),
               ),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
@@ -695,7 +696,7 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                   await _callForHelp(bloc);
                 },
                 icon: const Icon(Icons.emergency_share),
-                label: const Text('Call for help'),
+                label: Text(l10n.ridecheckCallForHelp),
               ),
             ],
           ),
@@ -795,29 +796,28 @@ class _RideTrackingPageState extends State<RideTrackingPage>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('No drivers at the current price',
-                    style: TextStyle(
+                Text(sheetContext.l10n.trackingNoDriversTitle,
+                    style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
                 Text(
                   fare == null
-                      ? 'We could not find drivers for your request. Offer a '
-                          'higher fare to re-broadcast — the new price is '
-                          'confirmed by the server before it applies.'
-                      : 'We could not find drivers for '
-                          '${unit.isEmpty ? fare.toStringAsFixed(2) : '$unit ${fare.toStringAsFixed(2)}'}. '
-                          'Offer a higher fare to re-broadcast your request.',
+                      ? sheetContext.l10n.trackingPriceFareUnavailable
+                      : sheetContext.l10n.trackingNoDriversFound(
+                          unit.isEmpty
+                              ? fare.toStringAsFixed(2)
+                              : '$unit ${fare.toStringAsFixed(2)}'),
                 ),
                 const SizedBox(height: 20),
                 _PriceExtensionOption(
-                  label: 'Increase fare by 10%',
+                  label: sheetContext.l10n.trackingPriceExtensionPlus10,
                   projected: projected(1.10),
                   enabled: !_priceExtensionBusy,
                   onTap: () => _applyPriceExtension(state.rideId, 1.10),
                 ),
                 const SizedBox(height: 12),
                 _PriceExtensionOption(
-                  label: 'Increase fare by 20%',
+                  label: sheetContext.l10n.trackingPriceExtensionPlus20,
                   projected: projected(1.20),
                   enabled: !_priceExtensionBusy,
                   onTap: () => _applyPriceExtension(state.rideId, 1.20),
@@ -827,7 +827,7 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                   alignment: Alignment.centerRight,
                   child: TextButton(
                     onPressed: () => Navigator.of(sheetContext).pop(),
-                    child: const Text('Keep waiting at current price'),
+                    child: Text(sheetContext.l10n.trackingPriceExtensionKeep),
                   ),
                 ),
               ],
@@ -1408,13 +1408,13 @@ class _ArNavigationButtonState extends State<_ArNavigationButton> {
         if (snapshot.data != true) return const SizedBox.shrink();
         return Semantics(
           button: true,
-          label: 'Walk to pickup with augmented reality navigation',
+          label: context.l10n.accessibilityWalkAr,
           child: SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: widget.onTap,
               icon: const Icon(Icons.ar_home),
-              label: const Text('Walk to pickup (AR)'),
+              label: Text(context.l10n.trackingWalkToPickupAr),
             ),
           ),
         );

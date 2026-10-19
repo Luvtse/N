@@ -1,13 +1,10 @@
 {
   "@@locale": "om",
-
   "appTitle": "NIDAW",
-
   "navRequest": "Gaafadhu",
   "navTracking": "Hordoffii",
   "navHistory": "Seenaa",
   "navAccount": "Akkaawuntii",
-
   "commonRetry": "Irra deebi'ii yaali",
   "commonCancel": "Haqi",
   "commonConfirm": "Mirmiimsi",
@@ -17,7 +14,6 @@
   "commonUnavailable": "Hin jiru",
   "commonNotProvided": "Hin kennamne",
   "commonLoading": "Fe'amaa jira…",
-
   "requestTitle": "Eessatti deemaa jirtu?",
   "requestPickupLabel": "Iddoo ka'umsaa",
   "requestDropoffLabel": "Gama deemtu",
@@ -35,7 +31,6 @@
   "requestEstimateUnavailable": "Gatii hin argamne — irra deebi'ii yaali",
   "requestConfirmCta": "Soora mirkaneessi",
   "requestSelectRideType": "Soora filadhu",
-
   "trackingSearchingTitle": "Daawwitoonni barbaadamaa jiru…",
   "trackingSearchingSub": "Sekondii {seconds}f barbaadaa jira",
   "trackingDriverEnRoute": "Daawwitni kee karaa irra jira",
@@ -56,23 +51,68 @@
   "trackingNoDriversTitle": "Daawwitoonni naannoo hin argamne",
   "trackingNoDriversBody": "Sekondii {seconds}f barbaadne garuu hin walqabanne. Gaaffii kee irra deebi'uuf kaffaltii ol kaasuun ni danda'ama?",
   "trackingPriceExtensionKeep": "Gatii ammaan barbaachisa itti fufi",
-  "trackingPriceExtensionConfirm": "Gatii haaraan irra deebi'u baka",
+  "trackingNoDriversFound": "Yaadatuu {fare}ufi driver arganne. Gaaffii kee irra deebi'uun lakkooftuuf kaffaltii ol ka'i.",
+  "@trackingNoDriversFound": {
+    "description": "Price-extension sheet body when current fare is known",
+    "placeholders": {
+      "fare": {
+        "type": "String"
+      }
+    }
+  },
+  "trackingPriceFareUnavailable": "Yaadatuu keef driver hin arganne. Kaffaltii ol kaasi — gatii haaraan erga hojiirra oolee booda server n mirkaneessa.",
+  "@trackingPriceFareUnavailable": {
+    "description": "Price-extension sheet body when the bloc never learned a real fare"
+  },
+  "trackingPriceExtensionPlus10": "Kaffaltii 10% ol kaasi",
+  "@trackingPriceExtensionPlus10": {
+    "description": "Price-extension option: +10 percent"
+  },
+  "trackingPriceExtensionPlus20": "Kaffaltii 20% ol kaasi",
+  "@trackingPriceExtensionPlus20": {
+    "description": "Price-extension option: +20 percent"
+  },
   "trackingPriceFeeConfirmedOnRetry": "Gatiin haaraan yeroo irra deebi'amuu mirkanaa'a",
-
   "ridecheckTitle": "Hundi gaarii?",
   "ridecheckBodyStopped": "Meersaan kee karaa ala daqiiqaa 3 caalaa dhaabbateera.",
-  "ridecheckBodyDeviation": "Karaan karoorrafame irraa meetiraa 500 ol fageenyeessa.",
-  "ridecheckBodyLowConfidence": "Yaadni geenyaanii keenya karaa gidduutti amanamaa mitii ta'eera.",
+  "ridecheckBodyDeviationMeasured": "Motoraanni karaa eegamu irraa meetira {meters, number} fagaateera.",
+  "@ridecheckBodyDeviationMeasured": {
+    "description": "RideCheck prompt detail when deviation distance was measured",
+    "placeholders": {
+      "meters": {
+        "type": "int"
+      }
+    }
+  },
+  "ridecheckBodyDeviationUnmeasured": "Motoraanni karaa eegamu irraa baay'ee fageenyaan garagaluu isaagiti mul'ata.",
+  "@ridecheckBodyDeviationUnmeasured": {
+    "description": "RideCheck prompt detail when deviation distance could not be measured"
+  },
+  "ridecheckBodyLowConfidence": "Yaadni sa'aa dhufuu imala kanaa amanamaa miti ta'eera (ebraan {confidencePercent, number}%).",
+  "@ridecheckBodyLowConfidence": {
+    "description": "RideCheck prompt detail with ETA confidence percentage",
+    "placeholders": {
+      "confidencePercent": {
+        "type": "int"
+      }
+    }
+  },
+  "ridecheckBodyLowConfidenceUnmeasured": "Yaadni sa'aa dhufuu imala kanaa amanamaa miti ta'eera.",
+  "@ridecheckBodyLowConfidenceUnmeasured": {
+    "description": "RideCheck prompt detail when confidence value unavailable"
+  },
   "ridecheckImOK": "Ani gaarii dha",
   "ridecheckCallForHelp": "Gargaarsaaf simbirro",
-
+  "accessibilityWalkAr": "Akka namuusaa tokkoon deemuuf AR fayyadamee fuula duraa deemi",
+  "@accessibilityWalkAr": {
+    "description": "Semantics label for the AR walk-to-pickup button"
+  },
   "chatTitle": "Chaatii",
   "chatInputHint": "Ergaa barreessi…",
   "chatSendButton": "Ergi",
   "chatEmptyState": "Ammaaf ergaan hin jiru. Deebisota ariifataa gadii fayyadami.",
   "chatSendFailed": "Ergaan ergamuun hin milkoofne.",
   "chatTranslationHiddenNote": "Afaan jijjiirama soora kanaaf cufamaa dha.",
-
   "cancelSheetTitle": "Soora kana haquu?",
   "cancelSheetFeeLabel": "Kaffaltii haqinsa",
   "cancelSheetFeeFetching": "Kaffaltii mirkanaa'aa jira…",
@@ -92,7 +132,6 @@
   "cancelSheetSemanticsFeeSuffixFree": " — bilisaa, yeroo haqinsa keessatti",
   "rateSheetSubmit": "Sadarkaa ergi",
   "paymentAddCash": "Filannoo humnaa fe'uu dabalaa",
-
   "receiptTitle": "Ramaddii kaffaltii",
   "receiptBase": "Kaffaltii bu'uuraa",
   "receiptDistance": "Fageenya",
@@ -107,38 +146,31 @@
   "receiptEmailReceipt": "Ramaddiitiin email ergi",
   "receiptCashPending": "Mirkaneeffannoo saahilii daawwitoota eeggamaa jira",
   "receiptCashCollected": "Saahilliin daawwitoon fudhateera",
-
   "mapHealthBanner": "Taayila kartaa hin argamne — taayila cache'dhaa yookaan bakka buusaa mul'ataa jira.",
   "mapHealthRetry": "Taayila irra deebi'ii yaali",
-
   "locationGateDeniedTitle": "Hayyama iddoo barbaachisa",
   "locationGateDeniedBody": "Nidus saaffuu ka'umsaa kaa'uuf iddoo kee fayyadama. Adireesii harkaan barreessuu ni danda'orta.",
   "locationGateAllow": "Hayyami",
   "locationGateOpenSettings": "Qindaa'ot banaa",
   "locationGateServiceDisabledTitle": "Tajaajilli iddoo cufamaa dha",
   "locationGateTurnOn": "Tajaajila iddoo bani",
-
   "geocodeNoMatches": "Wanti wal-fakkaatu hin jiru — bakka beekamoo yookaan maqaa karaa yaali.",
   "geocodeDegraded": "Barbaachi hin argamne — bu'aawwan cache'dhaa mul'ataa jiru",
   "geocodeResolving": "Adireesiin mirkanaa'aa jira…",
-
   "notificationsTitle": "Beeksisa",
   "notificationsEmpty": "Ammaaf homaa hin jiru.",
   "notificationsMarkAllRead": "Hundumaa dubbifameetti mallatteessi",
-
   "settingsTitle": "Qindaa'otii",
   "settingsLanguageSection": "Afaan",
   "settingsLanguageSystem": "Mala sistamaa",
   "settingsLanguageEnglish": "English",
   "settingsLanguageAmharic": "አማርኛ",
   "settingsLanguageOromo": "Afaan Oromoo",
-
   "arNavTitle": "Qajeelsha AR lakkofsa",
   "arNavUnsupported": "AR meqaansaa kana irratti hin jiru — kaartaa 2D mul'isi",
   "arNavMapView": "Mul'ata kaartaa",
   "arNavArView": "Mul'ata AR",
   "arNavDistanceAhead": "Mmeetiraa {meters} dura",
-
   "accessibilityRecenterFab": "Kaartaa gara iddoo kootti deebisi",
   "accessibilityPickupPin": "Saaffuu ka'umsaa, sochoosuuf harkisi",
   "accessibilityDriverMarker": "Iddoo daawwitoon",
