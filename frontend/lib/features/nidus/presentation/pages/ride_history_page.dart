@@ -7,6 +7,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../data/repositories/ride_repository.dart';
 import '../bloc/ride_bloc.dart';
+import '../widgets/cancel_ride_sheet.dart';
 
 class RideHistoryPage extends StatefulWidget {
   const RideHistoryPage({super.key});
@@ -145,16 +146,68 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
                             fontSize: 16,
                           ),
                         ),
-                        Text(
-                          _formatTime(ride.requestedAt),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
+                        // §3.6: scheduled rides show WHEN the pickup is due,
+                        // not when the request was placed. The backend keeps
+                        // the real pickup time in scheduled_at; requestedAt
+                        // stays as the secondary line for traceability.
+                        if (_isScheduledUpcoming(ride)) ...[
+                          Text(
+                            'Pickup ${DateFormat('MMM d • h:mm a').format(ride.scheduledAt!.toLocal())}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
+                          Text(
+                            'Requested ${_formatTime(ride.requestedAt)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ] else
+                          Text(
+                            _formatTime(ride.requestedAt),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
                       ],
                     ),
                   ),
+                  // §3.6 "Scheduled" chip — rendered from the ride's own
+                  // data (scheduled_at present + non-terminal status), so
+                  // it can never claim "scheduled" for a ride that already
+                  // ran or was cancelled.
+                  if (_isScheduledUpcoming(ride)) ...[
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.schedule,
+                              size: 12, color: AppColors.primary),
+                          SizedBox(width: 4),
+                          Text(
+                            'Scheduled',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
@@ -276,10 +329,59 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
                   ),
                 ),
               ],
+
+              // §3.6 scheduled-ride cancel action. Routed through the SAME
+              // authoritative CancelRideSheet as the tracking page — it
+              // fetches GET /rides/{id}/cancellation-quote, so the fee the
+              // rider sees here is the fee the backend charges under the
+              // scheduled-ride cancellation policy. No client-side estimate.
+              if (_isScheduledUpcoming(ride)) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => _cancelScheduledRide(ride),
+                    icon: const Icon(Icons.event_cancel_outlined, size: 16),
+                    label: const Text('Cancel scheduled ride'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.error,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ),
+    );
+  }
+
+  /// A ride counts as "scheduled & upcoming" when the backend attached a
+  /// pickup time (§3.6) and the status has not reached a terminal state.
+  /// Completed/cancelled rows render as normal history entries even if
+  /// they were created via the schedule flow.
+  bool _isScheduledUpcoming(Ride ride) {
+    if (ride.scheduledAt == null) return false;
+    const terminal = {'completed', 'cancelled', 'no_drivers_found'};
+    return !terminal.contains(ride.status);
+  }
+
+  Future<void> _cancelScheduledRide(Ride ride) async {
+    await CancelRideSheet.show(
+      context,
+      rideId: ride.id,
+      onConfirmed: (reason) async {
+        context.read<RideBloc>().add(
+              CancelRide(rideId: ride.id, reason: reason),
+            );
+        // Refresh the list so the cancelled row drops its Scheduled chip
+        // immediately instead of waiting for the next manual reload.
+        context.read<RideBloc>().add(
+              LoadRideHistory(
+                status: _selectedFilter == 'all' ? null : _selectedFilter,
+              ),
+            );
+      },
     );
   }
 
