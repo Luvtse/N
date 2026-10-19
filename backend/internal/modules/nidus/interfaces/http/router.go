@@ -100,6 +100,13 @@ type Dependencies struct {
 	// and PATCH /nidus/rides/{rideID}/destination is not mounted at all — a
 	// clean 404 beats a half-wired endpoint (Global Rule 5).
 	StopoversEnabled bool
+	// §4.6 Price-Extension Negotiation. PriceExtensionEnabled mirrors the
+	// price_extension feature flag: when false, POST
+	// /nidus/rides/{rideID}/price-extension is not mounted at all — clients
+	// get a clean 404 and the NoDriversFound sheet never appears. When true,
+	// riders can accept a +10%/+20% server-recomputed fare and the ride stays
+	// in 'searching' so the auto-matcher re-broadcasts it at the new fare.
+	PriceExtensionEnabled bool
 }
 
 // SelfieRiderView is the structural shape of selfie/application.RiderView. It
@@ -342,6 +349,10 @@ func NewRouter(deps *Dependencies) http.Handler {
 		// StopoversEnabled — the handler field existing but unrouted is fine
 		// because the HTTP surface is the shipped contract.
 		ChangeDestination: commands.NewChangeDestinationHandler(deps.DB, deps.EventBus, deps.PricingService),
+		// §4.6: no-drivers price extension (+10%/+20%) with server-recomputed
+		// fare. Same unrouted-is-fine rationale as ChangeDestination above; the
+		// POST route mounts only when PriceExtensionEnabled.
+		PriceExtension: commands.NewPriceExtensionHandler(deps.DB, deps.EventBus, deps.PricingService),
 	})
 	// §2.3: embed the honest driver pre-selfie state on rider ride DTOs when
 	// the selfie module is wired (FEATURE_PRE_SELFIE). nil => field omitted;
@@ -461,6 +472,16 @@ func NewRouter(deps *Dependencies) http.Handler {
 				// shows the change-destination affordance.
 				if deps.StopoversEnabled {
 					r.Patch("/{rideID}/destination", rideHandler.ChangeDestination)
+				}
+				// §4.6 Price-Extension Negotiation (rider): POST bumps the
+				// broadcast fare of a still-searching ride by an approved
+				// multiplier bucket (recomputed server-side via PricingService)
+				// and leaves the ride in 'searching', which the auto-matcher's
+				// next tick re-broadcasts at the higher fare. Mounted only when
+				// the price_extension flag is on; otherwise a clean 404 and the
+				// NoDriversFound listener keeps its pre-flag pop-back behavior.
+				if deps.PriceExtensionEnabled {
+					r.Post("/{rideID}/price-extension", rideHandler.PriceExtension)
 				}
 				// §3.3 Split Fare (rider/owner surface): POST creates/replaces the
 				// pending invite set on a completed ride; GET returns the

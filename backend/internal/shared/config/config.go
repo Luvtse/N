@@ -256,6 +256,16 @@ type FeatureFlags struct {
 	// pricing was persisted at request time. Default false in production per
 	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnableRideStopovers bool
+	// EnablePriceExtension gates the §4.6 no-drivers price-extension
+	// negotiation (POST /nidus/rides/{rideID}/price-extension). With the flag
+	// off the route is not mounted at all — clients get a clean 404 and the
+	// NoDriversFound UI keeps its previous behavior. When on, riders whose
+	// broadcast finds no drivers can accept a server-blessed +10%/+20% bucket
+	// and the ride re-enters the matching pool at the recomputed fare.
+	// Kill switch: set FEATURE_PRICE_EXTENSION=false (env) or flip
+	// flags.experimental.price_extension.enabled=false in
+	// config/feature-flags/flags.json and redeploy.
+	EnablePriceExtension bool
 }
 
 // ============================================================================
@@ -460,6 +470,7 @@ func (c *Config) loadFeatures() {
 		EnablePromotions:         getBoolEnvOrDefault("FEATURE_PROMOTIONS", false),
 		EnableSplitFare:          getBoolEnvOrDefault("FEATURE_SPLIT_FARE", false),
 		EnableRideStopovers:      getBoolEnvOrDefault("FEATURE_RIDE_STOP_OVERS", false),
+		EnablePriceExtension:     getBoolEnvOrDefault("FEATURE_PRICE_EXTENSION", false),
 	}
 }
 
