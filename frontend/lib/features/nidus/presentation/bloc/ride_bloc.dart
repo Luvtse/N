@@ -302,6 +302,13 @@ class RideRequested extends RideState {
   final double? dropoffLat;
   final double? dropoffLng;
 
+  /// §4.1: resolved place names for the pickup/dropoff points, carried from
+  /// the rider's own request (or the REST DTO on reload). Null means the
+  /// label is genuinely unknown — surfaces show "Pickup point" or resolve it
+  /// via reverse geocoding instead of inventing an address.
+  final String? pickupName;
+  final String? dropoffName;
+
   const RideRequested({
     required this.rideId,
     required this.fare,
@@ -312,6 +319,8 @@ class RideRequested extends RideState {
     this.pickupLng,
     this.dropoffLat,
     this.dropoffLng,
+    this.pickupName,
+    this.dropoffName,
   });
 
   @override
@@ -325,6 +334,8 @@ class RideRequested extends RideState {
         pickupLng,
         dropoffLat,
         dropoffLng,
+        pickupName,
+        dropoffName,
       ];
 }
 
@@ -335,15 +346,48 @@ class DriverMatched extends RideState {
   final double fare;
   final int etaMinutes;
 
+  /// §4.1: real pickup coordinates carried from the live request state /
+  /// REST DTO so the tracking surface keeps its pickup pin and the AR
+  /// walk-to-pickup entry through the matched phase. Null means genuinely
+  /// unavailable — the UI hides the AR button rather than fabricating a
+  /// coordinate (Global Rule: no placeholders in shipped surfaces).
+  final double? pickupLat;
+  final double? pickupLng;
+  final double? dropoffLat;
+  final double? dropoffLng;
+
+  /// §4.1: resolved pickup place name carried from the request / REST DTO.
+  /// Null → the AR entry falls back to reverse geocoding or "Pickup point";
+  /// never a fabricated address.
+  final String? pickupName;
+  final String? dropoffName;
+
   const DriverMatched({
     required this.rideId,
     required this.driver,
     required this.fare,
     required this.etaMinutes,
+    this.pickupLat,
+    this.pickupLng,
+    this.dropoffLat,
+    this.dropoffLng,
+    this.pickupName,
+    this.dropoffName,
   });
 
   @override
-  List<Object?> get props => [rideId, driver, fare, etaMinutes];
+  List<Object?> get props => [
+        rideId,
+        driver,
+        fare,
+        etaMinutes,
+        pickupLat,
+        pickupLng,
+        dropoffLat,
+        dropoffLng,
+        pickupName,
+        dropoffName,
+      ];
 }
 
 /// Ride in progress
@@ -424,6 +468,22 @@ class DriverEnRoute extends RideState {
   /// unavailable" state via PreSelfieInfo.absent, never a placeholder photo.
   final PreSelfieInfo? preSelfie;
 
+  /// §4.1: real pickup coordinates carried from the live request state /
+  /// REST DTO so the tracking map keeps its pickup pin and the AR
+  /// walk-to-pickup entry point stays wired through the en-route phase.
+  /// Null means genuinely unavailable — the AR button hides itself rather
+  /// than navigating with a fabricated coordinate.
+  final double? pickupLat;
+  final double? pickupLng;
+  final double? dropoffLat;
+  final double? dropoffLng;
+
+  /// §4.1: resolved pickup place name carried from the request / REST DTO.
+  /// Null → the AR entry falls back to reverse geocoding or "Pickup point";
+  /// never a fabricated address.
+  final String? pickupName;
+  final String? dropoffName;
+
   const DriverEnRoute({
     required this.rideId,
     required this.driver,
@@ -431,11 +491,29 @@ class DriverEnRoute extends RideState {
     required this.etaMinutes,
     required this.pinCode,
     this.preSelfie,
+    this.pickupLat,
+    this.pickupLng,
+    this.dropoffLat,
+    this.dropoffLng,
+    this.pickupName,
+    this.dropoffName,
   });
 
   @override
-  List<Object?> get props =>
-      [rideId, driver, fare, etaMinutes, pinCode, preSelfie];
+  List<Object?> get props => [
+        rideId,
+        driver,
+        fare,
+        etaMinutes,
+        pinCode,
+        preSelfie,
+        pickupLat,
+        pickupLng,
+        dropoffLat,
+        dropoffLng,
+        pickupName,
+        dropoffName,
+      ];
 }
 
 /// Driver-side mirror of [DriverEnRoute] (§2.3): the same lifecycle stage,
@@ -732,6 +810,8 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         pickupLng: event.pickupLng,
         dropoffLat: event.dropoffLat,
         dropoffLng: event.dropoffLng,
+        pickupName: event.pickupAddress,
+        dropoffName: event.dropoffAddress,
       ));
 
       // Automatically subscribe to updates
@@ -1181,6 +1261,8 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             pickupLng: _carryCoords(prevRequested)?.pickupLng,
             dropoffLat: _carryCoords(prevRequested)?.dropoffLat,
             dropoffLng: _carryCoords(prevRequested)?.dropoffLng,
+            pickupName: _carryCoords(prevRequested)?.pickupName,
+            dropoffName: _carryCoords(prevRequested)?.dropoffName,
           ));
         }
         break;
@@ -1209,6 +1291,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             etaMinutes: driver.etaMinutes,
             pinCode: pinCodeForRide(update.rideId),
             preSelfie: update.preSelfie ?? _lastKnownPreSelfie,
+            // §4.1: carried from the live request state — never fabricated.
+            pickupLat: _carryCoords(prevRequested)?.pickupLat,
+            pickupLng: _carryCoords(prevRequested)?.pickupLng,
+            dropoffLat: _carryCoords(prevRequested)?.dropoffLat,
+            dropoffLng: _carryCoords(prevRequested)?.dropoffLng,
+            pickupName: _carryCoords(prevRequested)?.pickupName,
+            dropoffName: _carryCoords(prevRequested)?.dropoffName,
           ));
         } else if (update.driver != null) {
           // Defensive: never drop a payload that does carry a driver.
@@ -1299,6 +1388,8 @@ class RideBloc extends Bloc<RideEvent, RideState> {
           pickupLng: ride.pickupLng,
           dropoffLat: ride.dropoffLat,
           dropoffLng: ride.dropoffLng,
+          pickupName: ride.pickupAddress,
+          dropoffName: ride.dropoffAddress,
         ));
         break;
       case 'matched':
@@ -1308,6 +1399,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             driver: ride.driver!,
             fare: ride.fareAmount ?? 0,
             etaMinutes: ride.driver!.etaMinutes,
+            // §4.1: REST DTO is authoritative on reload — cold re-entry into
+            // tracking keeps the pickup pin + AR entry without a live request.
+            pickupLat: ride.pickupLat,
+            pickupLng: ride.pickupLng,
+            dropoffLat: ride.dropoffLat,
+            dropoffLng: ride.dropoffLng,
+            pickupName: ride.pickupAddress,
+            dropoffName: ride.dropoffAddress,
           ));
         }
         break;
@@ -1332,6 +1431,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             etaMinutes: ride.driver!.etaMinutes,
             pinCode: pinCodeForRide(ride.id),
             preSelfie: _lastKnownPreSelfie,
+            // §4.1: REST DTO is authoritative on reload — cold re-entry into
+            // tracking keeps the pickup pin + AR entry without a live request.
+            pickupLat: ride.pickupLat,
+            pickupLng: ride.pickupLng,
+            dropoffLat: ride.dropoffLat,
+            dropoffLng: ride.dropoffLng,
+            pickupName: ride.pickupAddress,
+            dropoffName: ride.dropoffAddress,
           ));
         }
         break;
