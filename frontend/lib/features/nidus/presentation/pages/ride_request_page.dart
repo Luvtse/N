@@ -1440,17 +1440,18 @@ class _GpsUnavailableBanner extends StatelessWidget {
           children: [
             const Icon(Icons.gps_off, color: AppColors.textOnDark, size: 18),
             const SizedBox(width: 8),
-            const Expanded(
+            // §4.3: extracted from a hardcoded English banner.
+            Expanded(
               child: Text(
-                'GPS unavailable — drag the pickup pin to set your location.',
+                context.l10n.requestGpsUnavailablePin,
                 style: const TextStyle(color: AppColors.textOnDark, fontSize: 12),
               ),
             ),
             TextButton(
               onPressed: onRetry,
-              child: const Text(
-                'Retry',
-                style: TextStyle(
+              child: Text(
+                context.l10n.commonRetry,
+                style: const TextStyle(
                   color: AppColors.textOnDark,
                   fontWeight: FontWeight.bold,
                 ),

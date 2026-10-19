@@ -27,12 +27,33 @@
   "requestVoiceSheetTitle": "መድረሻዎን በድምጽ ይንገሩ",
   "requestVoiceListening": "በማዳመጥ ላይ… ለምሳሌ “ወደ ቦሌ አውሮፕላን ማረፊያ ውሰዱኝ” ይበሉ",
   "requestVoiceHeard": "የሰማሁት፦ {transcript}",
+  "@requestVoiceHeard": {
+    "placeholders": {
+      "transcript": {
+        "type": "String"
+      }
+    }
+  },
   "requestVoiceLowConfidence": "በትክክል ሳያውቀው ቀረ — “{transcript}” የሚለውን ፍለጋ ክፈት?",
+  "@requestVoiceLowConfidence": {
+    "placeholders": {
+      "transcript": {
+        "type": "String"
+      }
+    }
+  },
   "requestEstimateUnavailable": "ዋጋ አይገኝም — እንደገና ሞክር",
   "requestConfirmCta": "ጉዞ አረጋግጥ",
   "requestSelectRideType": "ጉዞ ይምረጡ",
   "trackingSearchingTitle": "ሾፍሎችን እየፈለግን ነው…",
   "trackingSearchingSub": "ለ{seconds} ሰከንድ እየፈለግን ነው",
+  "@trackingSearchingSub": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "trackingDriverEnRoute": "ሾፍሎ በመምጣት ላይ ነው",
   "trackingRideInProgress": "በጉዞ ላይ ነው",
   "trackingArrived": "ሾፍሉ ወደ መነሻ ቦታ ደርሷል",
@@ -50,6 +71,13 @@
   "trackingSosButton": "አስቸኳይ ጥያቄ SOS",
   "trackingNoDriversTitle": "አቅራቢያ ሾፍሎች አልተገኙም",
   "trackingNoDriversBody": "ለ{seconds} ሰከንድ ፍለገን አልተመደበም። ጥያቄዎን እንደገና ለማሰማጨት ከፍ ያለ ክፍያ ይጨምሩ?",
+  "@trackingNoDriversBody": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "trackingPriceExtensionKeep": "በአሁኑ ዋጋ ፍለጋ ይቀጥሉ",
   "trackingNoDriversFound": "ለ{fare} ሹፌሮች አናገኘንም። ጥያቄዎን እንደገና ለማስተላለፍ ከፍ ያለ ክፍያ ይጨምሩ።",
   "@trackingNoDriversFound": {
@@ -75,7 +103,7 @@
   "trackingPriceFeeConfirmedOnRetry": "አዲሱ ዋጋ በእንደገና ሙከራ ጊዜ ይረጋገጣል",
   "ridecheckTitle": "ሁሉም ነገር ሰላም ነው?",
   "ridecheckBodyStopped": "ተሽከርካሪዎ ከመንገድ ውጭ ከ3 ደቂቃ በላይ ቆሟል።",
-  "ridecheckBodyDeviationMeasured": "ተሽከርካሪው ከሚጠበቀው መንገድ {meters, number} ሜትር አንግልሏል።",
+  "ridecheckBodyDeviationMeasured": "ተሽከርካሪው ከሚጠበቀው መንገድ {meters} ሜትር አንግልሏል።",
   "@ridecheckBodyDeviationMeasured": {
     "description": "RideCheck prompt detail when deviation distance was measured",
     "placeholders": {
@@ -88,7 +116,7 @@
   "@ridecheckBodyDeviationUnmeasured": {
     "description": "RideCheck prompt detail when deviation distance could not be measured"
   },
-  "ridecheckBodyLowConfidence": "የዚህ ጉዞ የመድረስ ግምት አይታመን ተደርጓል (እርግጠኛነት {confidencePercent, number}%)።",
+  "ridecheckBodyLowConfidence": "የዚህ ጉዞ የመድረስ ግምት አይታመን ተደርጓል (እርግጠኛነት {confidencePercent}%)።",
   "@ridecheckBodyLowConfidence": {
     "description": "RideCheck prompt detail with ETA confidence percentage",
     "placeholders": {
@@ -118,16 +146,78 @@
   "cancelSheetFeeFetching": "ክፍያ በማረጋገጥ ላይ…",
   "cancelSheetFeeUnknown": "ክፍያው ሲሰረዝ ይረጋገጣል",
   "cancelSheetFreeWindow": "ለ{minutes} ደቂቃ በነጻ መሰረዝ ይቻላል",
+  "@cancelSheetFreeWindow": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
   "cancelSheetConfirm": "ጉዞ ተዋውቅ",
   "cancelSheetDismiss": "ጉዞው ይቁጠር",
   "cancelSheetReasonPrompt": "እንድንሻሻል ይረዱን — ለምን እየሰረዙ ነው?",
   "cancelSheetFeeLoading": "የመሰረዣ ክፍያዎን በማረጋገጥ ላይ…",
   "cancelSheetNoFee": "በአሁኑ ሰዓት የመሰረዣ ክፍያ የለም።",
   "cancelSheetCostNow": "አሁን ሲሰርዙ {currency} {amount} ይተዋል",
+  "@cancelSheetCostNow": {
+    "placeholders": {
+      "currency": {
+        "type": "String"
+      },
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
   "cancelSheetFreeWindowEnds": "ነጻ የመሰረዣ ጊዜ በ{countdown} ያበቃል",
+  "cancelReasonOther": "ሌላ",
+  "@cancelReasonOther": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "requestGpsUnavailablePin": "ጂፒኤስ አይገኝም — የመነሻ ቦታዎን ለማስቀመጥ ፒኑን ይጎትቱ",
+  "@requestGpsUnavailablePin": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart reason list."
+  },
+  "@cancelSheetFreeWindowEnds": {
+    "placeholders": {
+      "countdown": {
+        "type": "String"
+      }
+    }
+  },
+  "cancelReasonWaitTooLong": "የመጠበቂያ ᰰደሩ ረጅም ነው",
+  "@cancelReasonWaitTooLong": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonDriverWrongWay": "ሹፌሩ ወደ ስህተት አቅጣጫ እየሄደ ነው",
+  "@cancelReasonDriverWrongWay": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonReschedule": "ጊዜውን መቀየር አለብኝ",
+  "@cancelReasonReschedule": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonEmergency": "አስቸኳይ ጊዜ",
+  "@cancelReasonEmergency": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonPickupIncorrect": "የመነሻ ቦታው ትክክል አይደለም",
+  "@cancelReasonPickupIncorrect": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
   "cancelSheetTotalLabel": "አሁን ከሰረዙ አጠቃላይ",
   "cancelSheetDismissSemantics": "ጉዞውን ይያዙ — ይህን መስኮት ዘግቶ ምንም አይሰርዝም",
   "cancelSheetConfirmWithFee": "ተዋውቅ ({currency} {amount})",
+  "@cancelSheetConfirmWithFee": {
+    "placeholders": {
+      "currency": {
+        "type": "String"
+      },
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
   "cancelSheetSemanticsFeeSuffixUnknown": " — ክፍያው ሲሰረዝ ይረጋገጣል",
   "cancelSheetSemanticsFeeSuffixFree": " — ነጻ፣ በመሰረዣ መስኮት ውስጥ",
   "rateSheetSubmit": "ደረጃ ይላኩ",
@@ -171,10 +261,28 @@
   "arNavMapView": "ካርታ እይታ",
   "arNavArView": "AR እይታ",
   "arNavDistanceAhead": "{meters} ሜትር ፊት",
+  "@arNavDistanceAhead": {
+    "placeholders": {
+      "meters": {
+        "type": "int"
+      }
+    }
+  },
   "accessibilityRecenterFab": "ካርታውን ወደ እኔ አካባቢ መልስ",
   "accessibilityPickupPin": "የመነሻ ማሰጊያ ለማንቀሳቀስ ይጎትቱ",
   "accessibilityDriverMarker": "የሾፍሉ ቦታ",
   "accessibilityUnreadBadge": "{count} ያልተነበቡ ማሳወቂያዎች",
+  "@accessibilityUnreadBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "historyTitle": "የጉዞ ታሪክ",
-  "historyEmpty": "እስካሁን ጉዞ የለም"
+  "historyEmpty": "እስካሁን ጉዞ የለም",
+  "paymentNoneSaved": "እስካሁን የተቀመጡ ዘዴዎች የሉም። ከታች ይጨምሩ።",
+  "@paymentNoneSaved": {
+    "description": "§4.3 extracted from payment_method_selector.dart empty state."
+  }
 }

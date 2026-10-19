@@ -106,7 +106,7 @@
   "trackingPriceFeeConfirmedOnRetry": "New price will be confirmed on retry",
   "ridecheckTitle": "Is everything OK?",
   "ridecheckBodyStopped": "Your vehicle has been stopped for over 3 minutes away from the route.",
-  "ridecheckBodyDeviationMeasured": "The vehicle is {meters, number} m off the expected route.",
+  "ridecheckBodyDeviationMeasured": "The vehicle is {meters} m off the expected route.",
   "@ridecheckBodyDeviationMeasured": {
     "description": "RideCheck prompt detail when deviation distance was measured",
     "placeholders": {
@@ -119,7 +119,7 @@
   "@ridecheckBodyDeviationUnmeasured": {
     "description": "RideCheck prompt detail when deviation distance could not be measured"
   },
-  "ridecheckBodyLowConfidence": "The arrival estimate for this trip became unreliable (confidence {confidencePercent, number}%).",
+  "ridecheckBodyLowConfidence": "The arrival estimate for this trip became unreliable (confidence {confidencePercent}%).",
   "@ridecheckBodyLowConfidence": {
     "description": "RideCheck prompt detail with ETA confidence percentage",
     "placeholders": {
@@ -173,12 +173,40 @@
     }
   },
   "cancelSheetFreeWindowEnds": "Free window ends in {countdown}",
+  "cancelReasonOther": "Other",
+  "@cancelReasonOther": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "requestGpsUnavailablePin": "GPS unavailable — drag the pickup pin to set your location manually",
+  "@requestGpsUnavailablePin": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart reason list."
+  },
   "@cancelSheetFreeWindowEnds": {
     "placeholders": {
       "countdown": {
         "type": "String"
       }
     }
+  },
+  "cancelReasonWaitTooLong": "Wait time too long",
+  "@cancelReasonWaitTooLong": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonDriverWrongWay": "Driver is going the wrong way",
+  "@cancelReasonDriverWrongWay": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonReschedule": "I need to reschedule",
+  "@cancelReasonReschedule": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonEmergency": "Emergency",
+  "@cancelReasonEmergency": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonPickupIncorrect": "Pickup location is incorrect",
+  "@cancelReasonPickupIncorrect": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
   },
   "cancelSheetTotalLabel": "Total if you cancel now",
   "cancelSheetDismissSemantics": "Keep ride — closes this sheet and cancels nothing",
@@ -256,10 +284,14 @@
   },
   "historyTitle": "Ride History",
   "@historyTitle": {
-    "description": "App bar title of the ride history page (Phase 3 \u00a74.3 extraction)."
+    "description": "App bar title of the ride history page (Phase 3 §4.3 extraction)."
   },
   "historyEmpty": "No rides yet",
   "@historyEmpty": {
     "description": "Empty-state label when the rider has no past or scheduled rides."
+  },
+  "paymentNoneSaved": "No saved methods yet. Add one below.",
+  "@paymentNoneSaved": {
+    "description": "§4.3 extracted from payment_method_selector.dart empty state."
   }
 }

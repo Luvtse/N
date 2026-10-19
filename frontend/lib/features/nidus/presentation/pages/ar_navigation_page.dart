@@ -329,7 +329,7 @@ class _ARNavigationPageState extends State<ARNavigationPage> {
             child: Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
+              style: const TextStyle(color: AppColors.textOnDark, fontSize: 13),
             ),
           ),
         ),
@@ -360,7 +360,7 @@ class _ARNavigationPageState extends State<ARNavigationPage> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,
+                      color: AppColors.textOnDark,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -369,14 +369,14 @@ class _ARNavigationPageState extends State<ARNavigationPage> {
                   Row(
                     children: [
                       const Icon(Icons.directions_walk,
-                          color: Colors.white, size: 18),
+                          color: AppColors.textOnDark, size: 18),
                       const SizedBox(width: 8),
                       Semantics(
                         label: 'Walking distance to pickup: $_distanceLabel',
                         child: Text(
                           _distanceLabel,
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: AppColors.textOnDark,
                             fontSize: 16,
                           ),
                         ),
@@ -390,7 +390,8 @@ class _ARNavigationPageState extends State<ARNavigationPage> {
             ),
             IconButton(
               onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.close, color: Colors.white),
+              // §4.4: white-on-dark camera-overlay chrome; tokenized.
+              icon: const Icon(Icons.close, color: AppColors.textOnDark),
               tooltip: 'Close AR navigation',
             ),
           ],
