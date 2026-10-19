@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -149,6 +150,65 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 		})
 		return err
 
+	case "ride.scheduled_reminder":
+		// §3.6 event wiring: produced by ScheduledReminderWorker ~30 minutes
+		// before pickup (scan window T-35m..T-25m, ledger-stamped so exactly
+		// one reminder per ride). The dispatcher policy + localized EN/AM/OM
+		// templates for scheduled_ride_reminder already existed; this case is
+		// the missing producer->consumer link.
+		scheduledAt := timeOrZero(ev.Payload["scheduled_at"])
+		minutes := ""
+		if !scheduledAt.IsZero() {
+			m := int(time.Until(scheduledAt).Round(time.Minute) / time.Minute)
+			if m < 0 {
+				m = 0
+			}
+			minutes = fmt.Sprintf("%d", m)
+		}
+		vars := map[string]string{}
+		if minutes != "" {
+			vars["minutes_before_pickup"] = minutes
+		}
+		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
+			UserID:   userID,
+			Category: domain.CategoryScheduledReminder,
+			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			Payload: map[string]interface{}{
+				"ride_id":        ev.Payload["ride_id"],
+				"scheduled_at":   ev.Payload["scheduled_at"],
+				"pickup_address": ev.Payload["pickup_address"],
+				"ride_type":      ev.Payload["ride_type"],
+			},
+			Vars: vars,
+		})
+		return err
+
+	case "ride.destination_changed":
+		// §3.5 event wiring: produced by ChangeDestinationHandler after the
+		// new dropoff and recomputed fare are durably persisted, so the fare
+		// quoted in the notification matches what the rider will pay.
+		newAddr := stringOr(ev.Payload["new_dropoff_address"], "")
+		vars := map[string]string{}
+		if newAddr != "" {
+			vars["new_destination"] = newAddr
+		}
+		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
+			UserID:   userID,
+			Category: domain.CategoryDestinationChanged,
+			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			Payload: map[string]interface{}{
+				"ride_id":           ev.Payload["ride_id"],
+				"new_dropoff_lat":   ev.Payload["new_dropoff_lat"],
+				"new_dropoff_lng":   ev.Payload["new_dropoff_lng"],
+				"new_dropoff_address": ev.Payload["new_dropoff_address"],
+				"previous_fare":     ev.Payload["previous_fare"],
+				"new_fare":          ev.Payload["new_fare"],
+				"currency":          ev.Payload["currency"],
+			},
+			Vars: vars,
+		})
+		return err
+
 	default:
 		return nil
 	}
@@ -210,6 +270,30 @@ func stringOr(v interface{}, def string) string {
 	default:
 		return fmt.Sprintf("%v", t)
 	}
+}
+
+// timeOrZero best-effort parses a timestamp carried on an event payload.
+// In-process bus events carry time.Time directly; JSON-delivered events
+// carry RFC3339 strings. Anything else yields the zero time, which callers
+// treat as "unknown" — they then omit the template variable rather than
+// rendering a fake countdown (Global Rule 2).
+func timeOrZero(v interface{}) time.Time {
+	switch t := v.(type) {
+	case time.Time:
+		return t
+	case *time.Time:
+		if t != nil {
+			return *t
+		}
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, t); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 // driverDisplayName resolves a human name for the matched driver when the

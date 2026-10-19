@@ -259,6 +259,12 @@ func main() {
 	if cfg.Features.EnableSplitFare {
 		nidusDeps.SplitSvc = nidusservices.NewSplitService(db)
 	}
+	// §3.5 Stopovers & Mid-Trip Destination Change: StopoversEnabled mirrors
+	// FEATURE_RIDE_STOP_OVERS. With the flag off, stops[] on a ride request is
+	// a loud 409 STOPOVERS_DISABLED rejection (never silent direct-trip
+	// pricing) and PATCH /nidus/rides/{rideID}/destination is not mounted at
+	// all — clients get 404, never a half-wired endpoint.
+	nidusDeps.StopoversEnabled = cfg.Features.EnableRideStopovers
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
 
 	// Phase 1 audit fix: wire the WS bridge. Without this the hub is an
@@ -576,6 +582,21 @@ func main() {
 	logger.Info("Nidus ride lifecycle workers online",
 		zap.String("auto_matcher", "5s cadence"),
 		zap.String("settlement_outbox", "30s cadence"))
+
+	// §3.6 scheduled-ride reminder producer: emits ride.scheduled_reminder
+	// ~30 minutes before each scheduled pickup so the notifications module's
+	// (already-shipped) scheduled_ride_reminder templates finally have a
+	// source. Gated on FEATURE_NOTIFICATIONS — producing events with no
+	// consumer dispatching them would be dead traffic (Global Rule 5).
+	if cfg.Features.EnableNotifications {
+		scheduledReminderWorker := niduscmds.NewScheduledReminderWorker(db, eventBus, niduscmds.ScheduledReminderConfig{}, logger)
+		go scheduledReminderWorker.Run(ctxRideWorkers)
+		logger.Info("Scheduled-ride reminder worker online",
+			zap.String("cadence", "60s"),
+			zap.String("scan_window", "T-35m..T-25m around pickup"))
+	} else {
+		logger.Info("Scheduled-ride reminder worker disabled (FEATURE_NOTIFICATIONS=false)")
+	}
 
 	// Phase D Step 6: ledger REST surface behind JWT auth.
 	if ledgerComps != nil {

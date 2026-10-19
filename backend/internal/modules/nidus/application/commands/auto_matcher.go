@@ -95,6 +95,13 @@ func (a *AutoMatcher) Tick(ctx context.Context) {
 		       requested_at, created_at, updated_at
 		  FROM rides
 		 WHERE status IN ('requested','searching') AND driver_id IS NULL
+		   -- §3.6 scheduled rides: a ride with scheduled_at set must NOT be
+		   -- matched immediately. The matcher pre-matches scheduled rides
+		   -- inside the T-15 minute window only (scheduled_at <= now+15m),
+		   -- so drivers get the request shortly before pickup time rather
+		   -- than up to 30 days in advance. Immediate rides (scheduled_at
+		   -- IS NULL) are unaffected by this predicate.
+		   AND (scheduled_at IS NULL OR scheduled_at <= NOW() + INTERVAL '15 minutes')
 		 ORDER BY requested_at ASC
 		 LIMIT $1`, a.cfg.Batch)
 	if err != nil {
