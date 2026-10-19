@@ -90,7 +90,9 @@ class SafetyToolkitPage extends StatelessWidget {
               }
               showModalBottomSheet<void>(
                 context: context,
-                backgroundColor: Colors.white,
+                // §4.4: theme token (was hardcoded Colors.white) so the SOS
+                // sheet follows light/dark surface instead of clipping white.
+                backgroundColor: AppColors.surface,
                 shape: const RoundedRectangleBorder(
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(24)),
@@ -160,7 +162,8 @@ class SafetyToolkitPage extends StatelessWidget {
               showModalBottomSheet<void>(
                 context: context,
                 isScrollControlled: true,
-                backgroundColor: Colors.white,
+                // §4.4: theme token (was hardcoded Colors.white).
+                backgroundColor: AppColors.surface,
                 shape: const RoundedRectangleBorder(
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(24)),

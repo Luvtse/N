@@ -174,5 +174,7 @@
   "accessibilityRecenterFab": "Kaartaa gara iddoo kootti deebisi",
   "accessibilityPickupPin": "Saaffuu ka'umsaa, sochoosuuf harkisi",
   "accessibilityDriverMarker": "Iddoo daawwitoon",
-  "accessibilityUnreadBadge": "Beekisa {count} dubbifame mitii"
+  "accessibilityUnreadBadge": "Beekisa {count} dubbifame mitii",
+  "historyTitle": "Seenaa dheeffannaa",
+  "historyEmpty": "Ammaaf dheeffanni hin jiru"
 }

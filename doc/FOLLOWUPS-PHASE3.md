@@ -15,7 +15,8 @@ Shipped surfaces degrade honestly; these are completeness/consistency items.
    Amharic/Oromo strings are approved.
 3. **CI-only verification** — `flutter gen-l10n` + `dart analyze` over the
    touched files (no Flutter SDK in this build environment). ARB catalogs are
-   JSON-validated, 133-key parity across en/am/om, all call-site placeholder
+   JSON-validated, 135-key parity across en/am/om (updated by the follow-up
+   polish pass: historyTitle/historyEmpty added), all call-site placeholder
    arity checked against @-metadata (named args match placeholder names).
 4. **Price-extension rollout gate** — server route unmounts entirely when the
    `price_extension` flag is off (404, never half-working); client keeps the

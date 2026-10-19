@@ -15,6 +15,7 @@ import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/notifications/notification_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 import '../../../../core/voice/voice_command_service.dart';
 import '../../data/repositories/ride_repository.dart' show RideStop, maxRideStops;
 import '../bloc/ride_bloc.dart';
@@ -256,8 +257,11 @@ class _RideRequestPageState extends State<RideRequestPage>
             )
           : null,
       appBar: AppBar(
-        title: const Text('Request a Ride'),
-        backgroundColor: Colors.white,
+        // §4.3: routed through the ARB catalog (was a hardcoded English literal).
+        title: Text(context.l10n.requestTitle),
+        // §4.4: theme token (was hardcoded Colors.white) so dark mode renders
+        // the app bar on the surface color instead of a clipped white slab.
+        backgroundColor: AppColors.surface,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),

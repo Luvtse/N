@@ -174,5 +174,7 @@
   "accessibilityRecenterFab": "ካርታውን ወደ እኔ አካባቢ መልስ",
   "accessibilityPickupPin": "የመነሻ ማሰጊያ ለማንቀሳቀስ ይጎትቱ",
   "accessibilityDriverMarker": "የሾፍሉ ቦታ",
-  "accessibilityUnreadBadge": "{count} ያልተነበቡ ማሳወቂያዎች"
+  "accessibilityUnreadBadge": "{count} ያልተነበቡ ማሳወቂያዎች",
+  "historyTitle": "የጉዞ ታሪክ",
+  "historyEmpty": "እስካሁን ጉዞ የለም"
 }

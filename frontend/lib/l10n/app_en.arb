@@ -253,5 +253,13 @@
         "type": "int"
       }
     }
+  },
+  "historyTitle": "Ride History",
+  "@historyTitle": {
+    "description": "App bar title of the ride history page (Phase 3 \u00a74.3 extraction)."
+  },
+  "historyEmpty": "No rides yet",
+  "@historyEmpty": {
+    "description": "Empty-state label when the rider has no past or scheduled rides."
   }
 }
