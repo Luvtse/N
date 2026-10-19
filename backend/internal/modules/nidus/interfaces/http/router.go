@@ -337,6 +337,11 @@ func NewRouter(deps *Dependencies) http.Handler {
 		// §3.1: driver-side cash-collection confirm (completed -> paid + deferred
 		// settlement event). Mounted on the router only when cash is enabled.
 		ConfirmCashCollection: commands.NewConfirmCashCollectionHandler(deps.DB, deps.EventBus),
+		// §3.5: rider mid-trip destination change with server-recomputed fare.
+		// Built unconditionally here; the PATCH route is mounted only when
+		// StopoversEnabled — the handler field existing but unrouted is fine
+		// because the HTTP surface is the shipped contract.
+		ChangeDestination: commands.NewChangeDestinationHandler(deps.DB, deps.EventBus, deps.PricingService),
 	})
 	// §2.3: embed the honest driver pre-selfie state on rider ride DTOs when
 	// the selfie module is wired (FEATURE_PRE_SELFIE). nil => field omitted;
@@ -448,6 +453,14 @@ func NewRouter(deps *Dependencies) http.Handler {
 				// the tracking page never shows a confirm affordance.
 				if deps.CashEnabled {
 					r.Post("/{rideID}/confirm-cash-collection", rideHandler.ConfirmCashCollection)
+				}
+				// §3.5 Mid-Trip Destination Change (rider): PATCH recomputes the
+				// fare server-side over pickup -> stops -> new dropoff and returns
+				// the authoritative previous/new fares. Mounted only when stopovers
+				// are enabled; otherwise a clean 404 and the tracking page never
+				// shows the change-destination affordance.
+				if deps.StopoversEnabled {
+					r.Patch("/{rideID}/destination", rideHandler.ChangeDestination)
 				}
 				// §3.3 Split Fare (rider/owner surface): POST creates/replaces the
 				// pending invite set on a completed ride; GET returns the

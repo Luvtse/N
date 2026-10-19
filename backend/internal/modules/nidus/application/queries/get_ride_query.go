@@ -195,7 +195,48 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	ride.SurgeFareComponent = floatPtrFromPg(surgeFareComponent)
 	ride.ServiceFeeComponent = floatPtrFromPg(serviceFeeComponent)
 
+	// §3.5: load intermediate stops (ordered). A failure here is a partial-read
+	// problem, not a missing feature — but the ride itself is already durable,
+	// so degrade honestly: leave Stops empty (the DTO serializes "no stops" and
+	// the client's stop list shows its retry affordance) rather than failing
+	// the whole GET. The stop rows remain in DB; a re-fetch recovers them.
+	stops, err := q.fetchStops(ctx, ride.ID)
+	if err == nil {
+		ride.Stops = stops
+	}
+
 	return &ride, nil
+}
+
+// fetchStops loads the §3.5 ride_stops rows for one ride in visit order.
+func (q *GetRideQuery) fetchStops(ctx context.Context, rideID uuid.UUID) ([]entities.RideStop, error) {
+	rows, err := q.db.Query(ctx, `
+		SELECT seq, lat, lng, COALESCE(address, ''), arrived_at
+		  FROM ride_stops
+		 WHERE ride_id = $1
+		 ORDER BY seq`, rideID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stops := make([]entities.RideStop, 0)
+	for rows.Next() {
+		var s entities.RideStop
+		var arrived pgtype.Timestamptz
+		if err := rows.Scan(&s.Seq, &s.Lat, &s.Lng, &s.Address, &arrived); err != nil {
+			return nil, err
+		}
+		if arrived.Valid {
+			t := arrived.Time
+			s.ArrivedAt = &t
+		}
+		stops = append(stops, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return stops, nil
 }
 
 // floatPtrFromPg converts a nullable pgtype.Float8 into an honest *float64:

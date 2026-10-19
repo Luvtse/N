@@ -174,10 +174,60 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 
+	// §3.5: batch-load intermediate stops for the page in ONE query keyed by
+	// ride id (avoids N+1 on the history list). Failure degrades honestly:
+	// every row keeps its empty stop list — the DTO still serializes "stops": []
+	// and a re-fetch recovers the rows; nothing fabricated fills the gap.
+	q.attachStops(ctx, rides)
+
 	return &ListRidesResult{
 		Rides: rides,
 		Total: total,
 	}, nil
+}
+
+// attachStops loads ride_stops rows for all given rides in one query and
+// attaches them in seq order. Best-effort by design (see Execute above).
+func (q *ListRidesQuery) attachStops(ctx context.Context, rides []*entities.Ride) {
+	if len(rides) == 0 {
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(rides))
+	for _, r := range rides {
+		ids = append(ids, r.ID)
+	}
+	rows, err := q.db.Query(ctx, `
+		SELECT ride_id, seq, lat, lng, COALESCE(address, ''), arrived_at
+		  FROM ride_stops
+		 WHERE ride_id = ANY($1)
+		 ORDER BY ride_id, seq`, ids)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	byRide := make(map[uuid.UUID][]entities.RideStop, len(ids))
+	for rows.Next() {
+		var rideID uuid.UUID
+		var s entities.RideStop
+		var arrived pgtype.Timestamptz
+		if err := rows.Scan(&rideID, &s.Seq, &s.Lat, &s.Lng, &s.Address, &arrived); err != nil {
+			return
+		}
+		if arrived.Valid {
+			t := arrived.Time
+			s.ArrivedAt = &t
+		}
+		byRide[rideID] = append(byRide[rideID], s)
+	}
+	if rows.Err() != nil {
+		return
+	}
+	for _, r := range rides {
+		if stops, ok := byRide[r.ID]; ok {
+			r.Stops = stops
+		}
+	}
 }
 
 // scanRide scans a single ride from the result set
