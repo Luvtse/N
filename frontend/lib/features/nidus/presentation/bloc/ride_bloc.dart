@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../../core/network/api_client.dart';
 import '../../data/repositories/ride_repository.dart';
@@ -260,6 +261,43 @@ class ConfirmSos extends RideEvent {
   const ConfirmSos();
 }
 
+/// §4.5 RideCheck: feeds one driver position sample (from the WS stream or
+/// the REST poll) into the anomaly detector. The bloc owns the detection
+/// window so every consumer of ride state gets identical behavior; a null
+/// `etaConfidence` means the backend did not publish reliability for this
+/// update — the confidence trigger stays dormant rather than assuming zero.
+class ReportRidePosition extends RideEvent {
+  final String rideId;
+  final double lat;
+  final double lng;
+  final DateTime at;
+  final double? etaConfidence;
+
+  const ReportRidePosition({
+    required this.rideId,
+    required this.lat,
+    required this.lng,
+    required this.at,
+    this.etaConfidence,
+  });
+
+  @override
+  List<Object?> get props => [rideId, lat, lng, at, etaConfidence];
+}
+
+/// §4.5 RideCheck: the rider answered an "Is everything OK?" prompt.
+/// [ok] true → snooze the detector for a grace period; false is not used
+/// (the "Call for help" path fires [StartSosCountdown] instead), but the
+/// field keeps the event honest for telemetry.
+class DismissRideCheckPrompt extends RideEvent {
+  final bool ok;
+
+  const DismissRideCheckPrompt.ok() : ok = true;
+
+  @override
+  List<Object?> get props => [ok];
+}
+
 // ============================================================================
 // STATES
 // ============================================================================
@@ -362,6 +400,10 @@ class DriverMatched extends RideState {
   final String? pickupName;
   final String? dropoffName;
 
+  /// §4.5 RideCheck: anomaly awaiting the rider's answer (see
+  /// [RideAnomaly]). Null when nothing is pending — the common case.
+  final RideAnomaly? pendingAnomaly;
+
   const DriverMatched({
     required this.rideId,
     required this.driver,
@@ -373,6 +415,7 @@ class DriverMatched extends RideState {
     this.dropoffLng,
     this.pickupName,
     this.dropoffName,
+    this.pendingAnomaly,
   });
 
   @override
@@ -380,6 +423,7 @@ class DriverMatched extends RideState {
         rideId,
         driver,
         fare,
+        pendingAnomaly,
         etaMinutes,
         pickupLat,
         pickupLng,
@@ -394,10 +438,25 @@ class DriverMatched extends RideState {
 class RideInProgress extends RideState {
   final Ride ride;
 
-  const RideInProgress(this.ride);
+  /// §4.5 RideCheck: the rider's live position when the trip started, used
+  /// as the deviation reference while the phone is (usually) with the rider
+  /// mid-trip. Sourced from the device GPS stream at in_progress transition
+  /// — null when no fresh fix existed, in which case deviation checks stay
+  /// dormant rather than comparing against a fabricated origin.
+  final LatLng? tripStartOrigin;
+
+  /// §4.5 RideCheck: anomaly awaiting the rider's answer (see
+  /// [RideAnomaly]). Null when nothing is pending — the common case.
+  final RideAnomaly? pendingAnomaly;
+
+  const RideInProgress(
+    this.ride, {
+    this.tripStartOrigin,
+    this.pendingAnomaly,
+  });
 
   @override
-  List<Object?> get props => [ride];
+  List<Object?> get props => [ride, tripStartOrigin, pendingAnomaly];
 }
 
 /// Ride completed
@@ -438,18 +497,75 @@ class RideCancelled extends RideState {
       [rideId, reason, cancelledBy, cancellationFee, currency];
 }
 
+/// §4.5 RideCheck: the reason an "Is everything OK?" prompt fired. Each
+/// variant maps 1:1 to a trigger in the plan: [longStop] = vehicle stopped
+/// >3 min away from pickup/dropoff, [routeDeviation] = moved >500 m off the
+/// expected polyline (or off the straight-line corridor while en route),
+/// [lowEtaConfidence] = backend ETA reliability dropped below threshold.
+enum RideAnomalyKind { longStop, routeDeviation, lowEtaConfidence }
+
+/// §4.5 RideCheck: a detected anomaly awaiting the rider's answer. Emitted
+/// as part of the wrapped ride state so every existing `state is X` check
+/// keeps working; the tracking page renders the prompt when
+/// `pendingAnomaly != null`. [detailMeters]/[confidence] carry only real
+/// measured values — null fields render as absent text, never zeros.
+class RideAnomaly {
+  final RideAnomalyKind kind;
+  final DateTime detectedAt;
+
+  /// How far the checked point deviated, meters. Null for kinds that do
+  /// not measure distance.
+  final double? detailMeters;
+
+  /// The server-reported ETA confidence that tripped the check, 0.0–1.0.
+  /// Null unless [kind] is [RideAnomalyKind.lowEtaConfidence].
+  final double? confidence;
+
+  const RideAnomaly({
+    required this.kind,
+    required this.detectedAt,
+    this.detailMeters,
+    this.confidence,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is RideAnomaly &&
+      other.kind == kind &&
+      other.detectedAt == detectedAt &&
+      other.detailMeters == detailMeters &&
+      other.confidence == confidence;
+
+  @override
+  int get hashCode =>
+      Object.hash(kind, detectedAt, detailMeters, confidence);
+}
+
 /// No drivers found for the request — offer recovery actions.
 class NoDriversFound extends RideState {
   final String rideId;
-  final int searchedSeconds;
+
+  /// §4.6: the fare that was broadcast when the search failed, so the
+  /// price-extension sheet can show real "+10% / +20%" projections derived
+  /// from it. Null means the bloc never learned a fare for this ride (e.g.
+  /// the WS fired before REST hydrated) — the sheet then shows "current
+  /// fare unavailable" and defers every number to the server's response,
+  /// never inventing one.
+  final double? currentFare;
+
+  /// ISO-4217 code paired with [currentFare]; null → unknown, rendered as
+  /// an empty unit rather than a fabricated 'ETB'/'USD'.
+  final String? currency;
 
   const NoDriversFound({
     required this.rideId,
     this.searchedSeconds = 0,
+    this.currentFare,
+    this.currency,
   });
 
   @override
-  List<Object?> get props => [rideId, searchedSeconds];
+  List<Object?> get props => [rideId, searchedSeconds, currentFare, currency];
 }
 
 /// Driver is en route to pickup — dedicated arrival state.
@@ -484,6 +600,10 @@ class DriverEnRoute extends RideState {
   final String? pickupName;
   final String? dropoffName;
 
+  /// §4.5 RideCheck: anomaly awaiting the rider's answer (see
+  /// [RideAnomaly]). Null when nothing is pending — the common case.
+  final RideAnomaly? pendingAnomaly;
+
   const DriverEnRoute({
     required this.rideId,
     required this.driver,
@@ -497,6 +617,7 @@ class DriverEnRoute extends RideState {
     this.dropoffLng,
     this.pickupName,
     this.dropoffName,
+    this.pendingAnomaly,
   });
 
   @override
@@ -513,6 +634,7 @@ class DriverEnRoute extends RideState {
         dropoffLng,
         pickupName,
         dropoffName,
+        pendingAnomaly,
       ];
 }
 
