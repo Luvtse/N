@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../../core/config/feature_flag_service.dart';
+import '../../../../core/di/injection.dart';
+import '../../../../core/geocoding/geocoding_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
-import '../../data/repositories/ride_repository.dart' show Ride;
+import '../../data/repositories/ride_repository.dart'
+    show Ride, RideRepository, DestinationChangeResult;
 import '../widgets/cancel_ride_sheet.dart';
+import '../widgets/place_autocomplete_sheet.dart';
 import '../widgets/driver_card.dart';
 import '../widgets/payment_method_selector.dart';
 import '../widgets/pre_selfie_capture_sheet.dart';
@@ -398,6 +403,38 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                         const SizedBox(height: 16),
                       ],
 
+                      // §3.5 "Change destination" — visible only during the
+                      // trip itself and only when the ride_stopovers flag is
+                      // on (kill-switch semantics: flag off renders nothing,
+                      // never a dead button). The backend gate
+                      // (CanChangeDestination) is authoritative; this UI
+                      // merely mirrors it for the in_progress state.
+                      if (state is RideInProgress &&
+                          getIt<FeatureFlagService>()
+                              .isEnabled('ride_stopovers')) ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _changeDestinationBusy
+                                ? null
+                                : () => _startChangeDestination(context),
+                            icon: _changeDestinationBusy
+                                ? const SizedBox(
+                                    height: 16,
+                                    width: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.alt_route),
+                            label: Text(_changeDestinationBusy
+                                ? 'Updating destination…'
+                                : 'Change destination'),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
                       // Action Buttons
                       Row(
                         children: [
@@ -434,6 +471,242 @@ class _RideTrackingPageState extends State<RideTrackingPage>
         );
       },
     );
+  }
+
+  // ─── §3.5 Mid-trip destination change ──────────────────────────────────
+
+  final GeocodingService _geocoding = getIt<GeocodingService>();
+
+  /// Guards against double-taps while the PATCH is in flight.
+  bool _changeDestinationBusy = false;
+
+  Future<void> _startChangeDestination(BuildContext context) async {
+    // 1. Pick the new place through the same §1.3 autocomplete surface used
+    //    at request time (provider chain, cache degradation, honest empty
+    //    states all reused — no second search implementation).
+    final ride = _currentRide(context);
+    final bias = ride != null
+        ? LatLng(ride.pickupLat, ride.pickupLng)
+        : null;
+    final outcome = await PlaceAutocompleteSheet.show(
+      context,
+      geocoding: _geocoding,
+      title: 'New destination',
+      bias: bias,
+    );
+    if (!mounted) return;
+    if (outcome.kind != PlaceAutocompleteOutcomeKind.suggestion) return;
+    final suggestion = outcome.suggestion!;
+
+    // 2. Confirmation sheet BEFORE the PATCH. We cannot know the new fare
+    //    without calling the server (the server owns pricing per Global
+    //    Rule 2), so the sheet honestly says the fare will be recomputed
+    //    and shows where the change lands — never an invented number.
+    final address = suggestion.detail.isEmpty
+        ? suggestion.name
+        : '${suggestion.name}, ${suggestion.detail}';
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Change destination?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('New destination:\n$address'),
+            const SizedBox(height: 12),
+            const Text(
+              'Your fare will be recalculated by Nidus for the new route. '
+              'The updated price is shown right after you confirm.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Keep current destination'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Change destination'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
+
+    setState(() => _changeDestinationBusy = true);
+    try {
+      final result = await getIt<RideRepository>().changeDestination(
+        rideId: widget.rideId,
+        dropoffLat: suggestion.location.latitude,
+        dropoffLng: suggestion.location.longitude,
+        dropoffAddress: address,
+      );
+      if (!mounted) return;
+      setState(() => _changeDestinationBusy = false);
+
+      if (result.isSuccess) {
+        // Money lines come from the SERVER response only — previous fare →
+        // new fare, exactly what the rider will pay.
+        final messenger = ScaffoldMessenger.of(context);
+        context.read<RideBloc>().add(LoadRide(widget.rideId));
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Destination updated. Fare ${_formatFare(result.previousFare, result.currency)} → '
+              '${_formatFare(result.newFare, result.currency)}',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+
+      // The repository converts transport/auth failures into typed
+      // DestinationChangeResult.failure values (never throws), so every
+      // outcome below carries a server error code or an honest local one.
+      switch (result.errorCode) {
+        case 'DESTINATION_NOT_CHANGEABLE':
+        case 'INVALID_TRANSITION':
+        case 'RIDE_NOT_CHANGEABLE':
+          // State race: the ride moved on (completed/cancelled) between the
+          // confirmation tap and the PATCH. Re-fetch so the UI reflects the
+          // truth and explain — do not retry blindly.
+          final messenger = ScaffoldMessenger.of(context);
+          context.read<RideBloc>().add(LoadRide(widget.rideId));
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                result.error ??
+                    'The ride status changed before the update could apply. '
+                        'Destination can no longer be changed.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        case 'FORBIDDEN':
+        case 'UNAUTHORIZED':
+        case 'NOT_FOUND':
+          // Ownership or existence problem — surfaced plainly; caller-level
+          // navigation handles it, we just inform and stop. No retry loop.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                result.error ??
+                    'This ride can\'t be updated from this device.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        default:
+          // Everything else (network, 5xx, malformed response): honest
+          // retry affordance, never a silent success or a locally-estimated
+          // fare.
+          final retry = await showDialog<bool>(
+            context: context,
+            builder: (dialogCtx) => AlertDialog(
+              title: const Text('Couldn\'t update destination'),
+              content: Text(
+                result.error ??
+                    'The server did not accept the change. Your current '
+                        'destination is unchanged.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(false),
+                  child: const Text('Keep current destination'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(true),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          );
+          if (retry == true && mounted) {
+            await _submitChangeDestination(address, suggestion.location);
+          }
+      }
+    } catch (e) {
+      // Defensive: the repository contract says it never throws, but a
+      // serialization bug must not strand the button in "busy" state.
+      if (!mounted) return;
+      setState(() => _changeDestinationBusy = false);
+      debugPrint('Unexpected changeDestination throw: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not reach the server. Your destination was not changed.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// Retry path re-sends the already-confirmed selection (no re-picking).
+  Future<void> _submitChangeDestination(
+    String address,
+    LatLng location,
+  ) async {
+    setState(() => _changeDestinationBusy = true);
+    try {
+      final result = await getIt<RideRepository>().changeDestination(
+        rideId: widget.rideId,
+        dropoffLat: location.latitude,
+        dropoffLng: location.longitude,
+        dropoffAddress: address,
+      );
+      if (!mounted) return;
+      setState(() => _changeDestinationBusy = false);
+      final messenger = ScaffoldMessenger.of(context);
+      if (result.isSuccess) {
+        context.read<RideBloc>().add(LoadRide(widget.rideId));
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Destination updated. Fare ${_formatFare(result.previousFare, result.currency)} → '
+              '${_formatFare(result.newFare, result.currency)}',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              result.error ?? 'Destination update failed. Try again later.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _changeDestinationBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Still unreachable. Your destination was not changed.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// Best-effort read of the bloc's current ride for map bias; null-safe.
+  Ride? _currentRide(BuildContext context) {
+    final state = context.read<RideBloc>().state;
+    if (state is RideInProgress) return state.ride;
+    return null;
+  }
+
+  String _formatFare(double? amount, String? currency) {
+    if (amount == null) return 'unavailable';
+    final unit = currency ?? 'ETB';
+    return '$unit ${amount.toStringAsFixed(2)}';
   }
 
   Future<void> _confirmCancel(BuildContext context, RideState state) async {
