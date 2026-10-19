@@ -243,6 +243,19 @@ type FeatureFlags struct {
 	// invite is accepted. Default false in production per
 	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
 	EnableSplitFare bool
+	// EnableRideStopovers gates the §3.5 stopovers & mid-trip destination
+	// change surface: multi-stop ride requests (POST /api/v1/nidus/rides
+	// with a stops[] array, max 3) and PATCH
+	// /api/v1/nidus/rides/{rideId}/destination during driver_en_route /
+	// in_progress states. Kill switch: set FEATURE_RIDE_STOP_OVERS=false to
+	// unmount the destination route at next boot AND to make supplied
+	// stops[] a loud 409 STOPOVERS_DISABLED rejection (never silent
+	// direct-trip pricing); existing ride_stops rows remain in Postgres and
+	// are still rendered on read paths for in-flight rides — fares of
+	// already-created multi-stop rides keep their summed value because
+	// pricing was persisted at request time. Default false in production per
+	// CONTRIBUTING-RIDE-PARITY Global Rule 6.
+	EnableRideStopovers bool
 }
 
 // ============================================================================
@@ -446,6 +459,7 @@ func (c *Config) loadFeatures() {
 		EnableCashPayment:        getBoolEnvOrDefault("FEATURE_CASH_PAYMENT", false),
 		EnablePromotions:         getBoolEnvOrDefault("FEATURE_PROMOTIONS", false),
 		EnableSplitFare:          getBoolEnvOrDefault("FEATURE_SPLIT_FARE", false),
+		EnableRideStopovers:      getBoolEnvOrDefault("FEATURE_RIDE_STOP_OVERS", false),
 	}
 }
 
