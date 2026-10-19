@@ -1,8 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import 'package:hive/hive.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/config/feature_flag_service.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/di/injection.dart';
 import '../../../../core/geocoding/geocoding_service.dart';
 import '../../../../core/map/live_map_widget.dart';
@@ -134,11 +139,26 @@ class _RideTrackingPageState extends State<RideTrackingPage>
   }
 
   LatLng? _pickupOf(RideState state) {
-    if (state is RideRequested) return null;
-    if (state is DriverMatched || state is DriverEnRoute) {
-      // Coordinates live on the ride record; the bloc re-emits them via the
-      // subscribed updates. Until the first update lands we have no fabricated
-      // fallback — returning null simply renders fewer layers.
+    // §4.1: coordinates are carried on every pre-trip state (sourced from the
+    // rider's own request payload / REST DTO — never fabricated). Null means
+    // genuinely unavailable; surfaces then hide the AR entry instead of
+    // navigating to a made-up pin.
+    if (state is RideRequested) {
+      final lat = state.pickupLat;
+      final lng = state.pickupLng;
+      if (lat != null && lng != null) return LatLng(lat, lng);
+      return null;
+    }
+    if (state is DriverMatched) {
+      final lat = state.pickupLat;
+      final lng = state.pickupLng;
+      if (lat != null && lng != null) return LatLng(lat, lng);
+      return null;
+    }
+    if (state is DriverEnRoute) {
+      final lat = state.pickupLat;
+      final lng = state.pickupLng;
+      if (lat != null && lng != null) return LatLng(lat, lng);
       return null;
     }
     if (state is RideInProgress || state is RideCompleted) {
@@ -148,10 +168,79 @@ class _RideTrackingPageState extends State<RideTrackingPage>
   }
 
   LatLng? _dropoffOf(RideState state) {
+    if (state is RideRequested) {
+      final lat = state.dropoffLat;
+      final lng = state.dropoffLng;
+      if (lat != null && lng != null) return LatLng(lat, lng);
+      return null;
+    }
+    if (state is DriverMatched) {
+      final lat = state.dropoffLat;
+      final lng = state.dropoffLng;
+      if (lat != null && lng != null) return LatLng(lat, lng);
+      return null;
+    }
+    if (state is DriverEnRoute) {
+      final lat = state.dropoffLat;
+      final lng = state.dropoffLng;
+      if (lat != null && lng != null) return LatLng(lat, lng);
+      return null;
+    }
     if (state is RideInProgress || state is RideCompleted) {
       return LatLng(state.ride.dropoffLat, state.ride.dropoffLng);
     }
     return null;
+  }
+
+  /// §4.1: resolved pickup place name for the AR page header. Null means the
+  /// label is genuinely unknown — the AR surface falls back to reverse
+  /// geocoding or "Pickup point"; we never fabricate an address here.
+  String? _pickupNameOf(RideState state) {
+    if (state is RideRequested) return state.pickupName;
+    if (state is DriverMatched) return state.pickupName;
+    if (state is DriverEnRoute) return state.pickupName;
+    return null;
+  }
+
+  /// Stable per-install id for deterministic feature-flag rollout bucketing
+  /// (same 'settings' Hive box + key as app_router.dart's _resolveInstallId,
+  /// so the UI gate and the router gate put this install in the same bucket).
+  Future<String?> _resolveInstallId() async {
+    try {
+      final box = Hive.box('settings');
+      var id = box.get('install_id') as String?;
+      if (id == null || id.isEmpty) {
+        final rand = math.Random.secure();
+        id = List.generate(32, (_) => rand.nextInt(16).toRadixString(16))
+            .join();
+        await box.put('install_id', id);
+      }
+      return id;
+    } catch (_) {
+      // Hive unavailable (tests, corrupted store): evaluate without a device
+      // id — partial rollouts then resolve conservatively to false.
+      return null;
+    }
+  }
+
+  /// §4.1: opens the AR walk-to-pickup surface. Triple gate exactly mirrors
+  /// the router's double gate (compile switch + runtime flag) plus the
+  /// no-fabricated-coordinate rule: if either gate is off or the pickup
+  /// coordinate is genuinely unknown, the button is not rendered at all
+  /// (kill-switch semantics: flag off renders nothing, never a dead button).
+  Future<void> _openArNavigation(RideState state) async {
+    final pickup = _pickupOf(state);
+    if (pickup == null) return;
+    final deviceId = await _resolveInstallId();
+    if (!mounted) return;
+    final name = _pickupNameOf(state);
+    final params = <String>{
+      'lat': pickup.latitude.toStringAsFixed(6),
+      'lng': pickup.longitude.toStringAsFixed(6),
+    };
+    if (name != null && name.isNotEmpty) params['name'] = name;
+    context.push('/nidus/ar-nav/${widget.rideId}',
+        extra: null, queryParameters: params);
   }
 
   @override
@@ -401,6 +490,23 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                         const SizedBox(height: 12),
                         _PinCodeCard(pinCode: state.pinCode),
                         const SizedBox(height: 16),
+
+                        // §4.1 AR walk-to-pickup entry point. Visible only
+                        // when (a) the compile switch is on, (b) the runtime
+                        // `ar_navigation` flag bucket includes this install,
+                        // and (c) the pickup coordinate is genuinely known.
+                        // Any gate failing → the button is not rendered at
+                        // all (kill-switch semantics; never a dead button,
+                        // never a fabricated destination). The router applies
+                        // the same double gate as a redirect fallback.
+                        if (AppConstants.enableARNavigation &&
+                            _pickupOf(state) != null) ...[
+                          _ArNavigationButton(
+                            rideState: state,
+                            onTap: () => _openArNavigation(state),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
                       ],
 
                       // §3.5 "Change destination" — visible only during the
@@ -913,6 +1019,82 @@ class _PinCodeCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// §4.1 "Walk to pickup (AR)" entry button on the Tracking page.
+///
+/// The runtime `ar_navigation` flag is evaluated asynchronously against the
+/// per-install rollout bucket (FeatureFlagService.isEnabled takes an optional
+/// deviceId; a partial rollout without one resolves conservatively to false).
+/// A FutureBuilder keeps that evaluation inside the widget so the surrounding
+/// bottom sheet never blocks on Hive while still honoring the same bucketing
+/// the router gate uses — if this widget and the router disagree, the router
+/// redirect to tracking is the authoritative fallback.
+class _ArNavigationButton extends StatefulWidget {
+  final RideState rideState;
+  final VoidCallback onTap;
+
+  const _ArNavigationButton({
+    required this.rideState,
+    required this.onTap,
+  });
+
+  @override
+  State<_ArNavigationButton> createState() => _ArNavigationButtonState();
+}
+
+class _ArNavigationButtonState extends State<_ArNavigationButton> {
+  late Future<bool> _flagFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _flagFuture = _resolveFlag();
+  }
+
+  Future<bool> _resolveFlag() async {
+    try {
+      final flags = getIt<FeatureFlagService>();
+      // Same 'settings' box/key as app_router._resolveInstallId so UI gate
+      // and router gate bucket identically. Read directly here to avoid
+      // duplicating the id-generation path in two files.
+      String? deviceId;
+      try {
+        deviceId = Hive.box('settings').get('install_id') as String?;
+      } catch (_) {
+        deviceId = null;
+      }
+      return flags.isEnabled('ar_navigation', deviceId: deviceId);
+    } catch (_) {
+      // Flag service unavailable → conservative false: no button, no dead
+      // end (kill-switch semantics).
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _flagFuture,
+      builder: (context, snapshot) {
+        // While resolving, render nothing rather than a button that might
+        // flicker away after tap. Once resolved false, stay hidden.
+        if (snapshot.data != true) return const SizedBox.shrink();
+        return Semantics(
+          button: true,
+          label: 'Walk to pickup with augmented reality navigation',
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: widget.onTap,
+              icon: const Icon(Icons.ar_home),
+              label: const Text('Walk to pickup (AR)'),
+            ),
+          ),
+        );
+      },
     );
   }
 }
