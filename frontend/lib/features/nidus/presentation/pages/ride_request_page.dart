@@ -15,6 +15,7 @@ import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/notifications/notification_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../data/repositories/ride_repository.dart' show RideStop, maxRideStops;
 import '../bloc/ride_bloc.dart';
 import '../widgets/location_input.dart';
 import '../widgets/location_permission_gate.dart';
@@ -77,6 +78,19 @@ class _RideRequestPageState extends State<RideRequestPage>
 
   /// §3.6: scheduled pickup time (local); null = on-demand.
   DateTime? _scheduledAt;
+
+  /// §3.5: intermediate waypoints in visit order, capped at [maxRideStops]
+  /// (the same constant the backend enforces via entities.MaxRideStops and
+  /// migration 012's CHECK constraint). Empty list = direct trip; the bloc →
+  /// use case → repository chain then omits the `stops` key entirely so the
+  /// wire request is byte-identical to a pre-stopovers booking.
+  final List<RideStop> _stops = [];
+
+  /// Client mirror of the backend ride_stopovers flag
+  /// (FEATURE_RIDE_STOP_OVERS). When off the whole stopover affordance is
+  /// hidden — no dead button, per Global Rule 4/6.
+  bool get _stopoversEnabled =>
+      getIt<FeatureFlagService>().isEnabled('ride_stopovers');
 
   LatLng get _cameraCenter => _pickup.hasCoordinates
       ? LatLng(_pickup.lat!, _pickup.lng!)
@@ -193,8 +207,13 @@ class _RideRequestPageState extends State<RideRequestPage>
   }
 
   void _fitCameraToPoints() {
+    // §3.5: the camera auto-fit spans every waypoint in visit order —
+    // pickup, stops…, dropoff — not just the two endpoints, so a mid-route
+    // stop never sits off-screen (plan §3.5 "map auto-fits to include all
+    // points").
     final points = <LatLng>[
       if (_pickup.hasCoordinates) LatLng(_pickup.lat!, _pickup.lng!),
+      for (final s in _stops) LatLng(s.lat, s.lng),
       if (_dropoff.hasCoordinates) LatLng(_dropoff.lat!, _dropoff.lng!),
     ];
     final map = _mapKey.currentState;
@@ -256,6 +275,16 @@ class _RideRequestPageState extends State<RideRequestPage>
                                 position: LatLng(_pickup.lat!, _pickup.lng!),
                                 kind: MapMarkerKind.pickup,
                                 label: 'Pickup',
+                              ),
+                            // §3.5 stop markers in visit order, numbered so
+                            // the rider can confirm the sequence matches the
+                            // chip list below the dropoff field.
+                            for (var i = 0; i < _stops.length; i++)
+                              MapMarkerModel(
+                                id: 'stop-${i + 1}',
+                                position: LatLng(_stops[i].lat, _stops[i].lng),
+                                kind: MapMarkerKind.waypoint,
+                                label: 'Stop ${i + 1}',
                               ),
                             if (_dropoff.hasCoordinates)
                               MapMarkerModel(
@@ -344,6 +373,14 @@ class _RideRequestPageState extends State<RideRequestPage>
                           onTapField: _openDropoffSheet,
                         ),
 
+                        // §3.5: removable stop chips in visit order plus the
+                        // "Add stop" affordance. Hidden entirely when the
+                        // ride_stopovers flag is off — no dead button.
+                        if (_stopoversEnabled) ...[
+                          const SizedBox(height: 12),
+                          _buildStopsSection(),
+                        ],
+
                         const SizedBox(height: 32),
 
                         const Text(
@@ -428,6 +465,156 @@ class _RideRequestPageState extends State<RideRequestPage>
         },
       ),
     );
+  }
+
+  /// §3.5 stopover editor: numbered removable chips in visit order followed
+  /// by an "Add stop" row (hidden once the cap is reached — same number the
+  /// backend enforces). Each row opens the existing place-autocomplete sheet;
+  /// choosing a suggestion appends the stop, re-fits the camera across all
+  /// waypoints, and refreshes the fare estimate so the rider sees the
+  /// multi-leg number before booking (the server recomputes authoritatively
+  /// at request time regardless).
+  Widget _buildStopsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _stops.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: InputChip(
+              avatar: CircleAvatar(
+                backgroundColor: const Color(0xFFF9A825),
+                child: Text(
+                  '${i + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              label: Text(
+                _stops[i].address?.isNotEmpty == true
+                    ? _stops[i].address!
+                    : 'Stop ${i + 1}',
+                overflow: TextOverflow.ellipsis,
+              ),
+              onDeleted: () => _removeStop(i),
+              deleteIcon: const Icon(Icons.close, size: 18),
+            ),
+          ),
+        if (_stops.length < maxRideStops)
+          Material(
+            color: AppColors.surfaceMuted ?? AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _addStop,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.add_location_alt_outlined,
+                      size: 20,
+                      color: AppColors.textSecondary,
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Add stop',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Spacer(),
+                    Text(
+                      '$maxRideStops max',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _addStop() async {
+    // Cap check mirrors entities.MaxRideStops / TOO_MANY_STOPS wording so a
+    // race between rebuilds can never produce a fourth stop.
+    if (_stops.length >= maxRideStops) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'A maximum of $maxRideStops stops per ride is allowed.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final outcome = await PlaceAutocompleteSheet.show(
+      context,
+      geocoding: _geocoding,
+      title: 'Add stop ${_stops.length + 1}',
+      bias: _pickup.hasCoordinates
+          ? LatLng(_pickup.lat!, _pickup.lng!)
+          : null,
+    );
+    if (!mounted) return;
+    if (outcome.kind != PlaceAutocompleteOutcomeKind.suggestion) return;
+    final s = outcome.suggestion!;
+    setState(() {
+      _stops.add(RideStop(
+        seq: _stops.length + 1,
+        lat: s.location.latitude,
+        lng: s.location.longitude,
+        address: s.detail.isEmpty ? s.name : '${s.name}, ${s.detail}',
+      ));
+    });
+    _fitCameraToPoints();
+    _refreshFareEstimate();
+  }
+
+  void _removeStop(int index) {
+    setState(() {
+      _stops.removeAt(index);
+      // Re-number in visit order — seq must stay 1..n contiguous to match
+      // the backend's UNIQUE(ride_id, seq) contract when the request ships.
+      for (var i = 0; i < _stops.length; i++) {
+        _stops[i] = RideStop(
+          seq: i + 1,
+          lat: _stops[i].lat,
+          lng: _stops[i].lng,
+          address: _stops[i].address,
+        );
+      }
+    });
+    _fitCameraToPoints();
+    _refreshFareEstimate();
+  }
+
+  /// Re-runs the fare estimate after any waypoint change. The estimate
+  /// endpoint stays pickup→dropoff (a display projection only); the
+  /// authoritative multi-leg fare is computed by the pricing service over
+  /// the full chain at POST /rides time.
+  void _refreshFareEstimate() {
+    if (!_canRequest) return;
+    context.read<RideBloc>().add(
+          GetFareEstimate(
+            pickupLat: _pickup.lat!,
+            pickupLng: _pickup.lng!,
+            dropoffLat: _dropoff.lat!,
+            dropoffLng: _dropoff.lng!,
+            rideType: _selectedRideType,
+          ),
+        );
   }
 
   Future<void> _openPickupSheet() async {
@@ -694,6 +881,8 @@ class _RideRequestPageState extends State<RideRequestPage>
             paymentMethodType: _selectedPaymentMethodType,
             promoCode: _promoCode,
             scheduledAt: _scheduledAt,
+            // §3.5: stops travel with the request; empty list sends no key.
+            stops: List<RideStop>.unmodifiable(_stops),
           ),
         );
   }

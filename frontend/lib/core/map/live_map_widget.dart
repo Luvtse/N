@@ -11,7 +11,7 @@ import 'map_tile_provider.dart';
 
 /// Marker kinds understood by [LiveMapWidget]. Each kind renders with a
 /// distinct, safety-relevant visual; unknown callers should use [customPin].
-enum MapMarkerKind { pickup, dropoff, driver, user, customPin }
+enum MapMarkerKind { pickup, dropoff, driver, user, customPin, waypoint }
 
 /// Immutable marker description passed to [LiveMapWidget].
 class MapMarkerModel {
@@ -378,6 +378,9 @@ class LiveMapWidgetState extends State<LiveMapWidget> {
       MapMarkerKind.dropoff => const Color(0xFFE53935),
       MapMarkerKind.driver => const Color(0xFF1A73E8),
       MapMarkerKind.user => const Color(0xFF00897B),
+      // §3.5 intermediate stops render amber so they are visually distinct
+      // from both the green pickup and the red dropoff pins.
+      MapMarkerKind.waypoint => const Color(0xFFF9A825),
       _ => const Color(0xFF43A047),
     };
     return Column(

@@ -19,6 +19,10 @@ class RequestRideUseCase {
   /// - [dropoffAddress]: Optional dropoff address
   /// - [rideType]: Type of ride (standard, premium, electric, etc.)
   /// - [paymentMethodId]: Payment method identifier
+  /// - [stops]: §3.5 intermediate waypoints in visit order (max 3). The
+  ///   default `const []` keeps every existing caller compiling untouched;
+  ///   the repository omits the `stops` key entirely when empty so an
+  ///   on-demand direct request stays byte-identical to before.
   ///
   /// Returns:
   /// - [Ride]: Created ride entity
@@ -37,6 +41,7 @@ class RequestRideUseCase {
     String? paymentMethodType,
     String? promoCode,
     DateTime? scheduledAt,
+    List<RideStop> stops = const [],
   }) async {
     // Validate inputs
     _validateInputs(
@@ -46,6 +51,13 @@ class RequestRideUseCase {
       dropoffLng: dropoffLng,
       rideType: rideType,
     );
+
+    // §3.5 client-side cap mirrors the backend MaxRideStops limit and the
+    // TOO_MANY_STOPS error message, so an over-cap request fails locally with
+    // the same wording instead of a confusing round-trip 400.
+    if (stops.length > maxRideStops) {
+      throw Exception('A maximum of $maxRideStops stops per ride is allowed');
+    }
 
     // Check if pickup and dropoff are different
     if (pickupLat == dropoffLat && pickupLng == dropoffLng) {

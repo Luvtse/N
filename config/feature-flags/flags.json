@@ -400,6 +400,28 @@
           "abTestId": null,
           "killSwitch": "Set FEATURE_SPLIT_FARE=false and redeploy; SplitSvc stays nil so the route group is not mounted. Accepted-but-unpaid shares are untouched in ride_split_invites."
         }
+      },
+      "ride_stopovers": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ]
+        },
+        "metadata": {
+          "owner": "nidus-team@nidaw.com",
+          "created": "2026-10-19T00:00:00Z",
+          "expires": null,
+          "description": "§3.5 stopovers & mid-trip destination change (stops[] on POST /api/v1/nidus/rides priced over the full waypoint chain, PATCH /api/v1/nidus/rides/{rideId}/destination with server-recomputed fare, ride_stops rows per migration 012). Kill switch: FEATURE_RIDE_STOP_OVERS=false (env) unmounts the destination route at next boot and makes a stops[]-carrying request fail loudly with code STOPOVERS_DISABLED — never silently priced as a direct trip; already-persisted stops stay readable on historical rides. Default false in production per Global Rule 6.",
+          "category": "ride_parity",
+          "abTestId": null,
+          "killSwitch": "Set FEATURE_RIDE_STOP_OVERS=false and redeploy; StopoversEnabled becomes false, the PATCH destination route is not mounted (404), RequestRide rejects any request carrying stops with STOPOVERS_DISABLED, and the Flutter request/tracking surfaces hide the Add-stop and Change-destination affordances entirely. Existing ride_stops rows are untouched in Postgres."
+        }
       }
     },
     "ai_ml_features": {
