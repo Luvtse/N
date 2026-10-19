@@ -22,6 +22,12 @@ var (
 	ErrNoDriversAvailable = errors.New("no drivers available nearby")
 )
 
+// maxLocationAge bounds how stale a driver's reported position may be before
+// the matching engine stops treating them as a viable candidate. Tuned for
+// urban ride-hailing: the driver app heartbeats location every ~10s, so 2
+// minutes means at least one full missed-upload window before exclusion.
+const maxLocationAge = 2 * time.Minute
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -41,10 +47,32 @@ type DriverScore struct {
 // MATCHING ENGINE
 // ============================================================================
 
+// DriverCandidate is the pure, side-effect-free result of candidate selection:
+// the nominated driver plus the distance and ACTUAL computed pickup ETA (in
+// minutes) used to rank them. It carries no assignment claim — producing it
+// does not reserve the driver or match the ride. The dispatcher persists
+// ETA into rides.matched_eta_minutes only when the assignment commits.
+//
+// ETA provenance: services.calculateETA is a straight-line haversine heuristic
+// at an assumed 30 km/h average city speed — an *estimated* pickup time. It is
+// NOT routing-derived, traffic-aware, or model-predicted; do not label it as
+// ML inference in client copy or analytics.
+type DriverCandidate struct {
+	Driver   *entities.Driver
+	Distance float64 // km, haversine driver -> ride pickup
+	ETA      int     // minutes, computed from Distance (>= 1)
+}
+
 // MatchingEngine handles driver-rider matching
 type MatchingEngine struct {
 	db       *database.Postgres
 	eventBus eventbus.EventBus
+	// radiusKm bounds the spatial candidate search. Zero (or unset) falls
+	// back to the historical 5 km default so existing wiring (cmd/server
+	// constructs the engine without config access) keeps working while the
+	// AutoMatcher passes its configured AutoMatchConfig.RadiusKm through
+	// SetSearchRadius.
+	radiusKm float64
 }
 
 // NewMatchingEngine creates a new matching engine
@@ -55,13 +83,55 @@ func NewMatchingEngine(db *database.Postgres, eventBus eventbus.EventBus) *Match
 	}
 }
 
-// FindBestDriver finds and assigns the best available driver for a ride
+// SetSearchRadius configures the candidate search radius in km. Values <= 0
+// reset to the 5 km engine default. Called by the auto-matcher wiring so the
+// configured AutoMatchConfig.RadiusKm actually bounds matching (previously the
+// engine hard-coded 5.0 regardless of configuration).
+func (m *MatchingEngine) SetSearchRadius(radiusKm float64) {
+	if radiusKm <= 0 {
+		radiusKm = 5.0
+	}
+	m.radiusKm = radiusKm
+}
+
+// searchRadius returns the effective radius (5 km default when unset).
+func (m *MatchingEngine) searchRadius() float64 {
+	if m.radiusKm <= 0 {
+		return 5.0
+	}
+	return m.radiusKm
+}
+
+// FindBestDriver selects the best available driver for a ride.
+//
+// NIDUS-DISPATCH-001: this method is now PURE CANDIDATE SELECTION. The old
+// implementation published a "driver.matched" event before anything had been
+// assigned — announcing a business transition that never committed. It no
+// longer publishes anything and makes no assignment claim; durable ride.matched
+// publication belongs exclusively to the committed-dispatch path
+// (AssignRideAtomically outbox + MatchedEventsOutbox drain / post-commit
+// publish). The exported signature is preserved unchanged for all callers
+// (AutoMatcher via the MatchingAssigner port, AcceptRideHandler).
 func (m *MatchingEngine) FindBestDriver(
 	ctx context.Context,
 	ride *entities.Ride,
 ) (*entities.Driver, error) {
-	// 1. Get available drivers within radius
-	drivers, err := m.getAvailableDrivers(ctx, ride.PickupLat, ride.PickupLng, 5.0) // 5km radius
+	candidate, err := m.SelectBestCandidate(ctx, ride)
+	if err != nil {
+		return nil, err
+	}
+	return candidate.Driver, nil
+}
+
+// SelectBestCandidate scores drivers within the configured radius and returns
+// the top-ranked candidate with its actual computed ETA. Scoring is separated
+// from state-changing assignment: nothing here mutates ride or driver state.
+func (m *MatchingEngine) SelectBestCandidate(
+	ctx context.Context,
+	ride *entities.Ride,
+) (*DriverCandidate, error) {
+	// 1. Get available drivers within the CONFIGURED radius.
+	drivers, err := m.getAvailableDrivers(ctx, ride.PickupLat, ride.PickupLng, m.searchRadius())
 	if err != nil {
 		return nil, err
 	}
@@ -70,47 +140,33 @@ func (m *MatchingEngine) FindBestDriver(
 		return nil, ErrNoDriversAvailable
 	}
 
-	// 2. Score each driver
+	// 2. Score each driver.
 	scores := make([]DriverScore, 0, len(drivers))
 	for _, driver := range drivers {
 		score := m.calculateDriverScore(driver, ride)
 		scores = append(scores, score)
 	}
 
-	// 3. Sort by score (highest first)
+	// 3. Sort by score (highest first).
 	sort.Slice(scores, func(i, j int) bool {
 		return scores[i].Score > scores[j].Score
 	})
 
-	// 4. Get best driver
+	// 4. Load the best driver's full record.
 	bestDriverID := scores[0].DriverID
 	bestDriver, err := m.GetDriverByID(ctx, bestDriverID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Calculate ETA
+	// 5. Actual computed ETA for THIS candidate (not a constant).
 	eta := m.calculateETA(scores[0].Distance)
 
-	// 6. Publish matched event
-	event := eventbus.Event{
-		Type: "driver.matched",
-		Payload: map[string]interface{}{
-			"ride_id":     ride.ID,
-			"driver_id":   bestDriverID,
-			"eta_seconds": eta * 60,
-			"fare_amount": ride.FareAmount,
-			"score":       scores[0].Score,
-		},
-		Timestamp: time.Now().Unix(),
-	}
-
-	if err := m.eventBus.Publish(ctx, "nidus.rides", event); err != nil {
-		// Log but don't fail - driver is already matched
-		// Event will be picked up by other systems
-	}
-
-	return bestDriver, nil
+	return &DriverCandidate{
+		Driver:   bestDriver,
+		Distance: scores[0].Distance,
+		ETA:      eta,
+	}, nil
 }
 
 // ============================================================================
@@ -122,11 +178,18 @@ func (m *MatchingEngine) getAvailableDrivers(
 	ctx context.Context,
 	lat, lng, radiusKm float64,
 ) ([]entities.Driver, error) {
+	// Location freshness gate (NIDUS-DISPATCH-001): a driver whose last GPS
+	// ping is older than maxLocationAge is NOT eligible as a candidate even
+	// if their status still reads 'available' — an app that crashed mid-shift
+	// otherwise keeps winning matches against a position nobody has confirmed
+	// for minutes. Drivers with no recorded update yet (NULL) are excluded by
+	// the same predicate; they have never proven proximity.
 	query := `
 		SELECT d.id, d.user_id, d.rating, d.acceptance_rate, d.completion_rate,
 		       d.current_lat, d.current_lng, d.status, d.vehicle_type
 		FROM drivers d
 		WHERE d.status = 'available'
+		AND d.last_location_update > NOW() - $4::interval
 		AND ST_DWithin(
 			ST_MakePoint(d.current_lng, d.current_lat)::geography,
 			ST_MakePoint($1, $2)::geography,
@@ -140,7 +203,7 @@ func (m *MatchingEngine) getAvailableDrivers(
 	`
 
 	radiusMeters := radiusKm * 1000
-	rows, err := m.db.Query(ctx, query, lng, lat, radiusMeters)
+	rows, err := m.db.Query(ctx, query, lng, lat, radiusMeters, maxLocationAge.String())
 	if err != nil {
 		return nil, err
 	}

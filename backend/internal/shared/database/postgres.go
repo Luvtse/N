@@ -217,6 +217,8 @@ type errRow struct{ err error }
 
 func (e errRow) Scan(dest ...any) error { return e.err }
 
+func (e errRow) Err() error { return e.err }
+
 // Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE)
 func (p *Postgres) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 	if !p.ready() {
