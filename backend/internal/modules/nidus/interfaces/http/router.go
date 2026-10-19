@@ -94,6 +94,12 @@ type Dependencies struct {
 	// adapts the notifications Dispatcher to this structural port so nidus
 	// never imports the notifications application package.
 	ReceiptMailer nidusHttp.ReceiptMailer
+	// §3.5 Stopovers & Mid-Trip Destination Change. StopoversEnabled mirrors
+	// the ride_stopovers feature flag: when false, requests carrying stops are
+	// rejected with STOPOVERS_DISABLED (never silently priced as direct trips)
+	// and PATCH /nidus/rides/{rideID}/destination is not mounted at all — a
+	// clean 404 beats a half-wired endpoint (Global Rule 5).
+	StopoversEnabled bool
 }
 
 // SelfieRiderView is the structural shape of selfie/application.RiderView. It

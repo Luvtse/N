@@ -67,8 +67,63 @@ func (s RideStatus) IsTerminal() bool {
 }
 
 // ============================================================================
-// RIDE ENTITY
+// RIDE STOPS (§3.5 Stopovers)
 // ============================================================================
+
+// MaxRideStops is the hard cap on intermediate stops per ride, mirroring the
+// CHECK constraint in migration 012_ride_stops.sql (seq BETWEEN 1 AND 3). The
+// request path and the change-destination path both enforce it before touching
+// the database; the DB constraint is the defense-in-depth backstop.
+const MaxRideStops = 3
+
+// RideStop is one intermediate waypoint between pickup and dropoff (§3.5).
+// Seq is 1-based and ordered: the trip visits stops in ascending Seq, then
+// proceeds to the dropoff. Address is the human-readable label resolved by
+// reverse geocoding at selection time (may be empty if resolution failed —
+// the coordinates remain authoritative). ArrivedAt is stamped when the driver
+// marks the stop reached; nil means not yet reached.
+type RideStop struct {
+	Seq       int       `json:"seq" db:"seq"`
+	Lat       float64   `json:"lat" db:"lat"`
+	Lng       float64   `json:"lng" db:"lng"`
+	Address   string    `json:"address,omitempty" db:"address"`
+	ArrivedAt *time.Time `json:"arrived_at,omitempty" db:"arrived_at"`
+}
+
+// LatLng is a bare coordinate pair used by the waypoint-chain helpers. It
+// mirrors pricing_service's coordinate shape at the domain layer so entities
+// do not import application services (dependency direction stays inward).
+type LatLng struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+}
+
+// WaypointChain returns the full ordered coordinate chain for pricing:
+// [pickup, stops..., dropoff]. With no stops it degenerates to the two-point
+// leg the pre-§3.5 pricing used, guaranteeing identical fares for stop-free
+// rides (regression guarantee relied on by the pricing service tests).
+func (r *Ride) WaypointChain() []LatLng {
+	pts := make([]LatLng, 0, len(r.Stops)+2)
+	pts = append(pts, LatLng{Lat: r.PickupLat, Lng: r.PickupLng})
+	for _, s := range r.Stops {
+		pts = append(pts, LatLng{Lat: s.Lat, Lng: s.Lng})
+	}
+	pts = append(pts, LatLng{Lat: r.DropoffLat, Lng: r.DropoffLng})
+	return pts
+}
+
+// CanChangeDestination reports whether mid-trip destination changes (§3.5) are
+// allowed for the ride's current state. Only a matched-but-not-yet-picked-up
+// or in-progress ride qualifies; requested/searching rides have no committed
+// route to amend semantics we want to expose, and terminal states never do.
+func (r *Ride) CanChangeDestination() bool {
+	switch r.Status {
+	case RideStatusDriverEnRoute, RideStatusInProgress:
+		return true
+	default:
+		return false
+	}
+}
 
 // Ride represents a single ride in the NIDAW system
 //
@@ -91,6 +146,12 @@ type Ride struct {
 	// Addresses (optional, human-readable)
 	PickupAddress  string `json:"pickup_address,omitempty" db:"pickup_address"`
 	DropoffAddress string `json:"dropoff_address,omitempty" db:"dropoff_address"`
+
+	// §3.5 Stopovers & Mid-Trip Destination Change. Stops are the ordered
+	// intermediate waypoints between pickup and dropoff (max MaxRideStops).
+	// Loaded by the ride queries from the ride_stops table (migration 012);
+	// nil/empty means a direct trip. Not a column — populated post-load.
+	Stops []RideStop `json:"stops,omitempty" db:"-"`
 
 	// Ride Details
 	RideType string     `json:"ride_type" db:"ride_type"`
@@ -145,6 +206,13 @@ type Ride struct {
 	// scheduled ride; nil means on-demand. The request path validates the
 	// window (>= now+15 min, <= now+30 days) before persisting it.
 	ScheduledAt *time.Time `json:"scheduled_at,omitempty" db:"scheduled_at"`
+
+	// ScheduledReminderSentAt (§3.6, migration 013) is stamped by the
+	// scheduled-reminder worker when the "pickup in 30 minutes" notification
+	// was published. The race-guarded UPDATE that stamps it (WHERE the column
+	// IS NULL) makes the worker safe to run on multiple replicas: exactly one
+	// replica publishes per ride.
+	ScheduledReminderSentAt *time.Time `json:"-" db:"scheduled_reminder_sent_at"`
 
 	// Lifecycle Timestamps
 	RequestedAt time.Time  `json:"requested_at" db:"requested_at"`
@@ -240,4 +308,11 @@ func (r *Ride) TransitionTo(newStatus RideStatus) error {
 
 var (
 	ErrInvalidStatusTransition = errors.New("invalid ride status transition")
+
+	// §3.5 Stopovers & Mid-Trip Destination Change sentinels. The HTTP layer
+	// maps these to stable error codes; the request path and the change-
+	// destination command both return them so validation lives in one place.
+	ErrTooManyStops           = errors.New("ride accepts at most 3 stops")
+	ErrInvalidStopCoordinates = errors.New("stop coordinates are invalid")
+	ErrDestinationNotChangeable = errors.New("destination can only be changed while the ride is en-route or in progress")
 )

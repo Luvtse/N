@@ -166,61 +166,108 @@ func NewPricingService(db *database.Postgres, config *PricingConfig) *PricingSer
 	}
 }
 
-// CalculateFare calculates the fare for a ride
+// CalculateFare calculates the fare for a ride. It is the single-leg entry
+// point kept byte-compatible for every pre-§3.5 caller; multi-waypoint trips
+// go through CalculateFareWithStops, which degenerates to this exact math when
+// stops is empty (regression guarantee).
 func (s *PricingService) CalculateFare(
 	ctx context.Context,
 	pickupLat, pickupLng, dropoffLat, dropoffLng float64,
 	rideType RideType,
 ) (*FareEstimate, error) {
-	// Validate inputs
-	if err := s.validateCoordinates(pickupLat, pickupLng, dropoffLat, dropoffLng); err != nil {
+	return s.CalculateFareWithStops(
+		ctx,
+		pickupLat, pickupLng,
+		[]Waypoint{{Lat: dropoffLat, Lng: dropoffLng}}, // final element = dropoff
+		rideType,
+	)
+}
+
+// Waypoint is one coordinate in an ordered trip chain passed to
+// CalculateFareWithStops. The chain is [stop1..stopN, dropoff]: intermediate
+// stops first, destination last.
+type Waypoint struct {
+	Lat float64
+	Lng float64
+}
+
+// CalculateFareWithStops prices a multi-leg trip (§3.5 Stopovers). Semantics:
+//   - The base fare is charged ONCE for the whole trip, not per leg — a stop
+//     adds distance/time, never a second flag-drop.
+//   - Distance and duration are summed over each consecutive pair of the chain
+//     [pickup, stops..., dropoff], each leg getting the same 1.3 road factor
+//     and duration estimate as the single-leg path.
+//   - Surge is computed from the pickup zone only (demand where the rider
+//     boards), consistent with the single-leg behavior.
+//   - Minimum fare applies to the trip total, exactly as before.
+//
+// With zero stops the arithmetic is identical to the historical two-point
+// calculation, so existing fares do not move when this lands.
+func (s *PricingService) CalculateFareWithStops(
+	ctx context.Context,
+	pickupLat, pickupLng float64,
+	stops []Waypoint,
+	rideType RideType,
+) (*FareEstimate, error) {
+	// A waypoint chain must contain at least the dropoff.
+	if len(stops) == 0 {
+		return nil, ErrInvalidLocation
+	}
+
+	// Validate coordinates across the full chain: every point in range, and
+	// consecutive points distinct (a zero-length leg means the rider dropped a
+	// pin on top of the previous one — reject rather than silently price it).
+	chain := make([][2]float64, 0, len(stops)+1)
+	chain = append(chain, [2]float64{pickupLat, pickupLng})
+	for _, w := range stops {
+		chain = append(chain, [2]float64{w.Lat, w.Lng})
+	}
+	if err := s.validateChain(chain); err != nil {
 		return nil, err
 	}
 
-	// Calculate distance (Haversine formula)
-	distanceKm := haversineDistance(pickupLat, pickupLng, dropoffLat, dropoffLng)
+	// Sum distance and duration over legs.
+	var totalDistanceKm float64
+	totalDurationMinutes := 0
+	for i := 0; i < len(chain)-1; i++ {
+		legKm := haversineDistance(chain[i][0], chain[i][1], chain[i+1][0], chain[i+1][1])
+		roadLegKm := legKm * 1.3
+		totalDistanceKm += roadLegKm
+		totalDurationMinutes += s.estimateDuration(roadLegKm)
+	}
+	if totalDurationMinutes < 1 {
+		totalDurationMinutes = 1
+	}
 
-	// Apply road distance factor (roads are longer than straight-line)
-	roadDistanceKm := distanceKm * 1.3
-
-	// Estimate duration based on average speed
-	durationMinutes := s.estimateDuration(roadDistanceKm)
-
-	// Get base fare
+	// Get base fare (charged once per trip).
 	baseFare, ok := s.config.BaseFare[rideType]
 	if !ok {
 		baseFare = s.config.BaseFare[RideTypeStandard]
 	}
 
-	// Calculate distance fare
 	perKmRate := s.config.PerKmRate[rideType]
 	if perKmRate == 0 {
 		perKmRate = s.config.PerKmRate[RideTypeStandard]
 	}
-	distanceFare := int64(math.Round(roadDistanceKm * perKmRate * 100)) // convert to cents
+	distanceFare := int64(math.Round(totalDistanceKm * perKmRate * 100)) // convert to cents
 
-	// Calculate time fare
 	perMinuteRate := s.config.PerMinuteRate[rideType]
 	if perMinuteRate == 0 {
 		perMinuteRate = s.config.PerMinuteRate[RideTypeStandard]
 	}
-	timeFare := int64(math.Round(float64(durationMinutes) * perMinuteRate * 100))
+	timeFare := int64(math.Round(float64(totalDurationMinutes) * perMinuteRate * 100))
 
-	// Calculate subtotal
 	subtotal := baseFare + distanceFare + timeFare
 
-	// Get surge multiplier
 	surgeInfo, err := s.getSurgeInfo(ctx, pickupLat, pickupLng, rideType)
 	if err != nil {
 		// If surge calculation fails, use 1.0 (no surge)
 		surgeInfo = &SurgeInfo{Multiplier: 1.0, Reason: "default"}
 	}
 
-	// Apply surge
 	surgeAmount := int64(math.Round(float64(subtotal) * (surgeInfo.Multiplier - 1.0)))
 	totalFare := subtotal + surgeAmount
 
-	// Apply minimum fare
 	minimumFare := s.config.MinimumFare[rideType]
 	if minimumFare == 0 {
 		minimumFare = s.config.MinimumFare[RideTypeStandard]
@@ -240,8 +287,8 @@ func (s *PricingService) CalculateFare(
 		SurgeAmount:     surgeAmount,
 		TotalFare:       totalFare,
 		Currency:        s.config.DefaultCurrency,
-		DistanceKm:      math.Round(roadDistanceKm*100) / 100,
-		DurationMinutes: durationMinutes,
+		DistanceKm:      math.Round(totalDistanceKm*100) / 100,
+		DurationMinutes: totalDurationMinutes,
 		EstimatedPickup: s.estimatePickupTime(ctx, pickupLat, pickupLng),
 		CalculatedAt:    time.Now(),
 	}, nil
@@ -508,5 +555,24 @@ func (s *PricingService) validateCoordinates(pickupLat, pickupLng, dropoffLat, d
 		return ErrInvalidLocation
 	}
 
+	return nil
+}
+
+// validateChain checks every point of an ordered waypoint chain
+// [pickup, stops..., dropoff]: each coordinate must be in range, and no two
+// consecutive points may coincide (a zero-length leg is a data error, not a
+// free ride). The single-leg validateCoordinates above is the len-2 special
+// case of this function.
+func (s *PricingService) validateChain(chain [][2]float64) error {
+	for _, p := range chain {
+		if p[0] < -90 || p[0] > 90 || p[1] < -180 || p[1] > 180 {
+			return ErrInvalidLocation
+		}
+	}
+	for i := 0; i < len(chain)-1; i++ {
+		if chain[i] == chain[i+1] {
+			return ErrInvalidLocation
+		}
+	}
 	return nil
 }
