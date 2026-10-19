@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/di/injection.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 import '../../../wallet/data/repositories/wallet_repository.dart';
 import '../../../wallet/domain/entities/ledger_models.dart';
 import '../../../wallet/presentation/bloc/wallet_bloc.dart';
@@ -411,7 +412,7 @@ class _PaymentMethodSelectorState extends State<PaymentMethodSelector> {
             child: TextButton.icon(
               onPressed: _busy ? null : _addCash,
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add cash option'),
+              label: Text(context.l10n.paymentAddCash),
             ),
           ),
         ] else if (!_loadingMethods && _methodsError == null) ...[
@@ -453,7 +454,7 @@ class _PaymentMethodSelectorState extends State<PaymentMethodSelector> {
             child: TextButton.icon(
               onPressed: _busy ? null : _addCash,
               icon: const Icon(Icons.payments_outlined, size: 18),
-              label: const Text('Add cash option'),
+              label: Text(context.l10n.paymentAddCash),
             ),
           ),
         ],

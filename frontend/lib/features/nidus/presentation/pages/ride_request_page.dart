@@ -252,7 +252,7 @@ class _RideRequestPageState extends State<RideRequestPage>
               onPressed: _openVoiceSheet,
               backgroundColor: AppColors.primary,
               tooltip: 'Book with voice',
-              child: const Icon(Icons.mic, color: Colors.white),
+              child: const Icon(Icons.mic, color: AppColors.textOnDark),
             )
           : null,
       appBar: AppBar(
@@ -336,7 +336,7 @@ class _RideRequestPageState extends State<RideRequestPage>
               Expanded(
                 child: Container(
                   decoration: const BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.surface,
                     borderRadius: BorderRadius.only(
                       topLeft: Radius.circular(24),
                       topRight: Radius.circular(24),
@@ -511,7 +511,8 @@ class _RideRequestPageState extends State<RideRequestPage>
                 child: Text(
                   '${i + 1}',
                   style: const TextStyle(
-                    color: Colors.white,
+                    // §4.4: intentional white-on-amber foreground.
+                    color: AppColors.textOnDark,
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
                   ),
@@ -825,7 +826,7 @@ class _RideRequestPageState extends State<RideRequestPage>
         onPressed: isLoading || !_canRequest ? null : _requestRide,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
-          foregroundColor: Colors.white,
+          foregroundColor: AppColors.textOnDark,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -837,7 +838,7 @@ class _RideRequestPageState extends State<RideRequestPage>
                 height: 24,
                 child: CircularProgressIndicator(
                   strokeWidth: 2.5,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.textOnDark),
                 ),
               )
             : Row(
@@ -1135,7 +1136,7 @@ class _RideRequestPageState extends State<RideRequestPage>
     final service = VoiceCommandService();
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -1433,12 +1434,12 @@ class _GpsUnavailableBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            const Icon(Icons.gps_off, color: Colors.white, size: 18),
+            const Icon(Icons.gps_off, color: AppColors.textOnDark, size: 18),
             const SizedBox(width: 8),
             const Expanded(
               child: Text(
                 'GPS unavailable — drag the pickup pin to set your location.',
-                style: TextStyle(color: Colors.white, fontSize: 12),
+                style: const TextStyle(color: AppColors.textOnDark, fontSize: 12),
               ),
             ),
             TextButton(
@@ -1446,7 +1447,7 @@ class _GpsUnavailableBanner extends StatelessWidget {
               child: const Text(
                 'Retry',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: AppColors.textOnDark,
                   fontWeight: FontWeight.bold,
                 ),
               ),

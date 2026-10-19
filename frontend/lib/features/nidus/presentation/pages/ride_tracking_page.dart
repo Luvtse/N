@@ -601,7 +601,7 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                             child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.error,
-                                foregroundColor: Colors.white,
+                                foregroundColor: AppColors.textOnDark,
                               ),
                               onPressed: () => _confirmCancel(context, state),
                               icon: const Icon(Icons.cancel_outlined),
