@@ -292,17 +292,40 @@ class RideRequested extends RideState {
   /// was attached — rendered as an absent line, never as "0 saved".
   final double? promoDiscount;
 
+  /// §4.1: real pickup coordinates carried from the request so the tracking
+  /// surface can render the pickup pin and offer the AR walk-to-pickup entry
+  /// during the pre-match/searching phases. Sourced exclusively from the
+  /// rider's own request payload / REST DTO — never fabricated. Null only for
+  /// legacy constructions that predate this field.
+  final double? pickupLat;
+  final double? pickupLng;
+  final double? dropoffLat;
+  final double? dropoffLng;
+
   const RideRequested({
     required this.rideId,
     required this.fare,
     required this.etaMinutes,
     required this.requestedAt,
     this.promoDiscount,
+    this.pickupLat,
+    this.pickupLng,
+    this.dropoffLat,
+    this.dropoffLng,
   });
 
   @override
-  List<Object?> get props =>
-      [rideId, fare, etaMinutes, requestedAt, promoDiscount];
+  List<Object?> get props => [
+        rideId,
+        fare,
+        etaMinutes,
+        requestedAt,
+        promoDiscount,
+        pickupLat,
+        pickupLng,
+        dropoffLat,
+        dropoffLng,
+      ];
 }
 
 /// Driver matched
@@ -702,6 +725,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         etaMinutes: result.eta!,
         requestedAt: DateTime.now(),
         promoDiscount: result.promoDiscount,
+        // §4.1: carry the rider's own request coordinates into the state so
+        // tracking can render the pickup pin and the AR entry immediately,
+        // before the first REST poll returns the full ride record.
+        pickupLat: event.pickupLat,
+        pickupLng: event.pickupLng,
+        dropoffLat: event.dropoffLat,
+        dropoffLng: event.dropoffLng,
       ));
 
       // Automatically subscribe to updates
@@ -1120,6 +1150,15 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   // ==========================================================================
 
   void _handleRideUpdate(RideStatusUpdate update, Emitter<RideState> emit) {
+    // §4.1: the WS status payload omits the ride's pickup/dropoff coordinates
+    // (they live on the REST DTO / request event). When a searching→matched
+    // transition happens over WS, re-emit them onto the new state so the
+    // tracking map keeps its pickup pin and the AR entry stays wired through
+    // the whole pre-match lifecycle. Values are copied from the live
+    // RideRequested state — never fabricated.
+    RideRequested? _carryCoords(RideRequested? prev) => prev;
+    final prevRequested =
+        state is RideRequested ? state as RideRequested : null;
     switch (update.status) {
       case 'requested':
       case 'searching':
@@ -1134,6 +1173,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
             driver: update.driver!,
             fare: fare,
             etaMinutes: update.driver!.etaMinutes,
+            // §4.1: real pickup coords carried from the live request state so
+            // the AR walk-to-pickup entry has authoritative data from the
+            // moment of match (null when unavailable → AR button hidden,
+            // never shown with fake coordinates).
+            pickupLat: _carryCoords(prevRequested)?.pickupLat,
+            pickupLng: _carryCoords(prevRequested)?.pickupLng,
+            dropoffLat: _carryCoords(prevRequested)?.dropoffLat,
+            dropoffLng: _carryCoords(prevRequested)?.dropoffLng,
           ));
         }
         break;
@@ -1245,6 +1292,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
           fare: ride.fareAmount ?? 0,
           etaMinutes: ride.durationMinutes ?? 0,
           requestedAt: ride.requestedAt,
+          // §4.1: the REST DTO is authoritative for coordinates on reload —
+          // a cold re-entry into tracking keeps the pickup pin and AR entry
+          // working without waiting for a live request event.
+          pickupLat: ride.pickupLat,
+          pickupLng: ride.pickupLng,
+          dropoffLat: ride.dropoffLat,
+          dropoffLng: ride.dropoffLng,
         ));
         break;
       case 'matched':
