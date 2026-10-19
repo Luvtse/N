@@ -1,13 +1,10 @@
 {
   "@@locale": "om",
-
   "appTitle": "NIDAW",
-
   "navRequest": "Gaafadhu",
   "navTracking": "Hordoffii",
   "navHistory": "Seenaa",
   "navAccount": "Akkaawuntii",
-
   "commonRetry": "Irra deebi'ii yaali",
   "commonCancel": "Haqi",
   "commonConfirm": "Mirmiimsi",
@@ -17,7 +14,6 @@
   "commonUnavailable": "Hin jiru",
   "commonNotProvided": "Hin kennamne",
   "commonLoading": "Fe'amaa jira…",
-
   "requestTitle": "Eessatti deemaa jirtu?",
   "requestPickupLabel": "Iddoo ka'umsaa",
   "requestDropoffLabel": "Gama deemtu",
@@ -31,13 +27,33 @@
   "requestVoiceSheetTitle": "Bishaan kee sagaleedhaan hime",
   "requestVoiceListening": "Caasa'a jira… fakkeenyaaf “Boolee xiyyaara oolfachutti na geesssi” jetti",
   "requestVoiceHeard": "Waan dhaga'e: {transcript}",
+  "@requestVoiceHeard": {
+    "placeholders": {
+      "transcript": {
+        "type": "String"
+      }
+    }
+  },
   "requestVoiceLowConfidence": "Sirriitti hin beeku — “{transcript}” barbaadi banuu?",
+  "@requestVoiceLowConfidence": {
+    "placeholders": {
+      "transcript": {
+        "type": "String"
+      }
+    }
+  },
   "requestEstimateUnavailable": "Gatii hin argamne — irra deebi'ii yaali",
   "requestConfirmCta": "Soora mirkaneessi",
   "requestSelectRideType": "Soora filadhu",
-
   "trackingSearchingTitle": "Daawwitoonni barbaadamaa jiru…",
   "trackingSearchingSub": "Sekondii {seconds}f barbaadaa jira",
+  "@trackingSearchingSub": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "trackingDriverEnRoute": "Daawwitni kee karaa irra jira",
   "trackingRideInProgress": "Karaa irra jirtu",
   "trackingArrived": "Daawwitni iddoo ka'umsaa gaheera",
@@ -55,44 +71,157 @@
   "trackingSosButton": "Gargaarsa hatattamaa SOS",
   "trackingNoDriversTitle": "Daawwitoonni naannoo hin argamne",
   "trackingNoDriversBody": "Sekondii {seconds}f barbaadne garuu hin walqabanne. Gaaffii kee irra deebi'uuf kaffaltii ol kaasuun ni danda'ama?",
+  "@trackingNoDriversBody": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "trackingPriceExtensionKeep": "Gatii ammaan barbaachisa itti fufi",
-  "trackingPriceExtensionConfirm": "Gatii haaraan irra deebi'u baka",
+  "trackingNoDriversFound": "Yaadatuu {fare}ufi driver arganne. Gaaffii kee irra deebi'uun lakkooftuuf kaffaltii ol ka'i.",
+  "@trackingNoDriversFound": {
+    "description": "Price-extension sheet body when current fare is known",
+    "placeholders": {
+      "fare": {
+        "type": "String"
+      }
+    }
+  },
+  "trackingPriceFareUnavailable": "Yaadatuu keef driver hin arganne. Kaffaltii ol kaasi — gatii haaraan erga hojiirra oolee booda server n mirkaneessa.",
+  "@trackingPriceFareUnavailable": {
+    "description": "Price-extension sheet body when the bloc never learned a real fare"
+  },
+  "trackingPriceExtensionPlus10": "Kaffaltii 10% ol kaasi",
+  "@trackingPriceExtensionPlus10": {
+    "description": "Price-extension option: +10 percent"
+  },
+  "trackingPriceExtensionPlus20": "Kaffaltii 20% ol kaasi",
+  "@trackingPriceExtensionPlus20": {
+    "description": "Price-extension option: +20 percent"
+  },
   "trackingPriceFeeConfirmedOnRetry": "Gatiin haaraan yeroo irra deebi'amuu mirkanaa'a",
-
   "ridecheckTitle": "Hundi gaarii?",
   "ridecheckBodyStopped": "Meersaan kee karaa ala daqiiqaa 3 caalaa dhaabbateera.",
-  "ridecheckBodyDeviation": "Karaan karoorrafame irraa meetiraa 500 ol fageenyeessa.",
-  "ridecheckBodyLowConfidence": "Yaadni geenyaanii keenya karaa gidduutti amanamaa mitii ta'eera.",
+  "ridecheckBodyDeviationMeasured": "Motoraanni karaa eegamu irraa meetira {meters} fagaateera.",
+  "@ridecheckBodyDeviationMeasured": {
+    "description": "RideCheck prompt detail when deviation distance was measured",
+    "placeholders": {
+      "meters": {
+        "type": "int"
+      }
+    }
+  },
+  "ridecheckBodyDeviationUnmeasured": "Motoraanni karaa eegamu irraa baay'ee fageenyaan garagaluu isaagiti mul'ata.",
+  "@ridecheckBodyDeviationUnmeasured": {
+    "description": "RideCheck prompt detail when deviation distance could not be measured"
+  },
+  "ridecheckBodyLowConfidence": "Yaadni sa'aa dhufuu imala kanaa amanamaa miti ta'eera (ebraan {confidencePercent}%).",
+  "@ridecheckBodyLowConfidence": {
+    "description": "RideCheck prompt detail with ETA confidence percentage",
+    "placeholders": {
+      "confidencePercent": {
+        "type": "int"
+      }
+    }
+  },
+  "ridecheckBodyLowConfidenceUnmeasured": "Yaadni sa'aa dhufuu imala kanaa amanamaa miti ta'eera.",
+  "@ridecheckBodyLowConfidenceUnmeasured": {
+    "description": "RideCheck prompt detail when confidence value unavailable"
+  },
   "ridecheckImOK": "Ani gaarii dha",
   "ridecheckCallForHelp": "Gargaarsaaf simbirro",
-
+  "accessibilityWalkAr": "Akka namuusaa tokkoon deemuuf AR fayyadamee fuula duraa deemi",
+  "@accessibilityWalkAr": {
+    "description": "Semantics label for the AR walk-to-pickup button"
+  },
   "chatTitle": "Chaatii",
   "chatInputHint": "Ergaa barreessi…",
   "chatSendButton": "Ergi",
   "chatEmptyState": "Ammaaf ergaan hin jiru. Deebisota ariifataa gadii fayyadami.",
   "chatSendFailed": "Ergaan ergamuun hin milkoofne.",
   "chatTranslationHiddenNote": "Afaan jijjiirama soora kanaaf cufamaa dha.",
-
   "cancelSheetTitle": "Soora kana haquu?",
   "cancelSheetFeeLabel": "Kaffaltii haqinsa",
   "cancelSheetFeeFetching": "Kaffaltii mirkanaa'aa jira…",
   "cancelSheetFeeUnknown": "Kaffaltiin yeroo haqamu mirkanaa'a",
   "cancelSheetFreeWindow": "Daqiiqaa {minutes}f bilisaan haquun ni danda'ama",
+  "@cancelSheetFreeWindow": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
   "cancelSheetConfirm": "Soora haqi",
   "cancelSheetDismiss": "Soora qabi",
   "cancelSheetReasonPrompt": "Akka fooyessinu nu gargaaraa — maaliif haquu jirtu?",
   "cancelSheetFeeLoading": "Kaffaltii haqinsa keessan mirkaneessaa jira…",
   "cancelSheetNoFee": "Yeroo ammaa kaffaltiin haqinsa hin jiru.",
   "cancelSheetCostNow": "Amma yoo haqtan {currency} {amount} itti baasa",
+  "@cancelSheetCostNow": {
+    "placeholders": {
+      "currency": {
+        "type": "String"
+      },
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
   "cancelSheetFreeWindowEnds": "Yeroon bilisaa {countdown} keessa xumura",
+  "cancelReasonOther": "Kan biroo",
+  "@cancelReasonOther": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "requestGpsUnavailablePin": "GPS hin jiru — pinii kaawuu ofii keessan qabsiisuuf harkisaa",
+  "@requestGpsUnavailablePin": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart reason list."
+  },
+  "@cancelSheetFreeWindowEnds": {
+    "placeholders": {
+      "countdown": {
+        "type": "String"
+      }
+    }
+  },
+  "cancelReasonWaitTooLong": "Yeroon eeguu dheeraa dha",
+  "@cancelReasonWaitTooLong": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonDriverWrongWay": "Daandeesaan karaan dogoggoraa deema",
+  "@cancelReasonDriverWrongWay": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonReschedule": "Yeroo haaromsuu nan barbaada",
+  "@cancelReasonReschedule": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonEmergency": "Haata keessaa",
+  "@cancelReasonEmergency": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
+  "cancelReasonPickupIncorrect": "Bakka kaawuu sirrii miti",
+  "@cancelReasonPickupIncorrect": {
+    "description": "§4.3 extracted from cancel_ride_sheet.dart kRideCancellationReasons."
+  },
   "cancelSheetTotalLabel": "Walii gala amma yoo haqtan",
   "cancelSheetDismissSemantics": "Soora qabi — fuula kana cufi, homaa hin haquu",
   "cancelSheetConfirmWithFee": "Haqi ({currency} {amount})",
+  "@cancelSheetConfirmWithFee": {
+    "placeholders": {
+      "currency": {
+        "type": "String"
+      },
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
   "cancelSheetSemanticsFeeSuffixUnknown": " — kaffaltiin yeroo haqamu mirkanaa'a",
   "cancelSheetSemanticsFeeSuffixFree": " — bilisaa, yeroo haqinsa keessatti",
   "rateSheetSubmit": "Sadarkaa ergi",
   "paymentAddCash": "Filannoo humnaa fe'uu dabalaa",
-
   "receiptTitle": "Ramaddii kaffaltii",
   "receiptBase": "Kaffaltii bu'uuraa",
   "receiptDistance": "Fageenya",
@@ -107,40 +236,53 @@
   "receiptEmailReceipt": "Ramaddiitiin email ergi",
   "receiptCashPending": "Mirkaneeffannoo saahilii daawwitoota eeggamaa jira",
   "receiptCashCollected": "Saahilliin daawwitoon fudhateera",
-
   "mapHealthBanner": "Taayila kartaa hin argamne — taayila cache'dhaa yookaan bakka buusaa mul'ataa jira.",
   "mapHealthRetry": "Taayila irra deebi'ii yaali",
-
   "locationGateDeniedTitle": "Hayyama iddoo barbaachisa",
   "locationGateDeniedBody": "Nidus saaffuu ka'umsaa kaa'uuf iddoo kee fayyadama. Adireesii harkaan barreessuu ni danda'orta.",
   "locationGateAllow": "Hayyami",
   "locationGateOpenSettings": "Qindaa'ot banaa",
   "locationGateServiceDisabledTitle": "Tajaajilli iddoo cufamaa dha",
   "locationGateTurnOn": "Tajaajila iddoo bani",
-
   "geocodeNoMatches": "Wanti wal-fakkaatu hin jiru — bakka beekamoo yookaan maqaa karaa yaali.",
   "geocodeDegraded": "Barbaachi hin argamne — bu'aawwan cache'dhaa mul'ataa jiru",
   "geocodeResolving": "Adireesiin mirkanaa'aa jira…",
-
   "notificationsTitle": "Beeksisa",
   "notificationsEmpty": "Ammaaf homaa hin jiru.",
   "notificationsMarkAllRead": "Hundumaa dubbifameetti mallatteessi",
-
   "settingsTitle": "Qindaa'otii",
   "settingsLanguageSection": "Afaan",
   "settingsLanguageSystem": "Mala sistamaa",
   "settingsLanguageEnglish": "English",
   "settingsLanguageAmharic": "አማርኛ",
   "settingsLanguageOromo": "Afaan Oromoo",
-
   "arNavTitle": "Qajeelsha AR lakkofsa",
   "arNavUnsupported": "AR meqaansaa kana irratti hin jiru — kaartaa 2D mul'isi",
   "arNavMapView": "Mul'ata kaartaa",
   "arNavArView": "Mul'ata AR",
   "arNavDistanceAhead": "Mmeetiraa {meters} dura",
-
+  "@arNavDistanceAhead": {
+    "placeholders": {
+      "meters": {
+        "type": "int"
+      }
+    }
+  },
   "accessibilityRecenterFab": "Kaartaa gara iddoo kootti deebisi",
   "accessibilityPickupPin": "Saaffuu ka'umsaa, sochoosuuf harkisi",
   "accessibilityDriverMarker": "Iddoo daawwitoon",
-  "accessibilityUnreadBadge": "Beekisa {count} dubbifame mitii"
+  "accessibilityUnreadBadge": "Beekisa {count} dubbifame mitii",
+  "@accessibilityUnreadBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "historyTitle": "Seenaa dheeffannaa",
+  "historyEmpty": "Ammaaf dheeffanni hin jiru",
+  "paymentNoneSaved": "Hanga ammaa karaa olkaa'amaa hin jiru. Gadi jalaa dabalaa.",
+  "@paymentNoneSaved": {
+    "description": "§4.3 extracted from payment_method_selector.dart empty state."
+  }
 }

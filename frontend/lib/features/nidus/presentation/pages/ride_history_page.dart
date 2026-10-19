@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 import '../../../../core/router/app_router.dart';
 import '../../data/repositories/ride_repository.dart';
 import '../bloc/ride_bloc.dart';
@@ -30,8 +31,10 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Ride History'),
-        backgroundColor: Colors.white,
+        // §4.3: routed through the ARB catalog (was a hardcoded English literal).
+        title: Text(context.l10n.historyTitle),
+        // §4.4: theme token (was hardcoded Colors.white) for dark-mode parity.
+        backgroundColor: AppColors.surface,
         elevation: 0,
       ),
       body: Column(
@@ -39,7 +42,8 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
           // Filter chips
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            color: Colors.white,
+            // §4.4: theme token (was hardcoded Colors.white).
+            color: AppColors.surface,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -104,7 +108,10 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
       },
       selectedColor: AppColors.primary,
       labelStyle: TextStyle(
-        color: isSelected ? Colors.white : AppColors.textPrimary,
+        // §4.4: named token — the chip's selected background is the primary
+        // (dark) fill, so white foreground is intentional; use the token so
+        // the intent is explicit rather than a raw Colors.white.
+        color: isSelected ? AppColors.textOnDark : AppColors.textPrimary,
       ),
     );
   }
@@ -392,9 +399,10 @@ class _RideHistoryPageState extends State<RideHistoryPage> {
         children: [
           Icon(Icons.history, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
-          const Text(
-            'No rides yet',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          // §4.3: routed through the ARB catalog (was a hardcoded English literal).
+          Text(
+            context.l10n.historyEmpty,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(

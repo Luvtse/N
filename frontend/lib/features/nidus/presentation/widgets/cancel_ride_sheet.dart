@@ -9,13 +9,18 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../l10n/l10n.dart';
 import '../../data/repositories/ride_repository.dart';
 
-const List<String> kRideCancellationReasons = <String>[
-  'Wait time too long',
-  'Driver is going the wrong way',
-  'I need to reschedule',
-  'Emergency',
-  'Pickup location is incorrect',
-  'Other',
+/// §4.3: the display strings are localized (Amharic/Oromo included), but the
+/// value sent to the backend stays a stable English code — cancel_reason is
+/// persisted verbatim and read by analytics/support tooling, so localizing
+/// the wire value would corrupt records. The list is built in build() because
+/// AppLocalizations requires context.
+const List<String> kRideCancellationReasonCodes = <String>[
+  'wait_time_too_long',
+  'driver_wrong_way',
+  'need_reschedule',
+  'emergency',
+  'pickup_incorrect',
+  'other',
 ];
 
 /// §2.5 — Authoritative cancellation-fee quote sheet.
@@ -162,13 +167,31 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
   }
 
   Future<void> _confirm() async {
-    final reason = _selectedReason ?? 'Other';
+    final reason = _selectedReason ?? 'other';
     setState(() => _submitting = true);
     try {
       await widget.onConfirmed(reason);
       if (mounted) Navigator.of(context).pop();
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// §4.3: maps the stable wire code to its localized display label.
+  String _reasonLabel(AppLocalizations l10n, String code) {
+    switch (code) {
+      case 'wait_time_too_long':
+        return l10n.cancelReasonWaitTooLong;
+      case 'driver_wrong_way':
+        return l10n.cancelReasonDriverWrongWay;
+      case 'need_reschedule':
+        return l10n.cancelReasonReschedule;
+      case 'emergency':
+        return l10n.cancelReasonEmergency;
+      case 'pickup_incorrect':
+        return l10n.cancelReasonPickupIncorrect;
+      default:
+        return l10n.cancelReasonOther;
     }
   }
 
@@ -243,7 +266,9 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
             Flexible(
               child: SingleChildScrollView(
                 child: Column(
-                  children: kRideCancellationReasons.map((reason) {
+                  children: kRideCancellationReasonCodes.map((code) {
+                    // §4.3: stable wire code + localized display label.
+                    final reason = code;
                     final selected = _selectedReason == reason;
                     // §4.4: announce selection state for each reason so a
                     // screen-reader user hears which option is checked.
@@ -257,7 +282,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
                         value: reason,
                         groupValue: _selectedReason,
                         title: Text(
-                          reason,
+                          _reasonLabel(context.l10n, code),
                           style: const TextStyle(fontSize: 14),
                         ),
                         onChanged: _submitting
@@ -328,7 +353,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
       BuildContext context, bool showFeeLine, CancellationQuote? quote) {
     if (showFeeLine && quote != null && quote.fee > 0) {
       return context.l10n.cancelSheetConfirmWithFee(
-          quote.currency, quote.fee.toStringAsFixed(2));
+          amount: quote.fee.toStringAsFixed(2), currency: quote.currency);
     }
     return context.l10n.cancelSheetConfirm;
   }
@@ -401,7 +426,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
           q.isFree
               ? context.l10n.cancelSheetNoFee
               : context.l10n.cancelSheetCostNow(
-                  q.currency, q.fee.toStringAsFixed(2)),
+                  amount: q.fee.toStringAsFixed(2), currency: q.currency),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,

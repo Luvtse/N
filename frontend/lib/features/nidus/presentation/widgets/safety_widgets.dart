@@ -108,9 +108,10 @@ class _DraggableSosThumbState extends State<_DraggableSosThumb> {
             color: AppColors.error,
             shape: BoxShape.circle,
           ),
+          // §4.4: white glyph on the error-red FAB is intentional; tokenized.
           child: const Icon(
             Icons.sos,
-            color: Colors.white,
+            color: AppColors.textOnDark,
             size: 28,
           ),
         ),
@@ -166,7 +167,8 @@ class _SosCountdownOverlayState extends State<SosCountdownOverlay> {
               const Text(
                 'Emergency SOS',
                 style: TextStyle(
-                  color: Colors.white,
+                  // §4.4: intentional white-on-dark overlay foreground.
+                  color: AppColors.textOnDark,
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
                 ),
@@ -202,7 +204,8 @@ class _SosCountdownOverlayState extends State<SosCountdownOverlay> {
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.error,
-                    foregroundColor: Colors.white,
+                    // §4.4: white-on-red accent is intentional; use the token.
+                    foregroundColor: AppColors.textOnDark,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                   onPressed: () => bloc.add(const ConfirmSos()),
@@ -232,7 +235,8 @@ class ShareTripSheet extends StatefulWidget {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      // §4.4: theme token (was hardcoded Colors.white) so dark mode renders.
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),

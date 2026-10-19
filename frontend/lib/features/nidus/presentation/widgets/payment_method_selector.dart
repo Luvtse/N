@@ -419,11 +419,12 @@ class _PaymentMethodSelectorState extends State<PaymentMethodSelector> {
           // Registry reachable but empty (fresh account): fall back to the
           // known wallet rails, clearly labeled.
           if (showRegistryFallback)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              // §4.3: extracted from a hardcoded English empty state.
               child: Text(
-                'No saved methods yet — choose a wallet rail below.',
-                style: TextStyle(
+                context.l10n.paymentNoneSaved,
+                style: const TextStyle(
                     fontSize: 12, color: AppColors.textSecondary),
               ),
             ),
