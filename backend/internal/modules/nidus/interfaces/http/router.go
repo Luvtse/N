@@ -319,7 +319,9 @@ func NewRouter(deps *Dependencies) http.Handler {
 
 	rideHandler := nidusHttp.NewRideHandler(
 		deps.DB,
-		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService, deps.PaymentMethods, deps.CashEnabled, deps.Promotions, deps.PromosEnabled),
+		// §3.5: stopoversEnabled gates persisting/repricing multi-stop rides;
+		// kill switch FEATURE_RIDE_STOP_OVERS=false rejects stops loudly.
+		commands.NewRequestRideHandler(deps.DB, deps.EventBus, deps.PricingService, deps.PaymentMethods, deps.CashEnabled, deps.Promotions, deps.PromosEnabled, deps.StopoversEnabled),
 		queries.NewGetRideQuery(deps.DB),
 		queries.NewListRidesQuery(deps.DB),
 		deps.MatchingEngine,
