@@ -54,6 +54,10 @@ var (
 	// other precondition failure (not completed yet, already collected).
 	ErrNotACashRide                     = errors.New("ride is not a cash ride")
 	ErrRideNotEligibleForCashCollection = errors.New("ride is not eligible for cash collection confirmation")
+
+	// §3.5 mid-trip destination change. Alias of the domain sentinel so HTTP
+	// error mapping and command consumers reference one source of truth.
+	ErrDestinationNotChangeable = entities.ErrDestinationNotChangeable
 )
 
 // PlatformCommissionRate is the marketplace take applied to every completed
