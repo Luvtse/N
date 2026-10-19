@@ -55,6 +55,10 @@ class PlaceAutocompleteSheet extends StatefulWidget {
     required this.geocoding,
     required this.title,
     this.bias,
+    /// §4.2: when a voice transcript falls below the booking-confidence
+    /// threshold, the request page reopens this sheet prefilled with the
+    /// raw transcript so the rider can correct it and pick a real place.
+    this.initialQuery,
     @Deprecated('The sheet pops with an outcome; callers act on it.')
         this.ignoredCurrentLocationHandler,
   });
@@ -65,6 +69,7 @@ class PlaceAutocompleteSheet extends StatefulWidget {
     required GeocodingService geocoding,
     required String title,
     LatLng? bias,
+    String? initialQuery,
   }) async {
     final outcome = await showModalBottomSheet<PlaceAutocompleteOutcome>(
       context: context,
@@ -77,6 +82,7 @@ class PlaceAutocompleteSheet extends StatefulWidget {
         geocoding: geocoding,
         title: title,
         bias: bias,
+        initialQuery: initialQuery,
       ),
     );
     return outcome ?? const PlaceAutocompleteOutcome.none();
@@ -98,6 +104,18 @@ class _PlaceAutocompleteSheetState extends State<PlaceAutocompleteSheet> {
   String _query = '';
 
   static const Duration _debounceDuration = Duration(milliseconds: 300);
+
+  @override
+  void initState() {
+    super.initState();
+    final seed = widget.initialQuery?.trim() ?? '';
+    if (seed.isNotEmpty) {
+      // Prefill + immediately run the debounced search pipeline so the rider
+      // sees results for the transcript without retyping (§4.2 fallback).
+      _controller.text = seed;
+      _onQueryChanged(seed);
+    }
+  }
 
   @override
   void dispose() {

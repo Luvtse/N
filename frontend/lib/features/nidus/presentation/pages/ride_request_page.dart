@@ -15,6 +15,7 @@ import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/notifications/notification_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/voice/voice_command_service.dart';
 import '../../data/repositories/ride_repository.dart' show RideStop, maxRideStops;
 import '../bloc/ride_bloc.dart';
 import '../widgets/location_input.dart';
@@ -92,6 +93,14 @@ class _RideRequestPageState extends State<RideRequestPage>
   bool get _stopoversEnabled =>
       getIt<FeatureFlagService>().isEnabled('ride_stopovers');
 
+  /// §4.2: client mirror of the voice_booking flag. When off, the mic FAB is
+  /// not built at all — no dead button (Global Rule 4/6).
+  bool get _voiceBookingEnabled =>
+      getIt<FeatureFlagService>().isEnabled('voice_booking');
+
+  /// §4.2: live command subscription while the listening sheet is open.
+  StreamSubscription<VoiceCommand>? _voiceSub;
+
   LatLng get _cameraCenter => _pickup.hasCoordinates
       ? LatLng(_pickup.lat!, _pickup.lng!)
       : _cameraFallback;
@@ -109,6 +118,10 @@ class _RideRequestPageState extends State<RideRequestPage>
   @override
   void dispose() {
     _reverseDebounce?.cancel();
+    // §4.2: never leak the voice stream or leave the mic hot after the page
+    // is gone (e.g. navigation to tracking right after a booking command).
+    _voiceSub?.cancel();
+    VoiceCommandService().stopListening();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -231,6 +244,17 @@ class _RideRequestPageState extends State<RideRequestPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
+      // §4.2 Voice Booking GA: mic FAB gated by the voice_booking flag
+      // (default off in production; kill switch documented in
+      // config/feature-flags/flags.json). When off the FAB is not built.
+      floatingActionButton: _voiceBookingEnabled
+          ? FloatingActionButton(
+              onPressed: _openVoiceSheet,
+              backgroundColor: AppColors.primary,
+              tooltip: 'Book with voice',
+              child: const Icon(Icons.mic, color: Colors.white),
+            )
+          : null,
       appBar: AppBar(
         title: const Text('Request a Ride'),
         backgroundColor: Colors.white,
@@ -1099,10 +1123,297 @@ class _RideRequestPageState extends State<RideRequestPage>
     return '$d $hm';
   }
 
+  // ==========================================================================
+  // §4.2 Voice Booking GA (Request page mic FAB)
+  // ==========================================================================
+
+  /// Opens the listening sheet. The recognizer is initialized lazily here so
+  /// the mic permission prompt only fires when the rider actually taps the
+  /// FAB. A failed initialization shows an honest "unavailable" state — never
+  /// a fake listening animation.
+  Future<void> _openVoiceSheet() async {
+    final service = VoiceCommandService();
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => _VoiceListeningSheet(
+        service: service,
+        onCommand: (command) async {
+          // Pop the listening sheet first; all follow-up surfaces (autocomplete
+          // fallback, snackbar) attach to the page context afterwards.
+          if (Navigator.of(sheetContext).canPop()) {
+            Navigator.of(sheetContext).pop();
+          }
+          await _handleVoiceCommand(command);
+        },
+      ),
+    );
+  }
+
+  /// Routes a parsed [VoiceCommand] into the SAME flows the manual UI uses.
+  Future<void> _handleVoiceCommand(VoiceCommand command) async {
+    switch (command.type) {
+      case CommandType.bookRide:
+        final destination =
+            (command.parameters['destination'] as String? ?? '').trim();
+        if (destination.isEmpty) {
+          _showVoiceSnack('No destination heard — tap the dropoff field or '
+              'say "ride to <place>".');
+          return;
+        }
+        if (!command.isHighConfidence) {
+          // Low confidence: open the autocomplete sheet prefilled with the
+          // transcript so the rider confirms/corrects before anything is set.
+          final outcome = await PlaceAutocompleteSheet.show(
+            context,
+            geocoding: _geocoding,
+            title: 'Confirm your destination',
+            bias: _pickup.hasCoordinates
+                ? LatLng(_pickup.lat!, _pickup.lng!)
+                : null,
+            initialQuery: destination,
+          );
+          if (!mounted) return;
+          if (outcome.kind == PlaceAutocompleteOutcomeKind.suggestion) {
+            _applySuggestion(isPickup: false, suggestion: outcome.suggestion!);
+          }
+          return;
+        }
+        // High confidence: resolve through the same geocoding chain the typed
+        // path uses. Zero matches must NOT silently book — fall back to the
+        // prefilled sheet instead of guessing a place.
+        List<PlaceSuggestion> matches;
+        try {
+          matches = await _geocoding.autocomplete(
+            destination,
+            bias: _pickup.hasCoordinates
+                ? LatLng(_pickup.lat!, _pickup.lng!)
+                : null,
+            limit: 3,
+          );
+        } catch (_) {
+          if (!mounted) return;
+          _showVoiceSnack('Location search unavailable right now — pick your '
+              'destination manually.');
+          final outcome = await PlaceAutocompleteSheet.show(
+            context,
+            geocoding: _geocoding,
+            title: 'Set dropoff location',
+            bias: _pickup.hasCoordinates
+                ? LatLng(_pickup.lat!, _pickup.lng!)
+                : null,
+            initialQuery: destination,
+          );
+          if (!mounted) return;
+          if (outcome.kind == PlaceAutocompleteOutcomeKind.suggestion) {
+            _applySuggestion(isPickup: false, suggestion: outcome.suggestion!);
+          }
+          return;
+        }
+        if (!mounted) return;
+        if (matches.isEmpty) {
+          _showVoiceSnack('"$destination" didn\'t match any place — pick it '
+              'from the list.');
+          final outcome = await PlaceAutocompleteSheet.show(
+            context,
+            geocoding: _geocoding,
+            title: 'Set dropoff location',
+            bias: _pickup.hasCoordinates
+                ? LatLng(_pickup.lat!, _pickup.lng!)
+                : null,
+            initialQuery: destination,
+          );
+          if (!mounted) return;
+          if (outcome.kind == PlaceAutocompleteOutcomeKind.suggestion) {
+            _applySuggestion(isPickup: false, suggestion: outcome.suggestion!);
+          }
+          return;
+        }
+        // Single resolved destination -> exactly what tapping a suggestion in
+        // the sheet would do; the rider still presses "Request" to book.
+        _applySuggestion(isPickup: false, suggestion: matches.first);
+        _showVoiceSnack('Destination set to ${matches.first.name}. Review and '
+            'tap Request when ready.');
+        break;
+
+      case CommandType.cancelRide:
+      case CommandType.driverLocation:
+        // Only meaningful mid-ride; on the request page they are no-ops with
+        // honest guidance rather than dead actions.
+        _showVoiceSnack('You have no active ride right now.');
+        break;
+
+      case CommandType.error:
+        _showVoiceSnack(command.feedback);
+        break;
+
+      case CommandType.noMatch:
+      case CommandType.help:
+        _showVoiceSnack(command.feedback);
+        break;
+
+      // Non-ride intents (hotel/food/navigate/AR/home) belong to other
+      // modules; the request page does not fake-handle them. Exhaustive
+      // listing (no default) so new CommandType values fail compilation
+      // here instead of silently falling through.
+      case CommandType.findHotel:
+      case CommandType.orderFood:
+      case CommandType.navigate:
+      case CommandType.enableAR:
+      case CommandType.goHome:
+        _showVoiceSnack('That command isn\'t available while requesting a '
+            'ride.');
+        break;
+    }
+  }
+
+  void _showVoiceSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
+    );
+  }
+
   void _handleRideState(BuildContext context, RideState state) {
     if (state is RideRequested) {
       context.go('/nidus/tracking/${state.rideId}');
     }
+  }
+}
+
+/// §4.2: listening surface behind the mic FAB. Shows live transcript, honest
+/// unavailable/error states (no fake pulse animation when the recognizer is
+/// dead), and forwards every finalized [VoiceCommand] to the page for routing.
+class _VoiceListeningSheet extends StatefulWidget {
+  final VoiceCommandService service;
+  final Future<void> Function(VoiceCommand command) onCommand;
+
+  const _VoiceListeningSheet({
+    required this.service,
+    required this.onCommand,
+  });
+
+  @override
+  State<_VoiceListeningSheet> createState() => _VoiceListeningSheetState();
+}
+
+class _VoiceListeningSheetState extends State<_VoiceListeningSheet> {
+  StreamSubscription<VoiceCommand>? _sub;
+  String _transcript = '';
+  String? _unavailableReason;
+  bool _starting = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  Future<void> _start() async {
+    // Commands emitted during initialize()/listen() startup are consumed via
+    // the broadcast stream subscribed below; subscribe first to avoid missing
+    // an early error event.
+    _sub = widget.service.commandStream.listen(_onCommand);
+    final ok = await widget.service.startListening();
+    if (!mounted) return;
+    setState(() {
+      _starting = false;
+      if (!ok) {
+        _unavailableReason = 'Voice input unavailable — microphone permission '
+            'denied or recognizer failed to start.';
+      }
+    });
+  }
+
+  void _onCommand(VoiceCommand command) {
+    if (!mounted) return;
+    setState(() => _transcript = widget.service.lastCommand);
+    // Only ride-relevant + feedback-worthy commands close the sheet; the page
+    // owns what happens next (autocomplete fallback, destination fill, etc.).
+    widget.onCommand(command);
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    widget.service.stopListening();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Speak your ride request',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Try "ride to Bole Airport" or say "help" for examples.',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 20),
+            if (_unavailableReason != null)
+              Row(
+                children: [
+                  const Icon(Icons.mic_off,
+                      color: AppColors.error, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _unavailableReason!,
+                      style: const TextStyle(
+                          color: AppColors.error, fontSize: 14),
+                    ),
+                  ),
+                ],
+              )
+            else ...[
+              Row(
+                children: [
+                  Icon(
+                    _starting ? Icons.hourglass_top : Icons.mic,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _starting
+                          ? 'Starting microphone…'
+                          : (_transcript.isEmpty
+                              ? 'Listening…'
+                              : '"$_transcript"'),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

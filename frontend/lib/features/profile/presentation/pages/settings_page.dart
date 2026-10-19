@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -15,8 +16,12 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _emailNotifications = true;
   bool _pushNotifications = true;
   bool _darkMode = false;
-  String _language = 'English';
   String _currency = 'USD';
+
+  /// Currently persisted locale code ('en'/'am'/'om') or null for system
+  /// default (§4.3). Read once at build from Hive via LocaleController so the
+  /// switcher reflects what main.dart is actually applying.
+  String? get _languageCode => LocaleController.readSavedCode();
 
   @override
   Widget build(BuildContext context) {
@@ -68,15 +73,17 @@ class _SettingsPageState extends State<SettingsPage> {
 
           const SizedBox(height: 24),
 
-          // Language & Currency
+          // §4.3 Language switcher — real, persisted, live-applying. The old
+          // dropdown listed Spanish/French/German which the app does not ship;
+          // showing unimplemented locales would be a placeholder surface, so
+          // it is replaced with the three locales backed by ARB files.
+          _buildSectionTitle('Language'),
+          _buildLanguageRadioTiles(),
+
+          const SizedBox(height: 24),
+
+          // Regional
           _buildSectionTitle('Regional'),
-          _buildDropdownTile(
-            icon: Icons.language,
-            title: 'Language',
-            value: _language,
-            items: ['English', 'Spanish', 'French', 'German'],
-            onChanged: (value) => setState(() => _language = value!),
-          ),
           _buildDropdownTile(
             icon: Icons.attach_money,
             title: 'Currency',
@@ -157,6 +164,48 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// §4.3 Language switcher rows. Each choice persists via
+  /// LocaleController.saveCode() (Hive 'settings' box) and immediately
+  /// rebuilds the MaterialApp through the LocaleController.apply notifier —
+  /// no restart required, no dead dropdown.
+  Widget _buildLanguageRadioTiles() {
+    final String? selected = _languageCode;
+    return Column(
+      children: [
+        for (final LocaleChoice choice in LocaleController.choices)
+          Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: RadioListTile<String?>(
+              secondary: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.language, color: AppColors.primary),
+              ),
+              title: Text(
+                choice.nativeLabel,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: choice.code == null
+                  ? Text(
+                      'Follow the device language',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    )
+                  : null,
+              value: choice.code,
+              groupValue: selected,
+              onChanged: (code) async {
+                await LocaleController.saveCode(code);
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
+      ],
     );
   }
 

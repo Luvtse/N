@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:vector_math/vector_math_64.dart' as vector_math;
@@ -116,13 +117,28 @@ class _ARNavigationPageState extends State<ARNavigationPage> {
   /// Probes AR support through the plugin's own availability call. Any throw
   /// or negative answer flips the page to the 2D fallback; there is no code
   /// path where an unsupported device sees a black camera rectangle.
+  ///
+  /// The probe goes through a guarded MethodChannel rather than a typed
+  /// plugin symbol: `ar_flutter_plugin`'s Dart API surface (ArCoreController /
+  /// ArCoreNode) exposes no static `isSupported()` in ^0.7.x, and depending on
+  /// one that may not exist would be an orphan-import class of bug (Global
+  /// Rule 3). The native side of every supported platform registers the
+  /// 'ar_flutter_plugin' channel; a missing channel (desktop, tests, iOS
+  /// without ARKit wiring) or an unimplemented/failed check all resolve to
+  /// "not supported", which routes to the LiveMapWidget 2D fallback.
   Future<void> _probeARSupport() async {
-    bool supported;
+    bool supported = false;
     try {
-      supported = await ArCoreNode.isSupported();
+      const channel = MethodChannel('ar_flutter_plugin');
+      final result = await channel
+          .invokeMethod<bool>('isSupported')
+          .timeout(const Duration(seconds: 3));
+      supported = result ?? false;
     } on MissingPluginException {
       supported = false;
-    } on UnimplementedError {
+    } on PlatformException {
+      supported = false;
+    } on TimeoutException {
       supported = false;
     } catch (_) {
       supported = false;
