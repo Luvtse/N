@@ -53,7 +53,9 @@ class CancelRideSheet extends StatefulWidget {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      // §4.4 dark-mode token: sheet surface follows the theme instead of a
+      // hardcoded white that clips invisible text in dark mode.
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -241,18 +243,26 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
                 child: Column(
                   children: kRideCancellationReasons.map((reason) {
                     final selected = _selectedReason == reason;
-                    return RadioListTile<String>(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      activeColor: AppColors.primary,
-                      value: reason,
-                      groupValue: _selectedReason,
-                      title:
-                          Text(reason, style: const TextStyle(fontSize: 14)),
-                      onChanged: _submitting
-                          ? null
-                          : (value) =>
-                              setState(() => _selectedReason = value),
+                    // §4.4: announce selection state for each reason so a
+                    // screen-reader user hears which option is checked.
+                    return Semantics(
+                      selected: selected,
+                      checked: selected,
+                      child: RadioListTile<String>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: AppColors.primary,
+                        value: reason,
+                        groupValue: _selectedReason,
+                        title: Text(
+                          reason,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        onChanged: _submitting
+                            ? null
+                            : (value) =>
+                                setState(() => _selectedReason = value),
+                      ),
                     );
                   }).toList(),
                 ),
@@ -262,32 +272,46 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    child: const Text('Keep ride'),
+                  // §4.4 accessibility: announced as a keep-ride action, not
+                  // just the visible label, so TalkBack/VoiceOver users get
+                  // the consequence of the button before activating it.
+                  child: Semantics(
+                    button: true,
+                    label: 'Keep ride — closes this sheet and cancels nothing',
+                    child: OutlinedButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                      child: const Text('Keep ride'),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.error,
-                      foregroundColor: Colors.white,
+                  child: Semantics(
+                    button: true,
+                    destructive: true,
+                    label: 'Cancel ride'
+                        '${_feeLabelForSemantics(showFeeLine, quote)}',
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.error,
+                        foregroundColor:
+                            Theme.of(context).colorScheme.onError,
+                      ),
+                      onPressed: _submitting ? null : _confirm,
+                      icon: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.textOnDark,
+                              ),
+                            )
+                          : const Icon(Icons.cancel_outlined, size: 18),
+                      label: Text(_confirmLabel(showFeeLine, quote)),
                     ),
-                    onPressed: _submitting ? null : _confirm,
-                    icon: _submitting
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.cancel_outlined, size: 18),
-                    label: Text(_confirmLabel(showFeeLine, quote)),
                   ),
                 ),
               ],
@@ -303,6 +327,21 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
       return 'Cancel (${quote.currency} ${quote.fee.toStringAsFixed(2)})';
     }
     return 'Cancel ride';
+  }
+
+  /// §4.4: fee suffix for the cancel button's Semantics label. Mirrors
+  /// [_confirmLabel] so screen-reader users hear the same authoritative fee
+  /// sighted users see; when no quote is available it says exactly that —
+  /// never a fabricated number.
+  String _feeLabelForSemantics(bool showFeeLine, CancellationQuote? quote) {
+    if (showFeeLine && quote != null && quote.fee > 0) {
+      return ' — a ${quote.fee.toStringAsFixed(2)} ${quote.currency} '
+          'cancellation fee will be charged';
+    }
+    if (showFeeLine && quote != null && quote.fee == 0) {
+      return ' — free, inside the cancellation window';
+    }
+    return ' — fee will be confirmed on cancel';
   }
 
   Widget _buildFeeSection(bool showFeeLine, CancellationQuote? quote) {

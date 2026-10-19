@@ -6,6 +6,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../../core/config/feature_flag_service.dart';
+
 import '../../../../core/network/api_client.dart';
 import '../../data/repositories/ride_repository.dart';
 import '../../data/repositories/safety_repository.dart';
@@ -779,6 +781,12 @@ class RideError extends RideState {
 
 class RideBloc extends Bloc<RideEvent, RideState> {
   final RideRepository _rideRepository;
+
+  /// §4.5: optional runtime-flag source. When null (e.g. unit tests that
+  /// construct the bloc directly) the detector treats `ridecheck_anomaly`
+  /// as OFF — detection stays dormant rather than running unflagged in
+  /// production-shaped code paths. DI always injects the loaded service.
+  final FeatureFlagService? _featureFlags;
   final RequestRideUseCase _requestRideUseCase;
   final GetRideStatusUseCase _getRideStatusUseCase;
   final SafetyRepository _safetyRepository;
@@ -908,11 +916,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     required GetRideStatusUseCase getRideStatusUseCase,
     required SafetyRepository safetyRepository,
     String? Function()? currentUserIdResolver,
+    FeatureFlagService? featureFlags,
   })  : _rideRepository = rideRepository,
         _requestRideUseCase = requestRideUseCase,
         _getRideStatusUseCase = getRideStatusUseCase,
         _safetyRepository = safetyRepository,
         _currentUserId = currentUserIdResolver,
+        _featureFlags = featureFlags,
         super(const RideInitial()) {
     on<RequestRide>(_onRequestRide);
     on<LoadRide>(_onLoadRide);
@@ -956,6 +966,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     ReportRidePosition event,
     Emitter<RideState> emit,
   ) async {
+    // §4.5 kill switch: the detector only runs when the `ridecheck_anomaly`
+    // runtime flag is enabled (default off in both flags.json copies). With
+    // the flag off — or with no flag service injected — samples are dropped
+    // here so no anomaly can ever trip and no prompt can surface.
+    final flags = _featureFlags;
+    if (flags == null || !flags.isEnabled('ridecheck_anomaly')) return;
+
     // Samples from a different ride than the one being tracked are ignored
     // outright; a ride-id change resets the caches first.
     if (_detectorRideId != null && _detectorRideId != event.rideId) {
