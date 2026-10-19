@@ -43,8 +43,12 @@ type RideHandler struct {
 	// confirmCashCmd completes the §3.1 cash loop: driver-side confirmation
 	// that physical collection happened (completed -> paid + settlement event).
 	confirmCashCmd *commands.ConfirmCashCollectionHandler
-	preSelfie      PreSelfieAttacher
-	etaService     *services.ETAService
+	// changeDestCmd is the §3.5 mid-trip destination-change command. Injected
+	// post-construction via SetLifecycle; nil means the route honestly reports
+	// 501 NOT_IMPLEMENTED instead of silently accepting a body it cannot price.
+	changeDestCmd *commands.ChangeDestinationHandler
+	preSelfie     PreSelfieAttacher
+	etaService    *services.ETAService
 	// receiptMailer is the §3.4 optional email-receipt port (see
 	// email_receipt_handler.go). Injected post-construction via
 	// SetReceiptMailer; nil means the route honestly reports 503
@@ -96,6 +100,10 @@ type LifecycleCommands struct {
 	Rate     *commands.RateRideHandler
 	// ConfirmCashCollection is the §3.1 driver-side cash-collection confirm.
 	ConfirmCashCollection *commands.ConfirmCashCollectionHandler
+	// ChangeDestination is the §3.5 rider mid-trip dropoff replacement with
+	// server-recomputed fare. Mounted on the router only when stopovers are
+	// enabled; nil-safe handler reports 501 otherwise.
+	ChangeDestination *commands.ChangeDestinationHandler
 }
 
 // SetLifecycle wires the lifecycle command handlers into this HTTP handler.
@@ -106,6 +114,7 @@ func (h *RideHandler) SetLifecycle(lc LifecycleCommands) {
 	h.cancelRideCmd = lc.Cancel
 	h.rateRideCmd = lc.Rate
 	h.confirmCashCmd = lc.ConfirmCashCollection
+	h.changeDestCmd = lc.ChangeDestination
 }
 
 // NewRideHandler creates a new ride handler
@@ -145,6 +154,52 @@ type RequestRideRequest struct {
 	RideType        string  `json:"ride_type"`
 	PaymentMethodID string  `json:"payment_method_id"`
 	ScheduledAt     string  `json:"scheduled_at,omitempty"`
+	// §3.5 Stopovers: ordered intermediate waypoints (max 3), supplied in the
+	// order the rider wants them visited. Rejected with 409 STOPOVERS_DISABLED
+	// when the feature flag is off — never silently dropped into a direct-trip
+	// price (Global Rule 1). Address is the autocomplete label; coordinates are
+	// authoritative.
+	Stops []RideStopRequest `json:"stops,omitempty"`
+}
+
+// RideStopRequest is one intermediate stop in a POST /rides body (§3.5).
+type RideStopRequest struct {
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+	Address string  `json:"address,omitempty"`
+}
+
+// ChangeDestinationRequest is the JSON body for PATCH /rides/{rideID}/destination
+// (§3.5). Coordinates are required and validated by the command layer; the
+// address is the client-resolved display label (autocomplete/reverse geocode)
+// and is optional — an empty address keeps the previously stored label rather
+// than blanking it (COALESCE semantics inside the command).
+type ChangeDestinationRequest struct {
+	DropoffLat     float64 `json:"dropoff_lat"`
+	DropoffLng     float64 `json:"dropoff_lng"`
+	DropoffAddress string  `json:"dropoff_address,omitempty"`
+}
+
+// ChangeDestinationResponse echoes the authoritative before/after money so the
+// rider's confirmation sheet shows exactly what they will pay — the same
+// numbers persisted on the ride record, never a client-side estimate.
+type ChangeDestinationResponse struct {
+	RideID       uuid.UUID `json:"ride_id"`
+	PreviousFare float64   `json:"previous_fare"`
+	NewFare      float64   `json:"new_fare"`
+	Currency     string    `json:"currency"`
+	DistanceKm   float64   `json:"distance_km"`
+}
+
+// RideStopResponse is one intermediate stop on a ride DTO (§3.5). Seq is the
+// 1-based visit order; ArrivedAt is only present when arrival was genuinely
+// recorded, never defaulted.
+type RideStopResponse struct {
+	Seq       int        `json:"seq"`
+	Lat       float64    `json:"lat"`
+	Lng       float64    `json:"lng"`
+	Address   string     `json:"address,omitempty"`
+	ArrivedAt *time.Time `json:"arrived_at,omitempty"`
 }
 
 // PreSelfieInfo is the rider-facing pre-selfie verification state embedded on
@@ -211,6 +266,11 @@ type RideResponse struct {
 	PendingCashCollection *bool      `json:"pending_cash_collection,omitempty"`
 	// §3.6 Scheduled Rides: requested pickup time; omitted for on-demand rides.
 	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
+	// §3.5 Stopovers & Mid-Trip Destination Change: ordered intermediate stops
+	// loaded from ride_stops. ALWAYS serialized as an array (empty when none) —
+	// never null, so clients render a real "no stops" state instead of guessing
+	// (Global Rule 2).
+	Stops []RideStopResponse `json:"stops"`
 	// §3.2 Promo Codes & Coupons. PromoCode is the server-normalized code that
 	// was actually applied to this ride (omitted when no discount was applied —
 	// never an empty-string fake); PromoDiscount is the amount subtracted from
@@ -338,7 +398,14 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 		scheduledAt = &utc
 	}
 
-	// Execute command
+	// Execute command. §3.5: intermediate stops are mapped verbatim into the
+	// command inputs; validation (count cap, coordinates, coincident waypoints)
+	// and the kill-switch rejection live in the command layer so there is one
+	// source of truth for stop semantics.
+	stopInputs := make([]commands.RideStopInput, 0, len(req.Stops))
+	for _, s := range req.Stops {
+		stopInputs = append(stopInputs, commands.RideStopInput{Lat: s.Lat, Lng: s.Lng, Address: s.Address})
+	}
 	result, err := h.requestRideCmd.Execute(ctx, &commands.RequestRideCommand{
 		UserID:          userID,
 		PickupLat:       req.PickupLat,
@@ -350,6 +417,7 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 		RideType:        req.RideType,
 		PaymentMethodID: req.PaymentMethodID,
 		ScheduledAt:     scheduledAt,
+		Stops:           stopInputs,
 	})
 	if err != nil {
 		status, code, msg := mapCommandError(err)
@@ -365,6 +433,7 @@ func (h *RideHandler) RequestRide(w http.ResponseWriter, r *http.Request) {
 		"status":  result.Status,
 		"fare":    result.FareAmount,
 		"eta":     result.ETAMinutes,
+		"stops":   stopInputs, // echo of the persisted waypoint order ([] when none)
 	})
 }
 
@@ -775,9 +844,61 @@ func mapLifecycleError(err error) (int, string, string) {
 		return http.StatusConflict, "NOT_A_CASH_RIDE", "this ride was not requested with cash payment"
 	case errors.Is(err, commands.ErrRideNotEligibleForCashCollection):
 		return http.StatusConflict, "CASH_NOT_ELIGIBLE", "ride is not awaiting cash collection"
+	// §3.5 mid-trip destination change sentinels. Wrong-state or lost-race gets
+	// a loud 409 so the client's confirmation sheet can re-fetch the ride and
+	// show current truth — never a silent success on a stale fare.
+	case errors.Is(err, commands.ErrDestinationNotChangeable):
+		return http.StatusConflict, "DESTINATION_NOT_CHANGEABLE", "destination can only be changed while the ride is en-route or in progress"
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}
+}
+
+// ChangeDestination handles PATCH /api/v1/nidus/rides/{rideID}/destination
+// (rider, §3.5). The command recomputes the fare server-side over the full
+// waypoint chain (pickup -> existing stops -> NEW dropoff) and persists it
+// race-guarded; the response carries the authoritative previous/new fares so
+// the rider's confirmation UI shows exactly what they will pay. Modeled on
+// ConfirmCashCollection: auth from JWT subject, nil-command guard reports 501
+// honestly when the route was mounted without its wiring.
+func (h *RideHandler) ChangeDestination(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	rideID, ok := parseRideID(w, r)
+	if !ok {
+		return
+	}
+	var req ChangeDestinationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if h.changeDestCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "destination change not yet wired")
+		return
+	}
+	res, err := h.changeDestCmd.Execute(r.Context(), commands.ChangeDestinationCommand{
+		RideID:      rideID,
+		UserID:      userID,
+		DropoffLat:  req.DropoffLat,
+		DropoffLng:  req.DropoffLng,
+		DropoffAddr: req.DropoffAddress,
+	})
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, ChangeDestinationResponse{
+		RideID:       res.RideID,
+		PreviousFare: res.PreviousFare,
+		NewFare:      res.NewFare,
+		Currency:     res.Currency,
+		DistanceKm:   res.DistanceKm,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, body interface{}) {
@@ -1171,6 +1292,20 @@ func toRideResponse(ride *entities.Ride) RideResponse {
 	// verbatim for scheduled ones so History can render the "Scheduled" chip.
 	resp.ScheduledAt = ride.ScheduledAt
 
+	// §3.5 Stopovers: always an array (empty when none) — never null, so the
+	// client's map-fit and stop list render a real "no stops" state without
+	// null-coalescing guesses. Loaded by GetRideQuery/ListRidesQuery from the
+	// ride_stops table in seq order.
+	resp.Stops = make([]RideStopResponse, 0, len(ride.Stops))
+	for _, s := range ride.Stops {
+		sr := RideStopResponse{Seq: s.Seq, Lat: s.Lat, Lng: s.Lng, Address: s.Address}
+		if s.ArrivedAt != nil {
+			a := *s.ArrivedAt
+			sr.ArrivedAt = &a
+		}
+		resp.Stops = append(resp.Stops, sr)
+	}
+
 	// §3.2 promo fields. Honest omitempty pointers: both are omitted when no
 	// code was applied (empty snapshot / zero discount), never an empty-string
 	// fake. When present they are the server-computed values persisted at
@@ -1250,6 +1385,17 @@ func mapCommandError(err error) (int, string, string) {
 		return http.StatusBadRequest, "SCHEDULED_TOO_SOON", err.Error()
 	case errors.Is(err, commands.ErrScheduledTooFar):
 		return http.StatusBadRequest, "SCHEDULED_TOO_FAR_OUT", err.Error()
+	// §3.5 stopovers vocabulary. Count/coordinate problems are client-
+	// correctable 400s carrying the server's own reason string; the kill-switch
+	// rejection is a loud 409 (the request as sent can never succeed while the
+	// flag is off — silently pricing it as a direct trip would violate money
+	// correctness, Global Rule 1).
+	case errors.Is(err, entities.ErrTooManyStops):
+		return http.StatusBadRequest, "TOO_MANY_STOPS", err.Error()
+	case errors.Is(err, entities.ErrInvalidStopCoordinates):
+		return http.StatusBadRequest, "INVALID_STOP_COORDINATES", err.Error()
+	case errors.Is(err, commands.ErrStopoversDisabled):
+		return http.StatusConflict, "STOPOVERS_DISABLED", "stopovers are currently unavailable"
 	// §3.2 promo error vocabulary. An unknown/expired/rejected code is a
 	// client-correctable 400 carrying the server's own reason string; the
 	// redeem/mine routes are mounted only behind FEATURE_PROMOTIONS, but the
