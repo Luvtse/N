@@ -212,10 +212,10 @@
           ]
         },
         "metadata": {
-          "owner": "mobile-team@nidaw.com",
-          "created": "2026-04-01T00:00:00Z",
+          "owner": "mobility-team@nidaw.com",
+          "created": "2026-10-19T00:00:00Z",
           "expires": null,
-          "description": "AR-powered navigation for rides. Kill-switch: set enabled=false to force-off in every environment regardless of rollout/targeting (enforced by FeatureFlagService.isEnabled and the router's compile-time guard). Route /nidus/ar-nav/:rideId is registered but flag-gated; entry point on Tracking page only renders when this flag resolves true during DriverEnRoute.",
+          "description": "Price-extension negotiation (§4.6): on NoDriversFound, offers +10%/+20% fare re-broadcast through the existing matching engine instead of popping back out of the ride. KILL-SWITCH: Set enabled=false; the Flutter sheet hides its extension actions and the backend POST /nidus/rides/{id}/price-extension returns FEATURE_DISABLED. Rides already extended keep the higher fare (server-recomputed, paid at receipt) — no rollback needed because riders explicitly consented.",
           "category": "experimental",
           "abTestId": "ar-nav-2026-q2"
         }
@@ -421,6 +421,81 @@
           "category": "ride_parity",
           "abTestId": null,
           "killSwitch": "Set FEATURE_RIDE_STOP_OVERS=false and redeploy; StopoversEnabled becomes false, the PATCH destination route is not mounted (404), RequestRide rejects any request carrying stops with STOPOVERS_DISABLED, and the Flutter request/tracking surfaces hide the Add-stop and Change-destination affordances entirely. Existing ride_stops rows are untouched in Postgres."
+        }
+      },
+      "voice_booking": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ],
+          "deviceTypes": [
+            "ios",
+            "android"
+          ]
+        },
+        "metadata": {
+          "owner": "mobility-team@nidaw.com",
+          "created": "2026-10-19T00:00:00Z",
+          "expires": null,
+          "description": "Price-extension negotiation (§4.6): on NoDriversFound, offers +10%/+20% fare re-broadcast through the existing matching engine instead of popping back out of the ride. KILL-SWITCH: Set enabled=false; the Flutter sheet hides its extension actions and the backend POST /nidus/rides/{id}/price-extension returns FEATURE_DISABLED. Rides already extended keep the higher fare (server-recomputed, paid at receipt) — no rollback needed because riders explicitly consented.",
+          "category": "experimental",
+          "abTestId": "ar-nav-2026-q2"
+        }
+      },
+      "ridecheck_anomaly": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ],
+          "deviceTypes": [
+            "ios",
+            "android"
+          ]
+        },
+        "metadata": {
+          "owner": "mobility-team@nidaw.com",
+          "created": "2026-10-19T00:00:00Z",
+          "expires": null,
+          "description": "Price-extension negotiation (§4.6): on NoDriversFound, offers +10%/+20% fare re-broadcast through the existing matching engine instead of popping back out of the ride. KILL-SWITCH: Set enabled=false; the Flutter sheet hides its extension actions and the backend POST /nidus/rides/{id}/price-extension returns FEATURE_DISABLED. Rides already extended keep the higher fare (server-recomputed, paid at receipt) — no rollback needed because riders explicitly consented.",
+          "category": "experimental",
+          "abTestId": "ar-nav-2026-q2"
+        }
+      },
+      "price_extension": {
+        "enabled": false,
+        "rolloutPercentage": 0,
+        "targeting": {
+          "environments": [
+            "development",
+            "staging"
+          ],
+          "regions": [
+            "ET"
+          ],
+          "deviceTypes": [
+            "ios",
+            "android"
+          ]
+        },
+        "metadata": {
+          "owner": "mobility-team@nidaw.com",
+          "created": "2026-10-19T00:00:00Z",
+          "expires": null,
+          "description": "Price-extension negotiation (§4.6): on NoDriversFound, offers +10%/+20% fare re-broadcast through the existing matching engine instead of popping back out of the ride. KILL-SWITCH: Set enabled=false; the Flutter sheet hides its extension actions and the backend POST /nidus/rides/{id}/price-extension returns FEATURE_DISABLED. Rides already extended keep the higher fare (server-recomputed, paid at receipt) — no rollback needed because riders explicitly consented.",
+          "category": "experimental",
+          "abTestId": "ar-nav-2026-q2"
         }
       }
     },

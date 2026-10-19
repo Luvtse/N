@@ -77,6 +77,11 @@ dependencies:
   speech_to_text: ^6.5.1
   flutter_tts: ^3.8.5
 
+  # §4.1 AR navigation uses Vector3/Vector4 transforms directly (flutter_map
+  # and flutter depend on vector_math transitively, but Global Rule 3 requires
+  # every imported package to be explicitly declared before its importer ships).
+  vector_math: ^2.1.2
+
   # Image
   image_picker: ^1.0.4
 
