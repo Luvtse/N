@@ -58,10 +58,18 @@ var ErrInvalidMultiplier = errors.New("price extension multiplier is not an allo
 var AllowedPriceExtensionMultipliers = []float64{1.10, 1.20}
 
 // IsAllowedPriceExtensionMultiplier reports whether m is one of the approved
-// buckets, compared with an epsilon because the value arrives as JSON float.
+// buckets. Comparison uses a sub-cent-scale epsilon (5e-5) purely to absorb
+// JSON float round-tripping of the exact literals 1.10/1.20; anything beyond
+// that (e.g. 1.1001) is a tampered or buggy client value and is rejected —
+// never silently clamped into an approved bucket.
 func IsAllowedPriceExtensionMultiplier(m float64) bool {
+	const eps = 0.00005
 	for _, allowed := range AllowedPriceExtensionMultipliers {
-		if diff := m - allowed; diff < 0.0001 && diff > -0.0001 {
+		diff := m - allowed
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < eps {
 			return true
 		}
 	}

@@ -744,6 +744,12 @@ class RideStatusUpdate {
   /// is usually null and the bloc keeps the last-known value from REST.
   final PreSelfieInfo? preSelfie;
 
+  /// §4.5 RideCheck: server-published ETA reliability (0.0–1.0) carried on a
+  /// WS status payload when the ETA service attached it. Null means the
+  /// backend omitted `eta_confidence` for this update — the confidence
+  /// trigger stays dormant rather than assuming zero.
+  final double? etaConfidence;
+
   const RideStatusUpdate({
     required this.rideId,
     required this.status,
@@ -755,6 +761,7 @@ class RideStatusUpdate {
     this.cancelReason,
     this.etaMinutes,
     this.preSelfie,
+    this.etaConfidence,
   });
 
   factory RideStatusUpdate.fromJson(Map<String, dynamic> json) {
@@ -780,6 +787,20 @@ class RideStatusUpdate {
     final driverJson = payload['driver'];
     final timestampRaw = payload['timestamp'];
 
+    // §4.5: `eta_confidence` may ride on the top-level status payload or
+    // inside the embedded driver object (REST-parity shape). Accept both;
+    // anything non-numeric stays null → confidence trigger dormant.
+    double? parseConfidence(dynamic raw) {
+      if (raw is num) return raw.toDouble();
+      if (raw is String) return double.tryParse(raw);
+      return null;
+    }
+
+    final topConfidence = parseConfidence(payload['eta_confidence']);
+    final driverConfidence = driverJson is Map<String, dynamic>
+        ? parseConfidence(driverJson['eta_confidence'])
+        : null;
+
     return RideStatusUpdate(
       rideId: (payload['ride_id'] ?? payload['id']) as String,
       status: payload['status'] as String,
@@ -803,6 +824,7 @@ class RideStatusUpdate {
       preSelfie: payload['pre_selfie'] is Map<String, dynamic>
           ? PreSelfieInfo.fromJson(payload['pre_selfie'] as Map<String, dynamic>)
           : null,
+      etaConfidence: topConfidence ?? driverConfidence,
     );
   }
 }

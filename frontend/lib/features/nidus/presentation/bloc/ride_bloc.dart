@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math show cos, pi, sqrt;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -347,6 +348,11 @@ class RideRequested extends RideState {
   final String? pickupName;
   final String? dropoffName;
 
+  /// §4.5 RideCheck: anomaly awaiting the rider's answer during the
+  /// searching phase (e.g. a low-confidence ETA echoed with the match
+  /// preview). Null when nothing is pending — the common case.
+  final RideAnomaly? pendingAnomaly;
+
   const RideRequested({
     required this.rideId,
     required this.fare,
@@ -359,6 +365,7 @@ class RideRequested extends RideState {
     this.dropoffLng,
     this.pickupName,
     this.dropoffName,
+    this.pendingAnomaly,
   });
 
   @override
@@ -374,6 +381,7 @@ class RideRequested extends RideState {
         dropoffLng,
         pickupName,
         dropoffName,
+        pendingAnomaly,
       ];
 }
 
@@ -807,6 +815,59 @@ class RideBloc extends Bloc<RideEvent, RideState> {
 
   String get selectedRideType => _currentSelectedRideType;
 
+  // --- §4.5 RideCheck anomaly detector state -------------------------------
+  // The detector lives on the bloc so every consumer of ride state gets
+  // identical behavior and the snooze/grace windows survive widget rebuilds.
+  // All fields reset whenever the tracked ride changes or ClearCurrentRide
+  // fires — stale samples from a previous ride must never trip a prompt on
+  // a new one.
+
+  /// Last driver position sample fed to the detector and its timestamp.
+  LatLng? _lastFixPos;
+  DateTime? _lastFixAt;
+
+  /// When the vehicle first appeared stationary (within [rideCheckStopRadius]
+  /// of the previous sample). Null while moving.
+  DateTime? _stopSince;
+
+  /// Reference point used for the "stopped away from pickup/dropoff" check:
+  /// the last fix that was NOT near either endpoint, i.e. a stop in the
+  /// corridor where a halt is suspicious.
+  LatLng? _suspectStopPoint;
+
+  /// While non-null the detector stays quiet (rider answered "I'm OK").
+  DateTime? _rideCheckSnoozedUntil;
+
+  /// The anomaly currently awaiting an answer, mirrored onto wrapped states
+  /// as `pendingAnomaly`. Null when nothing is pending.
+  RideAnomaly? _pendingAnomaly;
+
+  /// Id of the ride the detector caches belong to; changing it resets them.
+  String? _detectorRideId;
+
+  /// A vehicle movement under this distance between successive samples
+  /// counts as stopped (meters).
+  static const double rideCheckStopRadius = 30.0;
+
+  /// How long a stop outside pickup/dropoff proximity must persist before
+  /// the "Is everything OK?" prompt fires (plan §4.5: >3 min).
+  static const Duration rideCheckStopWindow = Duration(minutes: 3);
+
+  /// Corridor deviation beyond which the route-deviation trigger fires
+  /// (plan §4.5: >500 m off the expected polyline / straight-line reference).
+  static const double rideCheckDeviationMeters = 500.0;
+
+  /// Server ETA confidence below which the low-confidence trigger fires.
+  static const double rideCheckEtaConfidenceFloor = 0.4;
+
+  /// Grace period after the rider answers "I'm OK" before a new prompt can
+  /// fire (prevents nagging while traffic genuinely crawls).
+  static const Duration rideCheckSnoozeGrace = Duration(minutes: 2);
+
+  /// Pickup/dropoff proximity radius inside which a stop is considered
+  /// legitimate (traffic lights near endpoints, queues, etc.).
+  static const double rideEndpointProximityMeters = 150.0;
+
   /// Cached context for the current ride, used to rebuild rich states when a
   /// WebSocket update arrives without a full Ride payload.
   double _currentFare = 0;
@@ -868,6 +929,310 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     on<StartSosCountdown>(_onStartSosCountdown);
     on<CancelSosCountdown>(_onCancelSosCountdown);
     on<ConfirmSos>(_onConfirmSos);
+    on<ReportRidePosition>(_onReportRidePosition);
+    on<DismissRideCheckPrompt>(_onDismissRideCheckPrompt);
+  }
+
+  // ==========================================================================
+  // §4.5 RIDECHECK ANOMALY DETECTOR
+  // ==========================================================================
+
+  /// Clears every cached detector sample. Called when the tracked ride
+  /// changes or the session is torn down — a stop observed on ride A must
+  /// never age into a prompt on ride B.
+  void _resetRideCheckDetector({String? forRideId}) {
+    _lastFixPos = null;
+    _lastFixAt = null;
+    _stopSince = null;
+    _suspectStopPoint = null;
+    _rideCheckSnoozedUntil = null;
+    _pendingAnomaly = null;
+    _detectorRideId = forRideId;
+  }
+
+  /// Feeds one driver position sample into the detector and re-emits the
+  /// current wrapped state if a new anomaly tripped (or cleared).
+  Future<void> _onReportRidePosition(
+    ReportRidePosition event,
+    Emitter<RideState> emit,
+  ) async {
+    // Samples from a different ride than the one being tracked are ignored
+    // outright; a ride-id change resets the caches first.
+    if (_detectorRideId != null && _detectorRideId != event.rideId) {
+      _resetRideCheckDetector(forRideId: event.rideId);
+    } else if (_detectorRideId == null) {
+      _detectorRideId = event.rideId;
+    }
+
+    final point = LatLng(event.lat, event.lng);
+    final prev = _lastFixPos;
+    final prevAt = _lastFixAt;
+    _lastFixPos = point;
+    _lastFixAt = event.at;
+
+    if (prev == null || prevAt == null) return;
+
+    final movedMeters = const Distance().as(
+      LengthUnit.Meter,
+      prev,
+      point,
+    );
+
+    if (movedMeters >= rideCheckStopRadius) {
+      // Vehicle moved — the stop window restarts. Remember whether this
+      // fix sits in the suspicious corridor (away from both endpoints).
+      _stopSince = null;
+      _suspectStopPoint = _isNearEndpoint(point) ? null : point;
+    } else if (_stopSince == null) {
+      _stopSince = prevAt;
+      if (!_isNearEndpoint(point)) _suspectStopPoint = point;
+    }
+
+    // With no authoritative endpoints the long-stop trigger must stay
+    // dormant (dormant beats fabricated): drop any suspect marker so
+    // Trigger 1 cannot fire on guesses.
+    if (_endpointCandidates().isEmpty) {
+      _suspectStopPoint = null;
+    }
+
+    // An unanswered prompt already pending — do not stack another.
+    if (_pendingAnomaly != null) return;
+
+    // Rider answered "I'm OK" recently — stay quiet during the grace window.
+    final snooze = _rideCheckSnoozedUntil;
+    if (snooze != null && event.at.isBefore(snooze)) return;
+
+    RideAnomaly? anomaly;
+
+    // Trigger 1: stopped >3 min outside pickup/dropoff proximity.
+    final stopStart = _stopSince;
+    if (stopStart != null &&
+        _suspectStopPoint != null &&
+        event.at.difference(stopStart) > rideCheckStopWindow) {
+      anomaly = RideAnomaly(
+        kind: RideAnomalyKind.longStop,
+        detectedAt: event.at,
+      );
+    }
+
+    // Trigger 2: deviation >500 m off the expected corridor. Reference
+    // points come from real state (request DTO coords / GPS trip start);
+    // with no reference the check stays dormant rather than assuming one.
+    if (anomaly == null) {
+      final refs = _corridorReferences();
+      if (refs != null) {
+        final deviation = _distanceToSegmentMeters(point, refs.$1, refs.$2);
+        if (deviation > rideCheckDeviationMeters) {
+          anomaly = RideAnomaly(
+            kind: RideAnomalyKind.routeDeviation,
+            detectedAt: event.at,
+            detailMeters: deviation,
+          );
+        }
+      }
+    }
+
+    // Trigger 3: server ETA confidence below threshold. Null confidence
+    // means the backend did not publish reliability — never assume zero.
+    if (anomaly == null &&
+        event.etaConfidence != null &&
+        event.etaConfidence! < rideCheckEtaConfidenceFloor) {
+      anomaly = RideAnomaly(
+        kind: RideAnomalyKind.lowEtaConfidence,
+        detectedAt: event.at,
+        confidence: event.etaConfidence,
+      );
+    }
+
+    if (anomaly == null) return;
+    _pendingAnomaly = anomaly;
+    _reemitWithAnomaly(emit);
+  }
+
+  /// The rider answered the prompt. "I'm OK" snoozes the detector for the
+  /// grace window and clears the pending anomaly; "Call for help" is routed
+  /// by the UI to [StartSosCountdown] instead and never reaches here.
+  Future<void> _onDismissRideCheckPrompt(
+    DismissRideCheckPrompt event,
+    Emitter<RideState> emit,
+  ) async {
+    if (event.ok) {
+      _rideCheckSnoozedUntil = DateTime.now().add(rideCheckSnoozeGrace);
+      // Reset the stop bookkeeping so the same halt cannot immediately
+      // re-trip after the grace window without fresh evidence.
+      _stopSince = null;
+      _suspectStopPoint = null;
+    }
+    if (_pendingAnomaly == null) return;
+    _pendingAnomaly = null;
+    _reemitWithAnomaly(emit);
+  }
+
+  bool _isNearEndpoint(LatLng point) {
+    final refs = _endpointCandidates();
+    // No authoritative endpoints for this ride → the long-stop check stays
+    // dormant rather than guessing; return false so no suspect stop is
+    // recorded without real reference data.
+    if (refs.isEmpty) return false;
+    for (final e in refs) {
+      if (const Distance().as(LengthUnit.Meter, point, e) <=
+          rideEndpointProximityMeters) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Pickup/dropoff endpoints from live state, if known. Empty list means
+  /// the long-stop proximity check has no authoritative endpoints, in which
+  /// case stops are NOT flagged (dormant beats fabricated).
+  List<LatLng> _endpointCandidates() {
+    final out = <LatLng>[];
+    final s = state;
+    double? pLat, pLng, dLat, dLng;
+    String? rid;
+    if (s is RideRequested) {
+      rid = s.rideId;
+      pLat = s.pickupLat;
+      pLng = s.pickupLng;
+      dLat = s.dropoffLat;
+      dLng = s.dropoffLng;
+    } else if (s is DriverMatched) {
+      rid = s.rideId;
+      pLat = s.pickupLat;
+      pLng = s.pickupLng;
+      dLat = s.dropoffLat;
+      dLng = s.dropoffLng;
+    } else if (s is DriverEnRoute) {
+      rid = s.rideId;
+      pLat = s.pickupLat;
+      pLng = s.pickupLng;
+      dLat = s.dropoffLat;
+      dLng = s.dropoffLng;
+    } else if (s is RideInProgress) {
+      rid = s.ride.id;
+      pLat = s.ride.pickupLat;
+      pLng = s.ride.pickupLng;
+      dLat = s.ride.dropoffLat;
+      dLng = s.ride.dropoffLng;
+    }
+    if (rid != _detectorRideId) return out;
+    if (pLat != null && pLng != null) out.add(LatLng(pLat, pLng));
+    if (dLat != null && dLng != null) out.add(LatLng(dLat, dLng));
+    return out;
+  }
+
+  /// Corridor reference (start, end) for the deviation check. En route:
+  /// pickup→dropoff from state. In progress: the GPS trip-start origin
+  /// (when captured) → dropoff. Any missing half returns null → dormant.
+  (LatLng, LatLng)? _corridorReferences() {
+    final s = state;
+    if (s is DriverEnRoute &&
+        s.pickupLat != null &&
+        s.pickupLng != null &&
+        s.dropoffLat != null &&
+        s.dropoffLng != null &&
+        s.rideId == _detectorRideId) {
+      return (
+        LatLng(s.pickupLat!, s.pickupLng!),
+        LatLng(s.dropoffLat!, s.dropoffLng!),
+      );
+    }
+    if (s is RideInProgress &&
+        s.tripStartOrigin != null &&
+        s.ride.dropoffLat != null &&
+        s.ride.dropoffLng != null &&
+        s.ride.id == _detectorRideId) {
+      return (
+        s.tripStartOrigin!,
+        LatLng(s.ride.dropoffLat!, s.ride.dropoffLng!),
+      );
+    }
+    return null;
+  }
+
+  /// Great-circle distance from [p] to the segment [a]→[b], meters. Uses
+  /// the latlon projection approximation adequate at the 500 m trigger
+  /// scale (the plan's polyline source is the straight-line corridor until
+  /// the backend ships route geometry on the WS payload).
+  double _distanceToSegmentMeters(LatLng p, LatLng a, LatLng b) {
+    const dist = Distance();
+    final ab = dist.as(LengthUnit.Meter, a, b);
+    if (ab == 0) return dist.as(LengthUnit.Meter, p, a);
+    // Project in a local equirectangular frame anchored at `a`.
+    final latScale = 111320.0;
+    final lngScale = 111320.0 * math.cos(p.latitude * math.pi / 180.0);
+    final bx = (b.longitude - a.longitude) * lngScale;
+    final by = (b.latitude - a.latitude) * latScale;
+    final px = (p.longitude - a.longitude) * lngScale;
+    final py = (p.latitude - a.latitude) * latScale;
+    final len2 = bx * bx + by * by;
+    var t = (px * bx + py * by) / len2;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    final cx = px - t * bx;
+    final cy = py - t * by;
+    return math.sqrt(cx * cx + cy * cy);
+  }
+
+  /// Re-emits the current wrapped state carrying [_pendingAnomaly] so the
+  /// tracking page renders (or clears) the prompt without disturbing any
+  /// other field. States that cannot host an anomaly are left untouched.
+  void _reemitWithAnomaly(Emitter<RideState> emit) {
+    final s = state;
+    final anomaly = _pendingAnomaly;
+    if (s is RideRequested) {
+      emit(RideRequested(
+        rideId: s.rideId,
+        fare: s.fare,
+        etaMinutes: s.etaMinutes,
+        requestedAt: s.requestedAt,
+        promoDiscount: s.promoDiscount,
+        pickupLat: s.pickupLat,
+        pickupLng: s.pickupLng,
+        dropoffLat: s.dropoffLat,
+        dropoffLng: s.dropoffLng,
+        pickupName: s.pickupName,
+        dropoffName: s.dropoffName,
+        pendingAnomaly: anomaly,
+      ));
+    } else if (s is DriverMatched) {
+      emit(DriverMatched(
+        rideId: s.rideId,
+        driver: s.driver,
+        fare: s.fare,
+        etaMinutes: s.etaMinutes,
+        pickupLat: s.pickupLat,
+        pickupLng: s.pickupLng,
+        dropoffLat: s.dropoffLat,
+        dropoffLng: s.dropoffLng,
+        pickupName: s.pickupName,
+        dropoffName: s.dropoffName,
+        pendingAnomaly: anomaly,
+      ));
+    } else if (s is DriverEnRoute) {
+      emit(DriverEnRoute(
+        rideId: s.rideId,
+        driver: s.driver,
+        fare: s.fare,
+        etaMinutes: s.etaMinutes,
+        pinCode: s.pinCode,
+        preSelfie: s.preSelfie,
+        pickupLat: s.pickupLat,
+        pickupLng: s.pickupLng,
+        dropoffLat: s.dropoffLat,
+        dropoffLng: s.dropoffLng,
+        pickupName: s.pickupName,
+        dropoffName: s.dropoffName,
+        pendingAnomaly: anomaly,
+      ));
+    } else if (s is RideInProgress) {
+      emit(RideInProgress(
+        s.ride,
+        tripStartOrigin: s.tripStartOrigin,
+        pendingAnomaly: anomaly,
+      ));
+    }
   }
 
   // ==========================================================================
@@ -1255,6 +1620,9 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     _pendingSos = null;
     _sosActive = false;
     _sosCountdownRemaining = 0;
+    // §4.5: drop every detector sample so a stop observed on the previous
+    // ride can never age into a prompt on the next one.
+    _resetRideCheckDetector();
     emit(const RideInitial());
   }
 
@@ -1352,6 +1720,19 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   // ==========================================================================
 
   void _handleRideUpdate(RideStatusUpdate update, Emitter<RideState> emit) {
+    // §4.5 RideCheck: feed every driver position sample into the anomaly
+    // detector before state transitions, so stop/deviation windows see a
+    // monotonic stream regardless of which state the update lands in. The
+    // detector is a no-op for payloads without coordinates.
+    if (update.driverLat != null && update.driverLng != null) {
+      add(ReportRidePosition(
+        rideId: update.rideId,
+        lat: update.driverLat!,
+        lng: update.driverLng!,
+        at: DateTime.now(),
+        etaConfidence: update.etaConfidence ?? update.driver?.etaConfidence,
+      ));
+    }
     // §4.1: the WS status payload omits the ride's pickup/dropoff coordinates
     // (they live on the REST DTO / request event). When a searching→matched
     // transition happens over WS, re-emit them onto the new state so the
@@ -1428,9 +1809,15 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         break;
       case 'no_driver_available':
         add(UnsubscribeFromRideUpdates(update.rideId));
+        // §4.6: carry the last-known broadcast fare so the price-extension
+        // sheet can show real +10%/+20% projections. _stateFareOrNull keeps
+        // it null when no fare was ever learned — the sheet then defers every
+        // number to the server instead of inventing one (Global Rule 1).
         emit(NoDriversFound(
           rideId: update.rideId,
           searchedSeconds: _searchedSeconds(),
+          currentFare: _stateFareOrNull(),
+          currency: _stateCurrency(),
         ));
         break;
       case 'in_progress':
@@ -1468,6 +1855,22 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     return _currentFare;
   }
 
+  /// §4.6: nullable sibling of [_stateFare] for surfaces that must render an
+  /// honest "fare unavailable" instead of a fabricated ETB 0.00 — returns
+  /// null when no fare was ever learned for this ride (fresh bloc, WS fired
+  /// before REST hydration), otherwise the best-known positive fare.
+  double? _stateFareOrNull() {
+    final f = _stateFare();
+    return f > 0 ? f : null;
+  }
+
+  /// §4.6: ISO-4217 code paired with the best-known fare. Taken from the
+  /// authoritative REST DTO when hydrated ([_lastKnownCurrency]); null until
+  /// then so the UI renders an empty unit rather than guessing 'ETB'.
+  String? _stateCurrency() => _lastKnownCurrency;
+
+  String? _lastKnownCurrency;
+
   /// Seconds elapsed since the request was placed (for No-Drivers messaging).
   int _searchedSeconds() {
     final started = _requestedAt;
@@ -1483,6 +1886,10 @@ class RideBloc extends Bloc<RideEvent, RideState> {
 
   void _emitStateForRide(Emitter<RideState> emit, Ride ride) {
     _currentFare = ride.fareAmount ?? 0;
+    // §4.6: the REST DTO is the only authoritative currency source; cache it
+    // so NoDriversFound (WS or REST path) pairs fares with a real unit and
+    // never guesses 'ETB'/'USD'.
+    _lastKnownCurrency = ride.currency;
     _requestedAt = ride.requestedAt;
     if (ride.driver != null) _lastKnownDriver = ride.driver;
     // REST DTO is the authoritative source for §2.3 pre-selfie state; a
@@ -1565,9 +1972,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         }
         break;
       case 'no_driver_available':
+        // §4.6: same honest fare/currency carry-over as the WS path — the
+        // REST DTO is authoritative, and a null fare stays null rather than
+        // collapsing to 0 (which the sheet would render as "ETB 0.00").
         emit(NoDriversFound(
           rideId: ride.id,
           searchedSeconds: _searchedSeconds(),
+          currentFare: _stateFareOrNull(),
+          currency: ride.currency,
         ));
         break;
       case 'in_progress':
