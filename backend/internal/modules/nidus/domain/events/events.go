@@ -19,6 +19,18 @@ const (
 	RideCancelledType = "ride.cancelled"
 	RideRatedType     = "ride.rated"
 
+	// §3.5 Stopovers & Mid-Trip Destination Change. Emitted by
+	// ChangeDestinationHandler after the new dropoff and recomputed fare are
+	// durably persisted. The notifications module's event consumer maps it to
+	// the destination_changed category (rider confirmation + driver push).
+	RideDestinationChangedType = "ride.destination_changed"
+
+	// §3.6 Scheduled Rides. Emitted by the scheduled-reminder worker exactly
+	// 30 minutes (scan window ±10 min) before a scheduled pickup, once per
+	// ride (idempotency ledger: rides.scheduled_reminder_sent_at). Mapped by
+	// the notifications consumer to the scheduled_ride_reminder category.
+	ScheduledRideReminderType = "ride.scheduled_reminder"
+
 	// Driver events
 	DriverOnlineType   = "driver.online"
 	DriverOfflineType  = "driver.offline"
@@ -203,6 +215,63 @@ func (e *RideRated) ToEvent() *Event {
 		"rating":    e.Rating,
 		"review":    e.Review,
 		"tip":       e.Tip,
+	})
+}
+
+// RideDestinationChanged is emitted after a successful §3.5 mid-trip
+// destination change: the new dropoff and the recomputed fare are already
+// durably persisted when this fires, so consumers (notifications, driver-app
+// WS relay) can treat the payload as authoritative. PreviousFare/NewFare are
+// in currency units (not cents) to match FareAmount elsewhere in events.
+type RideDestinationChanged struct {
+	RideID        uuid.UUID `json:"ride_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	DriverID      *uuid.UUID `json:"driver_id,omitempty"`
+	OldDropLat    float64   `json:"old_dropoff_lat"`
+	OldDropLng    float64   `json:"old_dropoff_lng"`
+	NewDropLat    float64   `json:"new_dropoff_lat"`
+	NewDropLng    float64   `json:"new_dropoff_lng"`
+	NewAddress    string    `json:"new_dropoff_address,omitempty"`
+	PreviousFare  float64   `json:"previous_fare"`
+	NewFare       float64   `json:"new_fare"`
+	Currency      string    `json:"currency"`
+}
+
+func (e *RideDestinationChanged) ToEvent() *Event {
+	return NewEvent(RideDestinationChangedType, map[string]interface{}{
+		"ride_id":           e.RideID,
+		"user_id":           e.UserID,
+		"driver_id":         e.DriverID,
+		"old_dropoff_lat":   e.OldDropLat,
+		"old_dropoff_lng":   e.OldDropLng,
+		"new_dropoff_lat":   e.NewDropLat,
+		"new_dropoff_lng":   e.NewDropLng,
+		"new_dropoff_address": e.NewAddress,
+		"previous_fare":     e.PreviousFare,
+		"new_fare":          e.NewFare,
+		"currency":          e.Currency,
+	})
+}
+
+// ScheduledRideReminder is emitted by the scheduled-reminder worker (§3.6)
+// ~30 minutes before a scheduled pickup. The consumer maps it to the
+// scheduled_ride_reminder notification category whose localized templates
+// (EN/AM/OM) already exist in the dispatcher policy table.
+type ScheduledRideReminder struct {
+	RideID      uuid.UUID `json:"ride_id"`
+	UserID      uuid.UUID `json:"user_id"`
+	ScheduledAt time.Time `json:"scheduled_at"`
+	PickupAddr  string    `json:"pickup_address,omitempty"`
+	RideType    string    `json:"ride_type"`
+}
+
+func (e *ScheduledRideReminder) ToEvent() *Event {
+	return NewEvent(ScheduledRideReminderType, map[string]interface{}{
+		"ride_id":        e.RideID,
+		"user_id":        e.UserID,
+		"scheduled_at":   e.ScheduledAt,
+		"pickup_address": e.PickupAddr,
+		"ride_type":      e.RideType,
 	})
 }
 

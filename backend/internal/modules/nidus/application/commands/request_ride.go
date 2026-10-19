@@ -36,11 +36,25 @@ var (
 	// the promotions feature flag is off (kill-switch semantics: never silently
 	// ignore a money-affecting input). HTTP maps it to PROMO_DISABLED.
 	ErrPromotionsDisabled = errors.New("promotions are not enabled")
+	// ErrStopoversDisabled is returned when a request carries Stops while the
+	// ride_stopovers flag is off — same kill-switch semantics as promos: a
+	// fare-affecting input is never silently ignored. HTTP maps it to
+	// STOPOVERS_DISABLED.
+	ErrStopoversDisabled = errors.New("stopovers are not enabled")
 )
 
 // ============================================================================
 // COMMAND
 // ============================================================================
+
+// RideStopInput is one intermediate stop supplied at request time (§3.5).
+// Address is the rider-facing label resolved client-side by reverse geocoding;
+// it is stored as provided (empty allowed — coordinates are authoritative).
+type RideStopInput struct {
+	Lat     float64
+	Lng     float64
+	Address string
+}
 
 // RequestRideCommand contains the parameters for requesting a ride
 type RequestRideCommand struct {
@@ -54,6 +68,12 @@ type RequestRideCommand struct {
 	RideType        string
 	PaymentMethodID string
 	ScheduledAt     *time.Time
+	// §3.5 Stopovers & Mid-Trip Destination Change: ordered intermediate stops
+	// between pickup and dropoff (max entities.MaxRideStops). Empty = direct
+	// trip, priced exactly as before. Rejected with TOO_MANY_STOPS when the
+	// ride_stopovers flag is off and stops are supplied — kill-switch
+	// semantics: never silently ignore a fare-affecting input.
+	Stops []RideStopInput
 	// §3.2 Promo Codes & Coupons: the code the rider projected via
 	// POST /promotions/redeem before confirming the request. Empty = no promo.
 	// The code is normalized and consumed at request time (ApplyAtRequest);
@@ -140,6 +160,11 @@ type RequestRideHandler struct {
 	// unavailable" state instead of silently ignoring the code.
 	promoApplier PromoApplier
 	promoEnabled bool
+	// §3.5 stopoversEnabled mirrors the ride_stopovers feature flag. When
+	// false, a request carrying Stops is rejected with entities.ErrTooManyStops
+	// mapped through ErrStopoversDisabled (kill-switch semantics: never
+	// silently drop fare-affecting input).
+	stopoversEnabled bool
 }
 
 // NewRequestRideHandler creates a new RequestRideHandler.
@@ -147,7 +172,8 @@ type RequestRideHandler struct {
 // mirrors the cash_payment flag — when false, rides resolving to cash are
 // rejected with PAYMENT_UNAVAILABLE rather than silently created.
 // promoApplier may be nil (promotions module unwired); promoEnabled mirrors
-// the promotions flag (§3.2).
+// the promotions flag (§3.2). stopoversEnabled mirrors the ride_stopovers
+// flag (§3.5).
 func NewRequestRideHandler(
 	db *database.Postgres,
 	eventBus eventbus.EventBus,
@@ -156,6 +182,7 @@ func NewRequestRideHandler(
 	cashEnabled bool,
 	promoApplier PromoApplier,
 	promoEnabled bool,
+	stopoversEnabled bool,
 ) *RequestRideHandler {
 	return &RequestRideHandler{
 		db:               db,
@@ -165,6 +192,7 @@ func NewRequestRideHandler(
 		cashEnabled:      cashEnabled,
 		promoApplier:     promoApplier,
 		promoEnabled:     promoEnabled,
+		stopoversEnabled: stopoversEnabled,
 	}
 }
 
@@ -198,10 +226,20 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 		rideType = services.RideTypeStandard
 	}
 
-	fareEstimate, err := h.pricingService.CalculateFare(
+	// §3.5: price the full waypoint chain [pickup, stops..., dropoff]. With no
+	// stops this is arithmetically identical to the historical single-leg call
+	// (CalculateFare now delegates to CalculateFareWithStops), so direct-trip
+	// fares are unchanged by this feature.
+	waypoints := make([]services.Waypoint, 0, len(cmd.Stops)+1)
+	for _, s := range cmd.Stops {
+		waypoints = append(waypoints, services.Waypoint{Lat: s.Lat, Lng: s.Lng})
+	}
+	waypoints = append(waypoints, services.Waypoint{Lat: cmd.DropoffLat, Lng: cmd.DropoffLng})
+
+	fareEstimate, err := h.pricingService.CalculateFareWithStops(
 		ctx,
 		cmd.PickupLat, cmd.PickupLng,
-		cmd.DropoffLat, cmd.DropoffLng,
+		waypoints,
 		rideType,
 	)
 	if err != nil {
@@ -287,6 +325,26 @@ func (h *RequestRideHandler) Execute(ctx context.Context, cmd *RequestRideComman
 			detachFromRide(ctx, h.promoApplier, rideID)
 		}
 		return nil, fmt.Errorf("%w: %v", ErrRideCreationFailed, err)
+	}
+
+	// 4b. §3.5: persist stops after the ride row exists (FK integrity via
+	// rides.id cascade). A stop-batch failure deletes the just-created ride in
+	// compensation — a ride whose quoted fare included stop legs but which lost
+	// its stops would misprice and mis-route, so we fail the whole request
+	// rather than ship an inconsistent state.
+	if len(cmd.Stops) > 0 {
+		stops := make([]entities.RideStop, 0, len(cmd.Stops))
+		for i, s := range cmd.Stops {
+			stops = append(stops, entities.RideStop{Seq: i + 1, Lat: s.Lat, Lng: s.Lng, Address: s.Address})
+		}
+		if err := h.saveRideStops(ctx, rideID, stops); err != nil {
+			h.deleteRide(ctx, rideID) // best-effort compensation
+			if promoCode != "" {
+				detachFromRide(ctx, h.promoApplier, rideID)
+			}
+			return nil, fmt.Errorf("%w: failed to persist stops: %v", ErrRideCreationFailed, err)
+		}
+		ride.Stops = stops
 	}
 
 	// 5. Publish ride requested event
@@ -395,6 +453,31 @@ func (h *RequestRideHandler) validateCommand(cmd *RequestRideCommand) error {
 		}
 	}
 
+	// §3.5 Stopovers: kill-switch first — stops change the fare, so a request
+	// carrying them while the flag is off is rejected loudly rather than
+	// silently priced as a direct trip. Then structural validation: count cap,
+	// coordinate ranges, and no zero-length legs (a stop on top of the
+	// previous waypoint is a data error the rider must fix, not a free hop).
+	if len(cmd.Stops) > 0 && !h.stopoversEnabled {
+		return ErrStopoversDisabled
+	}
+	if len(cmd.Stops) > entities.MaxRideStops {
+		return fmt.Errorf("%w: %d supplied", entities.ErrTooManyStops, len(cmd.Stops))
+	}
+	prevLat, prevLng := cmd.PickupLat, cmd.PickupLng
+	for i, s := range cmd.Stops {
+		if !isValidCoordinate(s.Lat, s.Lng) {
+			return fmt.Errorf("%w: stop %d", entities.ErrInvalidStopCoordinates, i+1)
+		}
+		if s.Lat == prevLat && s.Lng == prevLng {
+			return fmt.Errorf("%w: stop %d coincides with the previous waypoint", entities.ErrInvalidStopCoordinates, i+1)
+		}
+		prevLat, prevLng = s.Lat, s.Lng
+	}
+	if cmd.DropoffLat == prevLat && cmd.DropoffLng == prevLng {
+		return fmt.Errorf("%w: dropoff coincides with the last stop", entities.ErrInvalidStopCoordinates)
+	}
+
 	return nil
 }
 
@@ -444,6 +527,38 @@ func (h *RequestRideHandler) saveRide(ctx context.Context, ride *entities.Ride) 
 	)
 
 	return err
+}
+
+// saveRideStops batch-inserts the §3.5 intermediate stops for a freshly
+// created ride into ride_stops (migration 012). Seq is assigned by the caller
+// in rider-visible order; the DB's UNIQUE(ride_id, seq) makes a double-save
+// impossible rather than silently duplicating a waypoint.
+func (h *RequestRideHandler) saveRideStops(ctx context.Context, rideID uuid.UUID, stops []entities.RideStop) error {
+	if len(stops) == 0 {
+		return nil
+	}
+	query := `
+		INSERT INTO ride_stops (ride_id, seq, lat, lng, address)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+	for _, s := range stops {
+		if _, err := h.db.Exec(ctx, query, rideID, s.Seq, s.Lat, s.Lng, s.Address); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteRide is the compensation path for a failed stop-batch persist: it
+// removes the ride row created moments earlier so the rider never owns a ride
+// whose fare was priced with legs that no longer exist. Best-effort — if this
+// also fails we log loudly; the ride remains but the request still errored,
+// and reconciliation (or an operator) can clean up. Ride_stops cascade from
+// the FK, so deleting the ride removes any partially written stops too.
+func (h *RequestRideHandler) deleteRide(ctx context.Context, rideID uuid.UUID) {
+	if _, err := h.db.Exec(ctx, `DELETE FROM rides WHERE id = $1`, rideID); err != nil {
+		fmt.Printf("error: compensation delete failed for ride %s (stops persist failed): %v\n", rideID, err)
+	}
 }
 
 // ============================================================================
@@ -514,9 +629,28 @@ func (h *RequestRideHandler) publishRideRequestedEvent(
 			"surge_multiplier": fareEstimate.SurgeMultiplier,
 			"base_fare":        float64(fareEstimate.BaseFare) / 100.0,
 			"estimated_pickup": fareEstimate.EstimatedPickup,
+			// §3.5: ordered stops so downstream consumers (driver app relay,
+			// route planning) see the full waypoint chain, not just endpoints.
+			// Empty array when the trip is direct — never null, so clients can
+			// iterate without nil-checks.
+			"stops": stopPayload(ride.Stops),
 		},
 		Timestamp: time.Now().Unix(),
 	}
 
 	return h.eventBus.Publish(ctx, "nidus.rides", event)
+}
+
+// stopPayload converts entity stops into the JSON shape carried on events.
+func stopPayload(stops []entities.RideStop) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(stops))
+	for _, s := range stops {
+		out = append(out, map[string]interface{}{
+			"seq":     s.Seq,
+			"lat":     s.Lat,
+			"lng":     s.Lng,
+			"address": s.Address,
+		})
+	}
+	return out
 }
