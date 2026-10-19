@@ -122,6 +122,17 @@ abstract class RideRepository {
   /// errorCode `RIDE_NOT_CANCELLABLE`.
   Future<CancellationQuote> getCancellationQuote(String rideId);
 
+  /// §4.6 Price-extension: bumps the broadcast fare of a still-searching
+  /// ride by a server-validated multiplier (+10% / +20%) and re-broadcasts
+  /// it to drivers through the existing matching engine. The client never
+  /// sends a raw price — only the multiplier bucket — and every number in
+  /// the result comes from the server's recomputation (PricingService), so
+  /// what the rider approves is what they pay.
+  Future<PriceExtensionResult> applyPriceExtension(
+    String rideId, {
+    required double multiplier,
+  });
+
   /// Rate a completed ride with full result semantics (error code).
   ///
   /// Preferred over [rateRide] for flows that must distinguish
@@ -448,6 +459,12 @@ class DriverInfo {
   final double currentLng;
   final int etaMinutes;
 
+  /// §4.5 RideCheck: the ETA service's reliability score (0.0–1.0) for this
+  /// driver's arrival estimate. Mirrors the backend `DriverCardDTO.
+  /// eta_confidence` (*float64, omitempty): null when the backend omitted it
+  /// — the client treats null as "unknown" and never fabricates a value.
+  final double? etaConfidence;
+
   const DriverInfo({
     required this.id,
     required this.name,
@@ -457,9 +474,37 @@ class DriverInfo {
     required this.currentLat,
     required this.currentLng,
     required this.etaMinutes,
+    this.etaConfidence,
   });
 
+  DriverInfo copyWith({
+    double? currentLat,
+    double? currentLng,
+    int? etaMinutes,
+    double? etaConfidence,
+  }) {
+    return DriverInfo(
+      id: id,
+      name: name,
+      rating: rating,
+      vehicleType: vehicleType,
+      vehiclePlate: vehiclePlate,
+      currentLat: currentLat ?? this.currentLat,
+      currentLng: currentLng ?? this.currentLng,
+      etaMinutes: etaMinutes ?? this.etaMinutes,
+      etaConfidence: etaConfidence ?? this.etaConfidence,
+    );
+  }
+
   factory DriverInfo.fromJson(Map<String, dynamic> json) {
+    // The REST DTO serializes the *float64 directly; some WS bridges deliver
+    // it as a string. Accept both, reject anything else as unknown (null).
+    double? parseConfidence(dynamic raw) {
+      if (raw is num) return raw.toDouble();
+      if (raw is String) return double.tryParse(raw);
+      return null;
+    }
+
     return DriverInfo(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -469,6 +514,7 @@ class DriverInfo {
       currentLat: (json['current_lat'] as num).toDouble(),
       currentLng: (json['current_lng'] as num).toDouble(),
       etaMinutes: json['eta_minutes'] as int,
+      etaConfidence: parseConfidence(json['eta_confidence']),
     );
   }
 }
