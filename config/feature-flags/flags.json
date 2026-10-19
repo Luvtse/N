@@ -468,9 +468,9 @@
           "owner": "mobility-team@nidaw.com",
           "created": "2026-10-19T00:00:00Z",
           "expires": null,
-          "description": "Price-extension negotiation (§4.6): on NoDriversFound, offers +10%/+20% fare re-broadcast through the existing matching engine instead of popping back out of the ride. KILL-SWITCH: Set enabled=false; the Flutter sheet hides its extension actions and the backend POST /nidus/rides/{id}/price-extension returns FEATURE_DISABLED. Rides already extended keep the higher fare (server-recomputed, paid at receipt) — no rollback needed because riders explicitly consented.",
+          "description": "RideCheck-style anomaly check-ins (§4.5): during DriverEnRoute/RideInProgress the client detector prompts \"Is everything OK?\" when the vehicle stops >3 min away from pickup/dropoff, deviates >500 m from the expected corridor, or the backend ETA confidence drops below 0.4 (eta_confidence plumbed through the driver DTO/WS payload; null confidence keeps that trigger dormant). Answers: \"I'm OK\" snoozes the detector for a grace window; \"Call for help\" starts the existing SOS countdown with the rider's real GPS (no fix -> honest unavailable state routed to the Safety Toolkit, never a location-less SOS). KILL-SWITCH: Set enabled=false; the client stops reporting positions and no prompt can appear; server-side ETA computation is unaffected.",
           "category": "experimental",
-          "abTestId": "ar-nav-2026-q2"
+          "abTestId": "ridecheck-2026-q4"
         }
       },
       "price_extension": {

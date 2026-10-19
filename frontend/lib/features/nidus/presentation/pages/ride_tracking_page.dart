@@ -10,11 +10,16 @@ import '../../../../core/config/feature_flag_service.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/di/injection.dart';
 import '../../../../core/geocoding/geocoding_service.dart';
+import '../../../../core/location/device_location_service.dart';
 import '../../../../core/map/live_map_widget.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../bloc/ride_bloc.dart';
 import '../../data/repositories/ride_repository.dart'
-    show Ride, RideRepository, DestinationChangeResult;
+    show
+        Ride,
+        RideRepository,
+        DestinationChangeResult,
+        PriceExtensionResult;
 import '../widgets/cancel_ride_sheet.dart';
 import '../widgets/place_autocomplete_sheet.dart';
 import '../widgets/driver_card.dart';
@@ -68,6 +73,15 @@ class _RideTrackingPageState extends State<RideTrackingPage>
   /// sheet. Reset when leaving DriverEnRouteForDriver so a re-entry (e.g.
   /// after a reconnect) can prompt again if the driver still hasn't sent.
   bool _preSelfieSheetShown = false;
+
+  /// §4.5: timestamp identity of the RideCheck prompt already surfaced, so
+  /// the modal opens exactly once per detected anomaly (the bloc's
+  /// RideAnomaly carries a unique detectedAt per trigger).
+  DateTime? _shownAnomalyAt;
+
+  /// Guards against double-taps on the price-extension options while an
+  /// apply POST is in flight (§4.6).
+  bool _priceExtensionBusy = false;
 
   @override
   void initState() {
@@ -275,12 +289,35 @@ class _RideTrackingPageState extends State<RideTrackingPage>
             message: state.message,
             errorCode: state.errorCode,
           );
-        } else if (state is RideCancelled ||
-            state is NoDriversFound ||
-            state is RideError) {
+        } else if (state is NoDriversFound) {
+          // §4.6 Price-extension: instead of popping back to the request
+          // flow, offer a higher fare that re-broadcasts to drivers through
+          // the existing matching engine. Gated on the price_extension flag;
+          // when the flag is off (or unavailable) we keep the pre-§4.6
+          // pop-back behavior so the kill switch restores exactly yesterday's
+          // UX. The sheet itself never invents numbers: projections come from
+          // state.currentFare when the bloc learned one, and every apply
+          // failure defers to "New price will be confirmed on retry".
+          if (_priceExtensionEnabled()) {
+            _showPriceExtensionSheet(state);
+          } else {
+            Navigator.of(context).pop();
+          }
+        } else if (state is RideCancelled || state is RideError) {
           // Terminal / recovery states live on their own surfaces; leave the
           // tracking page for the request flow so the rider can re-book.
           Navigator.of(context).pop();
+        }
+        // §4.5 RideCheck: an anomaly detected by the bloc pauses the trip UI
+        // with an "Is everything OK?" prompt. Shown once per anomaly id —
+        // answering ("I'm OK" → snooze, "Call for help" → SOS countdown)
+        // clears pendingAnomaly in the bloc; dismissing the barrier without
+        // answering counts as "OK" so the detector can re-arm after its
+        // grace window rather than nagging on every rebuild.
+        final anomaly = _anomalyOf(state);
+        if (anomaly != null && _shownAnomalyAt != anomaly.detectedAt) {
+          _shownAnomalyAt = anomaly.detectedAt;
+          _showRideCheckPrompt(context, anomaly);
         }
       },
       builder: (context, state) {
@@ -381,7 +418,9 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                 left: 16,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    // §4.4: theme token instead of hardcoded white so dark
+                    // mode renders correctly; no fixed height (dynamic type).
+                    color: Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
@@ -392,6 +431,7 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                   ),
                   child: IconButton(
                     icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Back',
                     onPressed: () => _confirmCancel(context, state),
                   ),
                 ),
@@ -430,9 +470,11 @@ class _RideTrackingPageState extends State<RideTrackingPage>
                 right: 0,
                 child: Container(
                   padding: const EdgeInsets.all(24),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.only(
+                  decoration: BoxDecoration(
+                    // §4.4: theme token (was hardcoded Colors.white) so the
+                    // sheet adapts to dark mode.
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(24),
                       topRight: Radius.circular(24),
                     ),
@@ -578,6 +620,279 @@ class _RideTrackingPageState extends State<RideTrackingPage>
       },
     );
   }
+
+  // ─── §4.5 RideCheck anomaly prompt ──────────────────────────────────────
+
+  /// Extracts the pending anomaly from any wrapped ride state that carries
+  /// one (RideRequested / DriverMatched / DriverEnRoute / RideInProgress).
+  /// Other states have no anomaly channel and return null.
+  RideAnomaly? _anomalyOf(RideState state) {
+    if (state is RideRequested) return state.pendingAnomaly;
+    if (state is DriverMatched) return state.pendingAnomaly;
+    if (state is DriverEnRoute) return state.pendingAnomaly;
+    if (state is RideInProgress) return state.pendingAnomaly;
+    return null;
+  }
+
+  /// Honest, measurement-only detail line for the prompt. Meters and
+  /// confidence are shown only when the detector actually measured them —
+  /// never zeros, never fabricated precision.
+  String _anomalyDetail(RideAnomaly anomaly) {
+    switch (anomaly.kind) {
+      case RideAnomalyKind.longStop:
+        return 'Your driver has been stopped for over 3 minutes away from '
+            'the pickup or dropoff point.';
+      case RideAnomalyKind.routeDeviation:
+        final meters = anomaly.detailMeters;
+        if (meters == null) {
+          return 'The vehicle has moved noticeably off the expected route.';
+        }
+        return 'The vehicle is ${meters.toStringAsFixed(0)} m off the '
+            'expected route.';
+      case RideAnomalyKind.lowEtaConfidence:
+        final c = anomaly.confidence;
+        if (c == null) {
+          return 'The arrival estimate for this trip became unreliable.';
+        }
+        return 'The arrival estimate for this trip became unreliable '
+            '(confidence ${(c * 100).toStringAsFixed(0)}%).';
+    }
+  }
+
+  /// Modal "Is everything OK?" barrier. Two answers only:
+  /// - "I'm OK" → DismissRideCheckPrompt.ok() (bloc snoozes the detector);
+  /// - "Call for help" → real GPS read, then the existing SOS countdown
+  ///   machinery. If GPS is unavailable we say so honestly and keep the SOS
+  ///   entry reachable via the Safety Toolkit rather than firing a location
+  ///  -less SOS or a fake coordinate.
+  Future<void> _showRideCheckPrompt(
+      BuildContext context, RideAnomaly anomaly) async {
+    final bloc = context.read<RideBloc>();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true, // treated as "OK" below — never silent-drop
+      builder: (dialogContext) {
+        return Semantics(
+          label: 'RideCheck safety prompt',
+          child: AlertDialog(
+            icon: const Icon(Icons.error_outline, color: AppColors.accent),
+            title: const Text('Is everything OK?'),
+            content: Text(_anomalyDetail(anomaly)),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  bloc.add(const DismissRideCheckPrompt.ok());
+                },
+                child: const Text("I'm OK"),
+              ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                ),
+                onPressed: () async {
+                  Navigator.of(dialogContext).pop();
+                  await _callForHelp(bloc);
+                },
+                icon: const Icon(Icons.emergency_share),
+                label: const Text('Call for help'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    // Barrier dismissed without pressing either button still counts as an
+    // acknowledgement so the detector re-arms after its grace window.
+    if (_anomalyOf(bloc.state) != null &&
+        _anomalyOf(bloc.state)?.detectedAt == anomaly.detectedAt) {
+      bloc.add(const DismissRideCheckPrompt.ok());
+    }
+  }
+
+  /// "Call for help": read the rider's real position and hand it to the
+  /// existing SOS countdown flow (StartSosCountdown → confirm/escalate in
+  /// the bloc, already tested end-to-end by the Safety Toolkit path).
+  Future<void> _callForHelp(RideBloc bloc) async {
+    const locationService = DeviceLocationService();
+    final result = await locationService.getCurrentPosition();
+    final ctx = context;
+    if (result is LocationGranted) {
+      bloc.add(StartSosCountdown(
+        rideId: widget.rideId,
+        lat: result.latitude,
+        lng: result.longitude,
+        message: 'RideCheck: rider requested help during the trip.',
+      ));
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(
+            content: Text('SOS countdown started. Hold to confirm or tap '
+                'the shield to open the Safety Toolkit.'),
+          ),
+        );
+      }
+    } else if (ctx.mounted) {
+      // Honest degradation: no fix → no fake SOS. Route the rider to the
+      // Safety Toolkit where manual emergency flows live.
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: const Text(
+              'Location unavailable — cannot start SOS with your position.'),
+          action: SnackBarAction(
+            label: 'Open Safety Toolkit',
+            onPressed: () => SafetyToolkitPage.open(ctx),
+          ),
+        ),
+      );
+    }
+  }
+
+  // ─── §4.6 Price-extension on NoDriversFound ─────────────────────────────
+
+  /// Runtime gate mirroring every other Phase-3 surface: flag service
+  /// missing or flag off → false (kill-switch restores the old pop-back).
+  bool _priceExtensionEnabled() {
+    try {
+      String? deviceId;
+      try {
+        deviceId = Hive.box('settings').get('install_id') as String?;
+      } catch (_) {
+        deviceId = null;
+      }
+      return getIt<FeatureFlagService>().isEnabled('price_extension',
+          deviceId: deviceId);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Sheet replacing the old pop-back. Projections (+10% / +20%) are derived
+  /// from the fare the bloc actually broadcast; when the bloc never learned
+  /// a fare the rows show "unavailable" and defer every number to the
+  /// server's response — Global Rule 2 forbids inventing one here.
+  void _showPriceExtensionSheet(NoDriversFound state) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        final fare = state.currentFare;
+        final unit = state.currency ?? '';
+        String projected(double multiplier) {
+          if (fare == null) return 'Price calculated on apply';
+          final value = fare * multiplier;
+          final text = value.toStringAsFixed(value >= 100 ? 0 : 2);
+          return unit.isEmpty ? '$text' : '$unit $text';
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('No drivers at the current price',
+                    style: TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Text(
+                  fare == null
+                      ? 'We could not find drivers for your request. Offer a '
+                          'higher fare to re-broadcast — the new price is '
+                          'confirmed by the server before it applies.'
+                      : 'We could not find drivers for '
+                          '${unit.isEmpty ? fare.toStringAsFixed(2) : '$unit ${fare.toStringAsFixed(2)}'}. '
+                          'Offer a higher fare to re-broadcast your request.',
+                ),
+                const SizedBox(height: 20),
+                _PriceExtensionOption(
+                  label: 'Increase fare by 10%',
+                  projected: projected(1.10),
+                  enabled: !_priceExtensionBusy,
+                  onTap: () => _applyPriceExtension(state.rideId, 1.10),
+                ),
+                const SizedBox(height: 12),
+                _PriceExtensionOption(
+                  label: 'Increase fare by 20%',
+                  projected: projected(1.20),
+                  enabled: !_priceExtensionBusy,
+                  onTap: () => _applyPriceExtension(state.rideId, 1.20),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    child: const Text('Keep waiting at current price'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// POSTs the chosen multiplier. Success → toast with the SERVER-returned
+  /// new fare and re-subscribe so tracking resumes on the re-broadcast ride.
+  /// RIDE_NOT_EXTENSIBLE (a driver matched mid-tap) → honest "driver found"
+  /// message, no extension claimed. Any other failure → "New price will be
+  /// confirmed on retry"; the sheet stays open for another attempt.
+  Future<void> _applyPriceExtension(String rideId, double multiplier) async {
+    if (_priceExtensionBusy) return;
+    setState(() => _priceExtensionBusy = true);
+    PriceExtensionResult? outcome;
+    try {
+      outcome =
+          await getIt<RideRepository>().applyPriceExtension(
+        rideId,
+        multiplier: multiplier,
+      );
+    } catch (_) {
+      outcome = null; // network layer threw — treat as unconfirmed failure
+    }
+    if (!mounted) return;
+    setState(() => _priceExtensionBusy = false);
+
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final bloc = context.read<RideBloc>();
+
+    if (outcome != null && outcome.success) {
+      navigator.pop(); // close the sheet
+      final amount = outcome.newFare.toStringAsFixed(
+          outcome.newFare >= 100 ? 0 : 2);
+      messenger.showSnackBar(SnackBar(
+        content: Text('Request re-broadcast at '
+            '${outcome.currency} $amount. Still searching for drivers…'),
+      ));
+      bloc.add(SubscribeToRideUpdates(rideId));
+      return;
+    }
+
+    if (outcome != null && outcome.rideNotExtensible) {
+      navigator.pop();
+      messenger.showSnackBar(const SnackBar(
+        content: Text('A driver was found while you were deciding — '
+            'your original fare stands.'),
+      ));
+      bloc.add(LoadRide(rideId));
+      return;
+    }
+
+    // Failure (or exception): never claim a price. Keep the sheet open so
+    // the rider can retry; the plan mandates this exact copy.
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Could not update the price right now — '
+          'new price will be confirmed on retry.'),
+    ));
+  }
+
 
   // ─── §3.5 Mid-trip destination change ──────────────────────────────────
 
@@ -907,21 +1222,30 @@ class _FollowingChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // §4.4: on-color comes from the theme (colorScheme.onPrimary) instead of
+    // a hardcoded Colors.white, and there is no fixed height so large text
+    // scales are never clipped.
+    final onColor = Theme.of(context).colorScheme.onPrimary;
     return Material(
       color: AppColors.primary.withOpacity(0.9),
       borderRadius: BorderRadius.circular(20),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.gps_fixed, color: Colors.white, size: 14),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-            ),
-          ],
+        child: Semantics(
+          label: label,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.gps_fixed, color: onColor, size: 14),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(color: onColor, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1095,6 +1419,63 @@ class _ArNavigationButtonState extends State<_ArNavigationButton> {
           ),
         );
       },
+    );
+  }
+}
+
+/// §4.6: one tappable row in the price-extension sheet. Shows the option
+/// label and the projected fare (or the honest "calculated on apply" text
+/// when the bloc never learned a real fare). Disabled while any extension
+/// POST is in flight so double-taps cannot broadcast twice.
+class _PriceExtensionOption extends StatelessWidget {
+  final String label;
+  final String projected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _PriceExtensionOption({
+    required this.label,
+    required this.projected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '$label — new fare $projected',
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 56),
+          alignment: Alignment.centerLeft,
+          side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+        onPressed: enabled ? onTap : null,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            Text(
+              projected,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (!enabled) ...[
+              const SizedBox(width: 12),
+              const SizedBox(
+                height: 16,
+                width: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
