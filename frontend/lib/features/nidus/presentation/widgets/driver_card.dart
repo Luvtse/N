@@ -104,7 +104,8 @@ class DriverCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    // §4.4: token for intentional white-on-dark foreground.
+                    color: AppColors.textOnDark,
                   ),
                 ),
                 const Text(

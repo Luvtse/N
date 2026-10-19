@@ -74,7 +74,7 @@ class PlaceAutocompleteSheet extends StatefulWidget {
     final outcome = await showModalBottomSheet<PlaceAutocompleteOutcome>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),

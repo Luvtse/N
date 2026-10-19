@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 import '../../data/repositories/ride_repository.dart';
 import '../bloc/ride_bloc.dart';
 
@@ -32,7 +33,7 @@ class RateRideSheet extends StatefulWidget {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -271,7 +272,7 @@ class _RateRideSheetState extends State<RateRideSheet> {
                 onPressed: _submitting ? null : _submit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
+                  foregroundColor: AppColors.textOnDark,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 child: _submitting
@@ -280,10 +281,10 @@ class _RateRideSheetState extends State<RateRideSheet> {
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: AppColors.textOnDark,
                         ),
                       )
-                    : const Text('Submit rating'),
+                    : Text(context.l10n.rateSheetSubmit),
               ),
             ),
           ],

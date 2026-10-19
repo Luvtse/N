@@ -136,7 +136,7 @@ class _InAppNotificationBannerState extends State<InAppNotificationBanner>
               decoration: BoxDecoration(
                 color: Theme.of(context).brightness == Brightness.dark
                     ? AppColors.primaryDark
-                    : Colors.white,
+                    : AppColors.surface,
                 borderRadius: BorderRadius.circular(14),
                 boxShadow: [
                   BoxShadow(

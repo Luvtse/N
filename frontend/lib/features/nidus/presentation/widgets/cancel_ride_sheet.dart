@@ -6,6 +6,7 @@ import 'package:get_it/get_it.dart';
 import '../../../../core/di/injection.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../l10n/l10n.dart';
 import '../../data/repositories/ride_repository.dart';
 
 const List<String> kRideCancellationReasons = <String>[
@@ -220,9 +221,10 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
               children: [
                 const Icon(Icons.close_rounded, color: AppColors.error),
                 const SizedBox(width: 8),
-                const Text(
-                  'Cancel this ride?',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                Text(
+                  context.l10n.cancelSheetTitle,
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -230,7 +232,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
             _buildFeeSection(showFeeLine, quote),
             const SizedBox(height: 16),
             Text(
-              'Help us improve — why are you cancelling?',
+              context.l10n.cancelSheetReasonPrompt,
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
@@ -277,12 +279,12 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
                   // the consequence of the button before activating it.
                   child: Semantics(
                     button: true,
-                    label: 'Keep ride — closes this sheet and cancels nothing',
+                    label: context.l10n.cancelSheetDismissSemantics,
                     child: OutlinedButton(
                       onPressed: _submitting
                           ? null
                           : () => Navigator.of(context).pop(),
-                      child: const Text('Keep ride'),
+                      child: Text(context.l10n.cancelSheetDismiss),
                     ),
                   ),
                 ),
@@ -291,8 +293,8 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
                   child: Semantics(
                     button: true,
                     destructive: true,
-                    label: 'Cancel ride'
-                        '${_feeLabelForSemantics(showFeeLine, quote)}',
+                    label: context.l10n.cancelSheetConfirm +
+                        _feeLabelForSemantics(context, showFeeLine, quote),
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.error,
@@ -310,7 +312,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
                               ),
                             )
                           : const Icon(Icons.cancel_outlined, size: 18),
-                      label: Text(_confirmLabel(showFeeLine, quote)),
+                      label: Text(_confirmLabel(context, showFeeLine, quote)),
                     ),
                   ),
                 ),
@@ -322,41 +324,44 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
     );
   }
 
-  String _confirmLabel(bool showFeeLine, CancellationQuote? quote) {
+  String _confirmLabel(
+      BuildContext context, bool showFeeLine, CancellationQuote? quote) {
     if (showFeeLine && quote != null && quote.fee > 0) {
-      return 'Cancel (${quote.currency} ${quote.fee.toStringAsFixed(2)})';
+      return context.l10n.cancelSheetConfirmWithFee(
+          quote.currency, quote.fee.toStringAsFixed(2));
     }
-    return 'Cancel ride';
+    return context.l10n.cancelSheetConfirm;
   }
 
   /// §4.4: fee suffix for the cancel button's Semantics label. Mirrors
   /// [_confirmLabel] so screen-reader users hear the same authoritative fee
   /// sighted users see; when no quote is available it says exactly that —
   /// never a fabricated number.
-  String _feeLabelForSemantics(bool showFeeLine, CancellationQuote? quote) {
+  String _feeLabelForSemantics(
+      BuildContext context, bool showFeeLine, CancellationQuote? quote) {
     if (showFeeLine && quote != null && quote.fee > 0) {
       return ' — a ${quote.fee.toStringAsFixed(2)} ${quote.currency} '
           'cancellation fee will be charged';
     }
     if (showFeeLine && quote != null && quote.fee == 0) {
-      return ' — free, inside the cancellation window';
+      return context.l10n.cancelSheetSemanticsFeeSuffixFree;
     }
-    return ' — fee will be confirmed on cancel';
+    return context.l10n.cancelSheetSemanticsFeeSuffixUnknown;
   }
 
   Widget _buildFeeSection(bool showFeeLine, CancellationQuote? quote) {
     if (_status == _QuoteStatus.loading) {
-      return const Row(
+      return Row(
         children: [
-          SizedBox(
+          const SizedBox(
             width: 14,
             height: 14,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          SizedBox(width: 8),
+          const SizedBox(width: 8),
           Text(
-            'Checking your cancellation fee…',
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            context.l10n.cancelSheetFeeLoading,
+            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
         ],
       );
@@ -367,7 +372,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _failureMessage ?? 'Fee will be confirmed on cancel.',
+            _failureMessage ?? context.l10n.cancelSheetFeeUnknown,
             style: const TextStyle(
               fontSize: 13,
               color: AppColors.warning,
@@ -379,7 +384,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
             child: TextButton.icon(
               onPressed: _fetchQuote,
               icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Retry'),
+              label: Text(context.l10n.commonRetry),
             ),
           ),
         ],
@@ -394,8 +399,9 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
       children: [
         Text(
           q.isFree
-              ? 'No cancellation fee applies right now.'
-              : 'Cancelling now costs ${q.currency} ${q.fee.toStringAsFixed(2)}.',
+              ? context.l10n.cancelSheetNoFee
+              : context.l10n.cancelSheetCostNow(
+                  q.currency, q.fee.toStringAsFixed(2)),
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
@@ -420,7 +426,7 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
                   size: 16, color: AppColors.success),
               const SizedBox(width: 6),
               Text(
-                'Free window ends in ${_formatCountdown(secs)}',
+                context.l10n.cancelSheetFreeWindowEnds(_formatCountdown(secs)),
                 style: const TextStyle(
                   fontSize: 13,
                   color: AppColors.success,
@@ -462,9 +468,9 @@ class _CancelRideSheetState extends State<CancelRideSheet> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Total if you cancel now',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              Text(
+                context.l10n.cancelSheetTotalLabel,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
               Text(
                 '${q.currency} ${q.fee.toStringAsFixed(2)}',

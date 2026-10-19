@@ -274,7 +274,7 @@ class SelfieComparisonView extends StatelessWidget {
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.success,
-                        foregroundColor: Colors.white,
+                        foregroundColor: AppColors.textOnDark,
                       ),
                       onPressed: () => Navigator.of(context).pop(true),
                       icon: const Icon(Icons.check),
