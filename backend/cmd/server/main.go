@@ -265,6 +265,10 @@ func main() {
 	// pricing) and PATCH /nidus/rides/{rideID}/destination is not mounted at
 	// all — clients get 404, never a half-wired endpoint.
 	nidusDeps.StopoversEnabled = cfg.Features.EnableRideStopovers
+	// §4.6 Price-Extension Negotiation: mirrors FEATURE_PRICE_EXTENSION. Flag
+	// off => the POST /nidus/rides/{rideID}/price-extension route is absent
+	// (clean 404) and the client's NoDriversFound sheet never opens.
+	nidusDeps.PriceExtensionEnabled = cfg.Features.EnablePriceExtension
 	r.Mount("/", nidushttp.NewRouter(nidusDeps))
 
 	// Phase 1 audit fix: wire the WS bridge. Without this the hub is an

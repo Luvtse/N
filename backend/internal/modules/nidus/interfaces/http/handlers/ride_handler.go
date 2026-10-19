@@ -47,8 +47,15 @@ type RideHandler struct {
 	// post-construction via SetLifecycle; nil means the route honestly reports
 	// 501 NOT_IMPLEMENTED instead of silently accepting a body it cannot price.
 	changeDestCmd *commands.ChangeDestinationHandler
-	preSelfie     PreSelfieAttacher
-	etaService    *services.ETAService
+	// priceExtensionCmd is the §4.6 no-drivers price-extension command.
+	// Injected post-construction via SetLifecycle; nil means the route
+	// honestly reports 501 NOT_IMPLEMENTED instead of accepting a body it
+	// cannot reprice. The route itself is mounted only when the
+	// price_extension feature flag is on (router.go), so an unrouted nil
+	// never surfaces to clients.
+	priceExtensionCmd *commands.PriceExtensionHandler
+	preSelfie         PreSelfieAttacher
+	etaService        *services.ETAService
 	// receiptMailer is the §3.4 optional email-receipt port (see
 	// email_receipt_handler.go). Injected post-construction via
 	// SetReceiptMailer; nil means the route honestly reports 503
@@ -104,6 +111,11 @@ type LifecycleCommands struct {
 	// server-recomputed fare. Mounted on the router only when stopovers are
 	// enabled; nil-safe handler reports 501 otherwise.
 	ChangeDestination *commands.ChangeDestinationHandler
+	// PriceExtension is the §4.6 rider fare bump (+10%/+20%) that keeps a
+	// still-searching ride in the broadcast pool so the matching engine
+	// re-offers it at the higher fare. Mounted only behind the
+	// price_extension flag; nil-safe handler reports 501 otherwise.
+	PriceExtension *commands.PriceExtensionHandler
 }
 
 // SetLifecycle wires the lifecycle command handlers into this HTTP handler.
@@ -115,6 +127,7 @@ func (h *RideHandler) SetLifecycle(lc LifecycleCommands) {
 	h.rateRideCmd = lc.Rate
 	h.confirmCashCmd = lc.ConfirmCashCollection
 	h.changeDestCmd = lc.ChangeDestination
+	h.priceExtensionCmd = lc.PriceExtension
 }
 
 // NewRideHandler creates a new ride handler
@@ -855,6 +868,15 @@ func mapLifecycleError(err error) (int, string, string) {
 	// show current truth — never a silent success on a stale fare.
 	case errors.Is(err, commands.ErrDestinationNotChangeable):
 		return http.StatusConflict, "DESTINATION_NOT_CHANGEABLE", "destination can only be changed while the ride is en-route or in progress"
+	// §4.6 price-extension sentinels. A ride that already matched (or lost
+	// the race to a match) rejects with 409 RIDE_NOT_EXTENSIBLE so the
+	// client's sheet closes and re-reads live state — the fare a driver was
+	// dispatched against is never overwritten by a stale sheet tap. An
+	// off-bucket multiplier is a client-correctable 400.
+	case errors.Is(err, commands.ErrRideNotExtensible):
+		return http.StatusConflict, "RIDE_NOT_EXTENSIBLE", "ride already has a driver or is no longer searching"
+	case errors.Is(err, commands.ErrInvalidMultiplier):
+		return http.StatusBadRequest, "INVALID_MULTIPLIER", "multiplier must be one of the offered buckets"
 	default:
 		return http.StatusInternalServerError, "INTERNAL_ERROR", "failed to process request"
 	}
@@ -907,6 +929,68 @@ func (h *RideHandler) ChangeDestination(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// PriceExtensionRequest is the §4.6 rider-intent body. Only the multiplier
+// bucket travels over the wire; the resulting fare is always recomputed
+// server-side (see commands/price_extension.go), so a tampered body can
+// never set an arbitrary price.
+type PriceExtensionRequest struct {
+	Multiplier float64 `json:"multiplier"`
+}
+
+// PriceExtensionResponse echoes the authoritative before/after fares from
+// the server's recomputation. Flutter renders NewFare verbatim (§4.6 sheet)
+// and re-subscribes to ride updates on success.
+type PriceExtensionResponse struct {
+	RideID       uuid.UUID `json:"ride_id"`
+	PreviousFare float64   `json:"previous_fare"`
+	NewFare      float64   `json:"new_fare"`
+	Currency     string    `json:"currency"`
+	Multiplier   float64   `json:"multiplier"`
+}
+
+// PriceExtension handles POST /api/v1/nidus/rides/{rideID}/price-extension
+// (rider, §4.6). Modeled on ChangeDestination: auth from JWT subject,
+// nil-command guard reports 501 honestly when the route was mounted without
+// its wiring. On success the ride remains in 'searching' with the bumped
+// fare_amount, which the auto-matcher picks up on its next tick — the
+// re-broadcast is persistence-driven, not a second dispatch path.
+func (h *RideHandler) PriceExtension(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing user context")
+		return
+	}
+	rideID, ok := parseRideID(w, r)
+	if !ok {
+		return
+	}
+	var req PriceExtensionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if h.priceExtensionCmd == nil {
+		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "price extension not yet wired")
+		return
+	}
+	res, err := h.priceExtensionCmd.Execute(r.Context(), commands.PriceExtensionCommand{
+		RideID:     rideID,
+		UserID:     userID,
+		Multiplier: req.Multiplier,
+	})
+	if err != nil {
+		status, code, msg := mapLifecycleError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, PriceExtensionResponse{
+		RideID:       res.RideID,
+		PreviousFare: res.PreviousFare,
+		NewFare:      res.NewFare,
+		Currency:     res.Currency,
+		Multiplier:   res.Multiplier,
+	})
+}
 func writeJSON(w http.ResponseWriter, status int, body interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

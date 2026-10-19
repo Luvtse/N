@@ -847,6 +847,51 @@ class CancelRideResult {
   bool get wasDriverCancelled => errorCode == 'DRIVER_CANCELLED';
 }
 
+/// §4.6: result of POST /api/v1/nidus/rides/{rideId}/price-extension.
+///
+/// Mirrors [CancelRideResult]'s named-constructor pattern. On success the
+/// server's recomputed fare ([newFare]) and its currency are returned
+/// verbatim — the UI renders exactly these numbers and never projects a
+/// price client-side. On failure, [errorCode] carries the backend code
+/// (`RIDE_NOT_EXTENSIBLE`, `FLAG_DISABLED`, `INVALID_MULTIPLIER`, …) so the
+/// sheet can degrade honestly instead of inventing a number.
+class PriceExtensionResult {
+  final bool success;
+  final String? errorCode;
+  final String? message;
+
+  /// Recomputed broadcast fare after the multiplier was applied, in
+  /// [currency] units. Only meaningful when [success] is true.
+  final double newFare;
+  final String currency;
+
+  const PriceExtensionResult._({
+    required this.success,
+    this.errorCode,
+    this.message,
+    this.newFare = 0,
+    this.currency = 'ETB',
+  });
+
+  const PriceExtensionResult.extended({
+    required this.newFare,
+    this.currency = 'ETB',
+  })  : success = true,
+        errorCode = null,
+        message = null;
+
+  const PriceExtensionResult.failure({
+    required this.errorCode,
+    required this.message,
+  })  : success = false,
+        newFare = 0,
+        currency = 'ETB';
+
+  /// The ride already has a driver (or left the searching window) — the
+  /// extension must not proceed; the UI keeps the original fare.
+  bool get rideNotExtensible => errorCode == 'RIDE_NOT_EXTENSIBLE';
+}
+
 /// §2.5: authoritative cancellation-fee quote returned by
 /// GET /api/v1/nidus/rides/{rideId}/cancellation-quote. Mirrors the backend's
 /// services.CancellationQuote exactly; the UI renders these values verbatim.
@@ -1389,6 +1434,49 @@ class RideRepositoryImpl implements RideRepository {
     final inner = data['data'];
     if (inner is Map<String, dynamic>) data = inner;
     return CancellationQuote.fromJson(data);
+  }
+
+  @override
+  Future<PriceExtensionResult> applyPriceExtension(
+    String rideId, {
+    required double multiplier,
+  }) async {
+    try {
+      final response = await _apiClient.post<Map<String, dynamic>>(
+        '/api/v1/nidus/rides/$rideId/price-extension',
+        data: {'multiplier': multiplier},
+      );
+
+      // The handler returns the recomputed ride DTO; unwrap the standard
+      // envelope the same way getCancellationQuote does.
+      var data = response.data ?? const <String, dynamic>{};
+      final inner = data['data'];
+      if (inner is Map<String, dynamic>) data = inner;
+
+      final fareRaw = data['fare_amount'] ?? data['new_fare'];
+      if (fareRaw is! num) {
+        // Server answered without a fare — degrade honestly rather than
+        // inventing a number.
+        return const PriceExtensionResult.failure(
+          errorCode: 'MALFORMED_RESPONSE',
+          message: 'Server did not return the new fare.',
+        );
+      }
+      return PriceExtensionResult.extended(
+        newFare: fareRaw.toDouble(),
+        currency: data['currency'] as String? ?? 'ETB',
+      );
+    } on ApiException catch (e) {
+      return PriceExtensionResult.failure(
+        errorCode: e.errorCode ?? 'PRICE_EXTENSION_FAILED',
+        message: e.message,
+      );
+    } catch (e) {
+      return PriceExtensionResult.failure(
+        errorCode: 'NETWORK_ERROR',
+        message: 'Failed to extend price: ${e.toString()}',
+      );
+    }
   }
 
   @override
