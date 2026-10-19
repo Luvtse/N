@@ -287,13 +287,27 @@ func NewAcceptRideHandler(db *database.Postgres, eventBus eventbus.EventBus, me 
 
 // Execute performs the accept transition. Returns ErrForbidden when the
 // calling driver is not the ride's currently matched candidate.
+//
+// NIDUS-DISPATCH-001: the mutation section now delegates to the SAME atomic
+// dispatch operation used by automatic matching (AssignRideAtomically), so
+// manual acceptance and the auto-matcher share one reservation invariant:
+// driver row lock + eligibility revalidation at commit + conditional ride
+// transition + outbox persistence in a single transaction. The previous code
+// committed the ride UPDATE first and treated the driver reservation as a
+// non-fatal afterthought, which allowed one driver to end up on two active
+// rides; it also published ride.matched with a hard-coded 5-minute ETA.
+// Lost races surface as ErrInvalidTransition (HTTP mapping unchanged) via
+// errors.Is(ErrAssignmentConflict); infrastructure errors propagate as
+// themselves and are never disguised as contention.
 func (h *AcceptRideHandler) Execute(ctx context.Context, cmd *AcceptRideCommand) (*entities.Ride, error) {
 	driverID, err := h.resolveDriverID(ctx, cmd.DriverUserID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Driver must be online-and-available (or suspended checks live in the entity).
+	// Driver must be online-and-available (or suspended checks live in the
+	// entity). This pre-check keeps the friendly ErrDriverUnavailable for the
+	// common case; AssignRideAtomically revalidates under the row lock.
 	var dStatus entities.DriverStatus
 	if err := h.db.QueryRow(ctx, `SELECT status FROM drivers WHERE id = $1`, driverID).Scan(&dStatus); err != nil {
 		return nil, err
@@ -317,49 +331,84 @@ func (h *AcceptRideHandler) Execute(ctx context.Context, cmd *AcceptRideCommand)
 			return nil, err
 		}
 	case entities.RideStatusMatched:
-		// Already matched: only the matched driver may accept.
+		// Already matched: only the matched driver may accept. The ride is
+		// already reserved for this driver (auto-match assigned it inside a
+		// transaction); accepting confirms intent without re-dispatching.
 		if ride.DriverID == nil || *ride.DriverID != driverID {
 			return nil, ErrForbidden
 		}
+		observability.Nidus().RecordMatch("manual")
+		ride.Status = entities.RideStatusMatched
+		return ride, nil
 	default:
 		return nil, ErrInvalidTransition
 	}
 
-	now := time.Now().UTC()
-	tag, err := h.db.Exec(ctx, `
-		UPDATE rides
-		   SET status = 'matched', driver_id = $2, matched_at = $3, updated_at = $4
-		 WHERE id = $1 AND status IN ('requested','searching','matched')`,
-		ride.ID, driverID, now, now)
+	// Authoritative ETA for this assignment: prefer the ACTUAL computed value
+	// from the matching engine for this driver/pickup pair; fall back to the
+	// documented haversine heuristic on the driver's current position when
+	// scoring inputs are unavailable. Never a fabricated constant.
+	etaMinutes := 0
+	if h.matchingEngine != nil {
+		if cand, cErr := h.matchingEngine.SelectBestCandidate(ctx, ride); cErr == nil &&
+			cand != nil && cand.Driver != nil && cand.Driver.ID == driverID && cand.ETA > 0 {
+			etaMinutes = cand.ETA
+		}
+	}
+	if etaMinutes <= 0 {
+		var dLat, dLng float64
+		if qErr := h.db.QueryRow(ctx,
+			`SELECT current_lat, current_lng FROM drivers WHERE id = $1`, driverID,
+		).Scan(&dLat, &dLng); qErr == nil {
+			etaMinutes = heuristicPickupETAMinutes(dLat, dLng, ride.PickupLat, ride.PickupLng)
+		}
+	}
+	if etaMinutes <= 0 {
+		// No usable position input at all: refuse to store a fake estimate.
+		// The column stays NULL and clients render "not provided".
+		etaMinutes = 0
+	}
+
+	result, err := AssignRideAtomically(ctx, h.db, ride.ID, driverID, etaMinutes)
 	if err != nil {
-		return nil, err
+		switch {
+		case errors.Is(err, ErrAssignmentIneligible):
+			return nil, ErrDriverUnavailable
+		case errors.Is(err, ErrAssignmentConflict):
+			return nil, ErrInvalidTransition // lost the race to another driver/worker
+		default:
+			return nil, err // infrastructure failure stays distinguishable
+		}
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrInvalidTransition // lost the race to another driver
+	// etaMinutes==0 above would have been rejected by AssignRideAtomically
+		// (positive-ETA contract); guard defensively so a future relaxation
+		// cannot silently skip the persisted-ETA step.
+	if result.ETAMinutes > 0 {
+		if _, err := h.db.Exec(ctx,
+			`UPDATE rides SET matched_eta_minutes = $2 WHERE id = $1 AND driver_id = $3 AND status = 'matched'`,
+			ride.ID, result.ETAMinutes, driverID); err != nil {
+			fmt.Printf("warning: failed to persist matched ETA for ride %s: %v\n", ride.ID, err)
+		}
 	}
+
 	observability.Nidus().RecordMatch("manual")
 
-	// Mark the driver busy so the matching engine stops offering them rides.
-	if _, err := h.db.Exec(ctx,
-		`UPDATE drivers SET status = 'on_trip', updated_at = NOW() WHERE id = $1 AND status = 'available'`,
-		driverID); err != nil {
-		// Non-fatal: the ride is accepted; driver availability converges on start.
-		fmt.Printf("warning: failed to mark driver %s on_trip: %v\n", driverID, err)
-	}
-
+	now := result.MatchedAt
 	ride.Status = entities.RideStatusMatched
 	ride.DriverID = &driverID
 	ride.MatchedAt = &now
 
+	// Post-commit best-effort direct publish; MatchedEventsOutbox drains the
+	// row committed inside AssignRideAtomically if the broker is down.
 	ev := &nidusevents.RideMatched{
 		RideID:     ride.ID,
 		DriverID:   driverID,
 		UserID:     ride.UserID,
-		ETAMinutes: 5,
+		ETAMinutes: result.ETAMinutes,
 		FareAmount: ride.FareAmount,
 	}
 	if err := h.publishDomainEvent(ctx, ev.ToEvent()); err != nil {
-		fmt.Printf("warning: failed to publish ride.matched: %v\n", err)
+		fmt.Printf("warning: failed to publish ride.matched (outbox will retry): %v\n", err)
 	}
 	return ride, nil
 }
