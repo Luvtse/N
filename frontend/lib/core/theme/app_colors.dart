@@ -76,6 +76,12 @@ class AppColors {
   static const Color errorLight = Color(0xFFF87171);
   static const Color errorDark = Color(0xFFDC2626);
 
+  /// Foreground token for content painted on saturated/dark button fills
+  /// (primary, error). §4.4: replaces scattered `Colors.white` literals in
+  /// nidus sheets so the "on-color" foreground is a single named token that
+  /// dark-mode audits can reason about.
+  static const Color textOnDark = Color(0xFFFFFFFF);
+
   /// Warning - Amber
   static const Color warning = Color(0xFFF59E0B);
   static const Color warningLight = Color(0xFFFCD34D);

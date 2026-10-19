@@ -325,7 +325,13 @@ class _PaymentMethodSelectorState extends State<PaymentMethodSelector> {
             final selected = widget.selectedPaymentMethodId == m.id;
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: InkWell(
+              // §4.4: announce selection state and the method description so
+              // screen-reader users hear which payment method is active.
+              child: Semantics(
+                selected: selected,
+                button: true,
+                label: '${m.label}, ${selected ? 'default' : 'tap to select'}',
+                child: InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: _busy ? null : () => _select(m),
                 child: Container(
@@ -396,6 +402,7 @@ class _PaymentMethodSelectorState extends State<PaymentMethodSelector> {
                     ],
                   ),
                 ),
+              ),
               ),
             );
           }),
@@ -509,7 +516,8 @@ class PaymentFailureSheet extends StatelessWidget {
   }) {
     return showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      // §4.4 dark-mode token: sheet surface follows the theme.
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),

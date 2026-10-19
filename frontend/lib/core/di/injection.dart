@@ -326,6 +326,11 @@ void _registerBlocs() {
       // global AuthBloc so the bloc can split DriverEnRoute into the
       // rider-side verification view vs. the driver-side capture flow.
       currentUserIdResolver: () => getIt<AuthBloc>().currentUser?.id,
+      // §4.5: RideCheck anomaly detector is gated at runtime by the
+      // `ridecheck_anomaly` flag (default off; kill switch documented in
+      // config/feature-flags/flags.json). Injecting the loaded service lets
+      // the bloc check it per position sample without reaching for getIt.
+      featureFlags: getIt<FeatureFlagService>(),
     ),
   );
 
