@@ -583,9 +583,15 @@ func main() {
 	go autoMatcher.Run(ctxRideWorkers)
 	settlementOutbox := niduscmds.NewSettlementOutbox(db, eventBus, 30*time.Second)
 	go settlementOutbox.Run(ctxRideWorkers)
+	// MatchedEventsOutbox drains ride_matched_events rows persisted in the same
+	// transaction as the atomic assignment (NIDUS-DISPATCH-001), so a committed
+	// match is eventually published to nidaw.events even if the broker was down.
+	matchedOutbox := niduscmds.NewMatchedEventsOutbox(db, eventBus, 15*time.Second)
+	go matchedOutbox.Run(ctxRideWorkers)
 	logger.Info("Nidus ride lifecycle workers online",
 		zap.String("auto_matcher", "5s cadence"),
-		zap.String("settlement_outbox", "30s cadence"))
+		zap.String("settlement_outbox", "30s cadence"),
+		zap.String("matched_events_outbox", "15s cadence"))
 
 	// §3.6 scheduled-ride reminder producer: emits ride.scheduled_reminder
 	// ~30 minutes before each scheduled pickup so the notifications module's
