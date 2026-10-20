@@ -214,6 +214,13 @@ type Ride struct {
 	// replica publishes per ride.
 	ScheduledReminderSentAt *time.Time `json:"-" db:"scheduled_reminder_sent_at"`
 
+	// MatchedETAMinutes (NIDUS-DISPATCH-001, migration 014) is the selected
+	// candidate's actual computed pickup ETA, persisted atomically with the
+	// assignment. nil => not provided (pre-014 rides, or assignments where the
+	// scorer had no distance input) — clients omit it rather than guess a
+	// constant. This is a routing/heuristic estimate, NOT model inference.
+	MatchedETAMinutes *int `json:"matched_eta_minutes,omitempty" db:"matched_eta_minutes"`
+
 	// Lifecycle Timestamps
 	RequestedAt time.Time  `json:"requested_at" db:"requested_at"`
 	MatchedAt   *time.Time `json:"matched_at,omitempty" db:"matched_at"`

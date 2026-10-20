@@ -63,6 +63,7 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 			ride_type, status, fare_amount, currency,
 			distance_km, duration_minutes,
 			requested_at, matched_at, started_at, completed_at,
+			matched_eta_minutes,
 			rating, review, tip_amount,
 			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 			COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
@@ -78,6 +79,10 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	var matchedAt, startedAt, completedAt pgtype.Timestamptz
 	var fareAmount, distanceKm pgtype.Float8
 	var durationMinutes, rating pgtype.Int4
+	// NIDUS-DISPATCH-001: rides.matched_eta_minutes is nullable (pre-014 rows
+	// and AllowNilETA assignments); nil scans to a nil pointer and the DTO
+	// omits the field rather than guessing a constant.
+	var matchedEta pgtype.Int4
 	var tipAmount pgtype.Float8
 	// §3.1/§3.6 money + scheduling columns: nullable so legacy rows (created
 	// before migrations 007/008) scan cleanly into zero values / nil pointers.
@@ -112,6 +117,7 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 		&matchedAt,
 		&startedAt,
 		&completedAt,
+		&matchedEta,
 		&rating,
 		&review,
 		&tipAmount,
@@ -159,6 +165,10 @@ func (q *GetRideQuery) fetchRide(ctx context.Context, rideID uuid.UUID) (*entiti
 	if completedAt.Valid {
 		t := completedAt.Time
 		ride.CompletedAt = &t
+	}
+	if matchedEta.Valid {
+		v := int(matchedEta.Int32)
+		ride.MatchedETAMinutes = &v
 	}
 	if rating.Valid {
 		ride.Rating = int(rating.Int32)
