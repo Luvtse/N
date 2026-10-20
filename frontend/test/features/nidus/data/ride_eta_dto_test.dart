@@ -90,6 +90,8 @@ void main() {
     test('REST reload carries both the persisted ETA and the driver card',
         () {
       final json = minimalRideJson(matchedEtaMinutes: 7);
+      // Ride.fromJson reads the embedded driver card from the singular
+      // `driver` key (verified against lib/…/ride_repository.dart:303).
       json['driver'] = driverCardJson(etaMinutes: 7);
       final ride = Ride.fromJson(json);
       // Parity invariant asserted at the DTO layer: the two independent
