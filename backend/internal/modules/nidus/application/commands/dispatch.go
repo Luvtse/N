@@ -61,6 +61,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ============================================================================
@@ -128,7 +129,7 @@ func AssignRideAtomically(
 		return nil, fmt.Errorf("%w: database client not initialized", database.ErrDatabaseClosed)
 	}
 	if etaMinutes == AllowNilETA {
-		etaMinutes = 0 // stored as NULL below
+		etaMinutes = 0 // stored as NULL below via the invalid pgtype.Int4 branch
 	} else if etaMinutes <= 0 {
 		return nil, fmt.Errorf("%w: eta_minutes must be a positive computed estimate (or AllowNilETA), got %d",
 			ErrAssignmentIneligible, etaMinutes)
@@ -136,6 +137,13 @@ func AssignRideAtomically(
 
 	now := time.Now().UTC()
 	var result AssignmentResult
+	// Authoritative ETA parameter. A raw int32 0 would persist an honest-looking
+	// "0 minutes"; AllowNilETA must instead store SQL NULL so clients render
+	// "not provided" rather than a fabricated estimate.
+	storedETA := pgtype.Int4{Int32: int32(etaMinutes), Valid: true}
+	if etaMinutes == 0 {
+		storedETA = pgtype.Int4{}
+	}
 
 	err := db.WithTx(ctx, func(tx *database.Tx) error {
 		// ---- Step 1: lock + revalidate driver eligibility -------------------
@@ -170,12 +178,12 @@ func AssignRideAtomically(
 			   SET status = 'matched',
 			       driver_id = $2,
 			       matched_at = $3,
-			       matched_eta_minutes = CASE WHEN $4::int < 0 THEN NULL ELSE $4::int END,
+			       matched_eta_minutes = $4,
 			       updated_at = $3
 			 WHERE id = $1
 			   AND status IN ('requested','searching')
 			   AND driver_id IS NULL`,
-			rideID, driverID, now, etaMinutes)
+			rideID, driverID, now, storedETA)
 		if err != nil {
 			// The unique-index backstop surfacing here also means "lost race"
 			// (another ACTIVE ride already holds this driver).
