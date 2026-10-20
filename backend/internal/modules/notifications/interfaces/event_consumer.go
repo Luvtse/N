@@ -47,13 +47,23 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 		return nil
 	}
 
+	// Consumer idempotency (Phase 2): the transactional outbox publishes with
+	// at-least-once semantics, so redelivered duplicates of the same business
+	// transition must not double-notify the rider. Key on (event type, stable
+	// entity id carried by the producer): ride lifecycle events use ride_id
+	// (outbox contract: event_id = ride_id per transition); payment.failed
+	// uses payment_id; promo.granted uses the code. Events without a stable
+	// id get an empty key and keep pre-outbox behavior.
+	idemKey := consumerIdempotencyKey(ev)
+
 	switch ev.Type {
 	case "ride.matched":
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryRideMatched,
-			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
-			Payload:  map[string]interface{}{"ride_id": ev.Payload["ride_id"]},
+			UserID:         userID,
+			Category:       domain.CategoryRideMatched,
+			IdempotencyKey: idemKey,
+			DeepLink:       deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			Payload:        map[string]interface{}{"ride_id": ev.Payload["ride_id"]},
 			Vars: map[string]string{
 				"driver_name": driverDisplayName(ctx, ev.Payload["driver_id"]),
 				"vehicle":     stringOr(ev.Payload["vehicle"], ""),
@@ -66,9 +76,10 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 		fare := stringOr(ev.Payload["final_fare"], "")
 		items := receiptBreakdown(ev.Payload)
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryReceipt,
-			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			UserID:         userID,
+			Category:       domain.CategoryReceipt,
+			IdempotencyKey: idemKey,
+			DeepLink:       deepLinkRide(extractUUID(ev.Payload, "ride_id")),
 			Payload: map[string]interface{}{
 				"ride_id":   ev.Payload["ride_id"],
 				"amount":    fare,
@@ -86,9 +97,10 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 		amount := stringOr(ev.Payload["amount"], "")
 		currency := stringOr(ev.Payload["currency"], "ETB")
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryPaymentFailed,
-			DeepLink: "/nidus/payments/recover",
+			UserID:         userID,
+			Category:       domain.CategoryPaymentFailed,
+			IdempotencyKey: idemKey,
+			DeepLink:       "/nidus/payments/recover",
 			Payload: map[string]interface{}{
 				"payment_id": ev.Payload["payment_id"],
 				"amount":     amount,
@@ -104,9 +116,10 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 
 	case "promo.granted":
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryPromo,
-			DeepLink: "/nidus/promos",
+			UserID:         userID,
+			Category:       domain.CategoryPromo,
+			IdempotencyKey: idemKey,
+			DeepLink:       "/nidus/promos",
 			Payload: map[string]interface{}{
 				"code":  ev.Payload["code"],
 				"value": ev.Payload["value"],
@@ -119,9 +132,10 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 
 	case "sos.confirmed":
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategorySafety,
-			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			UserID:         userID,
+			Category:       domain.CategorySafety,
+			IdempotencyKey: idemKey,
+			DeepLink:       deepLinkRide(extractUUID(ev.Payload, "ride_id")),
 			Payload: map[string]interface{}{
 				"ride_id":    ev.Payload["ride_id"],
 				"event_type": ev.Payload["event_type"],
@@ -136,9 +150,10 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 		// announced at most once per radius tier (deduped in the watcher),
 		// so this case never spams the rider.
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryDriverArriving,
-			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			UserID:         userID,
+			Category:       domain.CategoryDriverArriving,
+			IdempotencyKey: idemKey,
+			DeepLink:       deepLinkRide(extractUUID(ev.Payload, "ride_id")),
 			Payload: map[string]interface{}{
 				"ride_id":       ev.Payload["ride_id"],
 				"distance_m":    ev.Payload["distance_m"],
@@ -170,9 +185,10 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 			vars["minutes_before_pickup"] = minutes
 		}
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryScheduledReminder,
-			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			UserID:         userID,
+			Category:       domain.CategoryScheduledReminder,
+			IdempotencyKey: idemKey,
+			DeepLink:       deepLinkRide(extractUUID(ev.Payload, "ride_id")),
 			Payload: map[string]interface{}{
 				"ride_id":        ev.Payload["ride_id"],
 				"scheduled_at":   ev.Payload["scheduled_at"],
@@ -193,17 +209,18 @@ func (c *EventConsumer) Handle(ctx context.Context, ev eventbus.Event) error {
 			vars["new_destination"] = newAddr
 		}
 		_, err := c.dispatcher.Dispatch(ctx, domain.Command{
-			UserID:   userID,
-			Category: domain.CategoryDestinationChanged,
-			DeepLink: deepLinkRide(extractUUID(ev.Payload, "ride_id")),
+			UserID:         userID,
+			Category:       domain.CategoryDestinationChanged,
+			IdempotencyKey: idemKey,
+			DeepLink:       deepLinkRide(extractUUID(ev.Payload, "ride_id")),
 			Payload: map[string]interface{}{
-				"ride_id":           ev.Payload["ride_id"],
-				"new_dropoff_lat":   ev.Payload["new_dropoff_lat"],
-				"new_dropoff_lng":   ev.Payload["new_dropoff_lng"],
+				"ride_id":             ev.Payload["ride_id"],
+				"new_dropoff_lat":     ev.Payload["new_dropoff_lat"],
+				"new_dropoff_lng":     ev.Payload["new_dropoff_lng"],
 				"new_dropoff_address": ev.Payload["new_dropoff_address"],
-				"previous_fare":     ev.Payload["previous_fare"],
-				"new_fare":          ev.Payload["new_fare"],
-				"currency":          ev.Payload["currency"],
+				"previous_fare":       ev.Payload["previous_fare"],
+				"new_fare":            ev.Payload["new_fare"],
+				"currency":            ev.Payload["currency"],
 			},
 			Vars: vars,
 		})
@@ -232,6 +249,45 @@ func deepLinkRide(rideID uuid.UUID) string {
 		return "/nidus"
 	}
 	return "/nidus/tracking/" + rideID.String()
+}
+
+// consumerIdempotencyKey derives the stable dedupe key for one bus event,
+// consumed by Dispatcher.Dispatch (see domain.Command.IdempotencyKey). The
+// transactional outbox publishes with at-least-once semantics and a redelivered
+// duplicate carries the identical type + entity id, so:
+//
+//   - ride lifecycle events (matched/completed/cancelled/started plus the
+//     watcher-produced driver.arriving, scheduled_reminder, destination_changed)
+//     key on (type, ride_id) — matching the outbox contract event_id = ride_id;
+//   - payment.failed keys on (type, payment_id);
+//   - promo.granted keys on (type, code), the only stable identity the grant
+//     carries;
+//   - anything else returns "" and is dispatched without dedupe, preserving
+//     pre-outbox behavior for producers that have no stable event id.
+func consumerIdempotencyKey(ev eventbus.Event) string {
+	switch ev.Type {
+	case "ride.matched", "ride.completed", "ride.cancelled", "ride.started",
+		"driver.arriving", "ride.scheduled_reminder", "ride.destination_changed":
+		if rideID := extractUUID(ev.Payload, "ride_id"); rideID != uuid.Nil {
+			return ev.Type + ":" + rideID.String()
+		}
+	case "payment.failed":
+		if pid := stringOr(ev.Payload["payment_id"], ""); pid != "" {
+			return ev.Type + ":" + pid
+		}
+	case "promo.granted":
+		if code := stringOr(ev.Payload["code"], ""); code != "" {
+			return ev.Type + ":" + code
+		}
+	}
+	return ""
+}
+
+// ConsumerIdempotencyKeyForTest exposes the dedupe-key derivation to the
+// external interfaces_test package so the key contract (type + stable entity
+// id) is pinned independently of dispatch behavior.
+func ConsumerIdempotencyKeyForTest(ev eventbus.Event) string {
+	return consumerIdempotencyKey(ev)
 }
 
 func extractUUID(payload map[string]interface{}, key string) uuid.UUID {

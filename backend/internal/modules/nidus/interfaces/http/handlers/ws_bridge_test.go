@@ -215,6 +215,94 @@ func TestWSBridge_Handle_UnknownTypeIgnored(t *testing.T) {
 	}
 }
 
+// TestWSBridge_Handle_DuplicateMatched_SuppressedOnce proves consumer
+// idempotency on the WebSocket fan-out path (Phase 2 gate): the transactional
+// outbox publisher delivers at-least-once, so a redelivered ride.matched with
+// the same stable key (event_id = ride_id) must reach client rooms exactly
+// once. A third delivery of a DIFFERENT transition (ride.completed) for the
+// same ride must still fan out — dedupe is keyed on (type, ride_id), never on
+// ride alone.
+func TestWSBridge_Handle_DuplicateMatched_SuppressedOnce(t *testing.T) {
+	hub := &recordingHub{}
+	bridge := NewWSBridge(hub)
+	rideID := uuid.New()
+	driverID := uuid.New()
+	matched := eventbus.Event{
+		Type: "ride.matched",
+		Payload: map[string]interface{}{
+			"ride_id":     rideID.String(),
+			"driver_id":   driverID.String(),
+			"eta_minutes": 4,
+		},
+		Timestamp: 123,
+	}
+
+	// First delivery fans out normally.
+	if err := bridge.Handle(matched); err != nil {
+		t.Fatalf("Handle(first): %v", err)
+	}
+	// Redelivery (broker replay after an un-acked publish) must be suppressed.
+	if err := bridge.Handle(matched); err != nil {
+		t.Fatalf("Handle(duplicate): %v", err)
+	}
+	// And again — suppression is idempotent, not a one-shot.
+	if err := bridge.Handle(matched); err != nil {
+		t.Fatalf("Handle(duplicate-2): %v", err)
+	}
+
+	hub.mu.Lock()
+	if len(hub.rides) != 1 {
+		t.Fatalf("ride room broadcasts = %d, want exactly 1 (duplicate not suppressed)", len(hub.rides))
+	}
+	if len(hub.drivers) != 1 {
+		t.Fatalf("driver room broadcasts = %d, want exactly 1 (duplicate not suppressed)", len(hub.drivers))
+	}
+	hub.mu.Unlock()
+
+	// Distinct transition of the same ride must NOT collide with the matched key.
+	if err := bridge.Handle(eventbus.Event{
+		Type:    "ride.completed",
+		Payload: map[string]interface{}{"ride_id": rideID.String()},
+	}); err != nil {
+		t.Fatalf("Handle(completed): %v", err)
+	}
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if len(hub.rides) != 2 || hub.rides[1].message.Type != "ride_update" {
+		t.Fatalf("ride.completed must still fan out; rides=%+v", hub.rides)
+	}
+	data, ok := hub.rides[1].message.Payload["data"].(map[string]interface{})
+	if !ok || data["status"] != "completed" {
+		t.Fatalf("completed status missing: %+v", hub.rides[1].message.Payload)
+	}
+}
+
+// TestWSBridge_Handle_LocationUpdates_NotDeduped guards the other side of the
+// contract: high-frequency GPS samples are ephemeral and must keep flowing even
+// when the payload repeats (a stationary driver legitimately re-sends).
+func TestWSBridge_Handle_LocationUpdates_NotDeduped(t *testing.T) {
+	hub := &recordingHub{}
+	bridge := NewWSBridge(hub)
+	rideID := uuid.New()
+	ev := eventbus.Event{
+		Type: "driver.location_updated",
+		Payload: map[string]interface{}{
+			"ride_id": rideID.String(),
+			"lat":     9.01, "lng": 38.75,
+		},
+	}
+	for i := 0; i < 3; i++ {
+		if err := bridge.Handle(ev); err != nil {
+			t.Fatalf("Handle(%d): %v", i, err)
+		}
+	}
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if len(hub.rides) != 3 {
+		t.Fatalf("GPS samples must not be deduped: got %d broadcasts, want 3", len(hub.rides))
+	}
+}
+
 func TestWSBridge_Subscribe_NilSafe(t *testing.T) {
 	var bridge *WSBridge
 	if err := bridge.Subscribe(context.Background(), &fakeBus{}); err != nil {
