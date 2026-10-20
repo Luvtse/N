@@ -1529,10 +1529,30 @@ func nonEmptyString(v string) *string {
 // reading the driver profile through the matching engine. photo_url,
 // vehicle_make and rating_count have no backing column anywhere in this
 // codebase, so they are deliberately left nil: the rider card renders "Not
-// provided" for them (Global Rule 2 — never fabricate, never blank). ETA is
-// computed live from the driver's last reported position toward the pickup;
-// when the ETA service is unwired or errors, ETAMinutes stays 0 and the
-// client hides the ETA chip rather than showing a guessed number.
+// provided" for them (Global Rule 2 — never fabricate, never blank).
+//
+// NIDUS-PHASE-3 ETA propagation (authoritative → client): the driver card's
+// eta_minutes follows a documented three-tier precedence so the rider always
+// sees the SAME number the dispatcher committed, and never a guessed one:
+//
+//	tier 1 (live, traffic/time-of-day-aware, confidence-scored):
+//	       ETAService.CalculateETA from the driver's last reported position
+//	       toward the pickup, while the driver is en route to pickup
+//	       (matched / driver_en_route). The service's confidence score rides
+//	       along as eta_confidence so clients can tell a traffic-aware
+//	       estimate from the persisted heuristic one; absent confidence means
+//	       tiers 2/3 are in play.
+//	tier 2 (authoritative persisted estimate):
+//	       rides.matched_eta_minutes — the selected candidate's actual
+//	       computed pickup ETA written atomically inside the assignment
+//	       transaction (AssignRideAtomically, migration 014). This is what
+//	       the ride.matched outbox event carries, so REST reloads, reconnect
+//	       resynchronization, and WS payloads agree on one number.
+//	tier 3 (honest absence):
+//	       neither source produced a usable positive value (pre-014 rows,
+//	       AllowNilETA assignments, unwired/failing ETA service) —
+//	       ETAMinutes stays 0 and the client hides the ETA chip rather than
+//	       showing a fabricated constant.
 func (h *RideHandler) attachDriverCard(ctx context.Context, resp *RideResponse) {
 	if resp.DriverID == nil || h.matchingEngine == nil {
 		return
@@ -1560,11 +1580,21 @@ func (h *RideHandler) attachDriverCard(ctx context.Context, resp *RideResponse) 
 			info.YearsActive = &years
 		}
 	}
-	if h.etaService != nil && resp.Status == string(entities.RideStatusDriverEnRoute) {
-		if eta, err := h.etaService.CalculateETA(ctx, driver.CurrentLat, driver.CurrentLng, resp.PickupLat, resp.PickupLng); err == nil && eta != nil {
-			info.ETAMinutes = eta.DurationMinutes
-			confidence := eta.Confidence
-			info.EtaConfidence = &confidence
+	// tier 2 first: seed with the authoritative persisted assignment ETA.
+	if resp.MatchedETAMinutes != nil && *resp.MatchedETAMinutes > 0 {
+		info.ETAMinutes = *resp.MatchedETAMinutes
+	}
+	// tier 1: live traffic-aware ETA overrides the persisted heuristic
+	// estimate only while the driver is still approaching the pickup, and
+	// only when it returns a usable positive value.
+	switch entities.RideStatus(resp.Status) {
+	case entities.RideStatusMatched, entities.RideStatusDriverEnRoute:
+		if h.etaService != nil {
+			if eta, err := h.etaService.CalculateETA(ctx, driver.CurrentLat, driver.CurrentLng, resp.PickupLat, resp.PickupLng); err == nil && eta != nil && eta.DurationMinutes > 0 {
+				info.ETAMinutes = eta.DurationMinutes
+				confidence := eta.Confidence
+				info.EtaConfidence = &confidence
+			}
 		}
 	}
 	resp.Driver = info
