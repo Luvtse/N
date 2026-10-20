@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -18,11 +20,52 @@ type WebSocketHandler struct {
 	upgrader       websocket.Upgrader
 	authService    *auth.Service
 	allowedOrigins []string // Phase B/B6: env-driven origin allowlist (CORS_ORIGINS)
-	clients        map[*Client]bool
-	broadcast      chan Message
-	register       chan *Client
-	unregister     chan *Client
-	mu             sync.RWMutex
+	// Phase 4: ride-level subscription authorization. Nil-safe but FAIL-CLOSED:
+	// without an authorizer the hub denies every resource-scoped topic (see
+	// ws_authz.go). Set via SetSubscriptionAuthorizer at boot.
+	authorizer SubscriptionAuthorizer
+	clients    map[*Client]bool
+	broadcast  chan Message
+	register   chan *Client
+	unregister chan *Client
+	mu         sync.RWMutex
+}
+
+// SetSubscriptionAuthorizer installs the ride-level access-control port on the
+// hub. MUST be called before serving (cmd/server/main.go wires it right after
+// construction). Passing nil restores the fail-closed default: subscriptions
+// to private rooms are denied rather than silently allowed.
+func (h *WebSocketHandler) SetSubscriptionAuthorizer(a SubscriptionAuthorizer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.authorizer = a
+}
+
+// validateConnectionToken authenticates a WS handshake credential with
+// defense-in-depth beyond ValidateAccessToken:
+//  1. signature/expiry/type checks from the auth service;
+//  2. explicit access-token class assertion (refresh/other classes rejected);
+//  3. Phase 4: live revocation check against the token store when one is
+//     attached, so a logout/admin-revoked session cannot open a NEW long-lived
+//     stream even while the JWT itself is still inside its TTL.
+//
+// A missing/unreachable token store must NOT block handshakes (the store is
+// an enhancement; Redis outage cannot take realtime down), but a KNOWN
+// revoked jti is always rejected.
+func (h *WebSocketHandler) validateConnectionToken(token string) (*auth.Claims, error) {
+	claims, err := h.authService.ValidateAccessToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if !claims.IsAccessToken() {
+		return nil, auth.ErrInvalidToken
+	}
+	if store := h.authService.TokenStore(); store != nil && claims.ID != "" {
+		if revoked, err := store.IsRevoked(context.Background(), claims.ID); err == nil && revoked {
+			return nil, auth.ErrTokenRevoked
+		}
+	}
+	return claims, nil
 }
 
 // isAllowedOrigin implements the Phase B/B6 CheckOrigin policy.
@@ -46,8 +89,12 @@ type Client struct {
 	conn   *websocket.Conn
 	send   chan []byte
 	userID uuid.UUID
-	rideID *uuid.UUID
-	topics map[string]bool
+	// userRole is the JWT role claim captured at handshake time; used for
+	// cheap namespace checks (driver:offers) without a DB round-trip. The
+	// authoritative per-resource check still runs through the authorizer.
+	userRole string
+	rideID   *uuid.UUID
+	topics   map[string]bool
 	// closed guards double-close of c.send. It is only ever flipped by the
 	// hub goroutine (run loop), which serializes all close operations, so
 	// plain field access is safe within that single-goroutine context.
@@ -167,8 +214,13 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	claims, err := h.authService.ValidateAccessToken(token)
+	// Phase 4: single hardened validation path — signature/expiry/type plus
+	// live revocation check when a token store is attached.
+	claims, err := h.validateConnectionToken(token)
 	if err != nil {
+		// Never echo the underlying error text (could leak internals); clients
+		// only need to know the handshake was rejected so reconnect backoff
+		// with fresh credentials can proceed.
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
@@ -194,11 +246,12 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	}
 
 	client := &Client{
-		hub:    h,
-		conn:   conn,
-		send:   make(chan []byte, 256),
-		userID: claims.UserID,
-		topics: make(map[string]bool),
+		hub:      h,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		userID:   claims.UserID,
+		userRole: claims.Role,
+		topics:   make(map[string]bool),
 	}
 
 	h.register <- client
@@ -254,19 +307,35 @@ func (c *Client) readPump() {
 func (c *Client) handleMessage(msg Message) {
 	switch msg.Type {
 	case "subscribe":
-		if topic, ok := msg.Payload["topic"].(string); ok {
-			c.topics[topic] = true
-			c.trySend(Message{
-				Type: "subscribed",
-				Payload: map[string]interface{}{
-					"topic": topic,
-				},
-				Timestamp: time.Now().Unix(),
-			})
+		topic, ok := msg.Payload["topic"].(string)
+		if !ok || topic == "" {
+			c.sendError("subscribe", "INVALID_REQUEST", "missing or malformed topic")
+			return
 		}
+		// Phase 4 — ride-level authorization. Every subscription is checked
+		// server-side BEFORE c.topics is mutated; the hub never trusts client
+		// claims about which rooms it may receive. Bounded context so a slow
+		// DB cannot wedge readPump past the pong deadline.
+		dec := c.authorizeTopic(topic)
+		if !dec.Allowed {
+			// Audit line WITHOUT any payload data (topic ids are opaque UUIDs;
+			// logging them is safe and useful for abuse detection).
+			log.Printf("WS authz DENY: user=%s role=%s topic=%q reason=%s",
+				c.userID, c.userRole, topic, dec.Code)
+			c.sendError("subscribe", "FORBIDDEN", "subscription not permitted")
+			return
+		}
+		c.topics[topic] = true
+		c.trySend(Message{
+			Type: "subscribed",
+			Payload: map[string]interface{}{
+				"topic": topic,
+			},
+			Timestamp: time.Now().Unix(),
+		})
 
 	case "unsubscribe":
-		if topic, ok := msg.Payload["topic"].(string); ok {
+		if topic, ok := msg.Payload["topic"].(string); ok && topic != "" {
 			delete(c.topics, topic)
 			c.trySend(Message{
 				Type: "unsubscribed",
@@ -284,6 +353,59 @@ func (c *Client) handleMessage(msg Message) {
 			Timestamp: time.Now().Unix(),
 		})
 	}
+}
+
+// authorizeTopic runs the installed SubscriptionAuthorizer for one topic.
+// Fail-closed contract:
+//   - "*" wildcard is rejected outright (it would bypass every room filter in
+//     run()); no authorizer can grant it.
+//   - With no authorizer installed, resource-scoped topics (ride:/driver:/
+//     user:) are DENIED. Only the non-private driver:offers feed passes, and
+//     only for driver/admin JWT roles.
+//   - Authorizer errors ("internal") deny the subscription; they are logged
+//     but never surfaced verbatim to the client.
+func (c *Client) authorizeTopic(topic string) SubscriptionDecision {
+	if topic == topicWildcard {
+		return decisionForbidden()
+	}
+	c.hub.mu.RLock()
+	authz := c.hub.authorizer
+	c.hub.mu.RUnlock()
+
+	if authz == nil {
+		if topic == TopicDriverOffers {
+			if c.userRole == "driver" || c.userRole == "admin" {
+				return decisionOK()
+			}
+			return decisionForbidden()
+		}
+		if strings.HasPrefix(topic, topicPrefixRide) ||
+			strings.HasPrefix(topic, topicPrefixDrv) ||
+			strings.HasPrefix(topic, topicPrefixUser) {
+			return decisionInternal(errors.New("ws hub: subscription authorizer not configured"))
+		}
+		// Unknown namespace without an authorizer: deny-by-default.
+		return decisionInvalidTopic()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return authz.CanSubscribe(ctx, c.userID, topic)
+}
+
+// sendError replies to a rejected client message. Codes are stable wire
+// vocabulary (FORBIDDEN / INVALID_REQUEST); messages are generic so denials
+// never leak why (resource existence, role, etc.).
+func (c *Client) sendError(op, code, message string) {
+	c.trySend(Message{
+		Type: "error",
+		Payload: map[string]interface{}{
+			"op":      op,
+			"code":    code,
+			"message": message,
+		},
+		Timestamp: time.Now().Unix(),
+	})
 }
 
 // trySend performs a non-blocking send on c.send. If the channel is closed
