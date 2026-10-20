@@ -212,6 +212,15 @@ class Ride {
   /// empty array is honest here because the backend guarantees the key).
   final List<RideStop> stops;
 
+  /// Phase 3 ETA correctness: the authoritative pickup ETA (minutes) that the
+  /// backend computed for the selected driver and persisted atomically inside
+  /// the assignment transaction (`rides.matched_eta_minutes`, migration 014).
+  /// This is the same number the `ride.matched` outbox event carries, so a
+  /// REST reload / reconnect resynchronization converges on the value the
+  /// rider saw live over WebSocket. Absent (null) on pre-014 rows and on
+  /// AllowNilETA assignments — never defaulted to 0 or any constant.
+  final int? matchedEtaMinutes;
+
   bool get isCashRide => paymentMethodType == 'cash';
 
   const Ride({
@@ -243,6 +252,7 @@ class Ride {
     this.promoDiscount,
     this.fareBreakdown,
     this.stops = const [],
+    this.matchedEtaMinutes,
   });
 
   static DateTime? _parseDate(Object? v) =>
@@ -310,6 +320,11 @@ class Ride {
               json['fare_breakdown'] as Map<String, dynamic>)
           : null,
       stops: _parseStops(json['stops']),
+      // Phase 3: honest nullable read of the authoritative persisted ETA.
+      // Absent key (legacy row / AllowNilETA) stays null — never 0-defaulted.
+      matchedEtaMinutes: json['matched_eta_minutes'] is num
+          ? (json['matched_eta_minutes'] as num).toInt()
+          : null,
     );
   }
 }

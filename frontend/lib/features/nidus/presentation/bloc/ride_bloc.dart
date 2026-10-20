@@ -882,6 +882,14 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   DateTime? _requestedAt;
   DriverInfo? _lastKnownDriver;
 
+  /// Phase 3: last authoritative persisted pickup ETA (minutes) observed on a
+  /// REST ride DTO (`rides.matched_eta_minutes`). WS `ride.matched` payloads
+  /// carry their own top-level eta_minutes, but reconnect resynchronization
+  /// and later matched-state emissions fall back to this value so the rider
+  /// converges on the same number the assignment transaction wrote. Null
+  /// means "never seen" — never defaulted to zero.
+  int? _lastKnownMatchedEtaMinutes;
+
   /// §2.3: authoritative `driver_id` from the last REST ride DTO, used to
   /// resolve the rider/driver role split for WS status payloads that omit
   /// it. Null until the first LoadRide succeeds — with null we default to
@@ -1299,6 +1307,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
       _currentFare = result.fare ?? 0;
       _requestedAt = DateTime.now();
       _lastKnownDriver = null;
+      _lastKnownMatchedEtaMinutes = null;
       _lastKnownPreSelfie = null;
 
       emit(RideRequested(
@@ -1765,14 +1774,29 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         // Stay in requested state
         break;
       case 'matched':
-        if (update.driver != null) {
-          _lastKnownDriver = update.driver;
+        // Phase 3 ETA correctness: the ride.matched WS payload carries the
+        // authoritative `eta_minutes` at top level but typically NO driver
+        // sub-object (the driver card lives on the REST DTO). Resolve the ETA
+        // with an explicit precedence — live WS value first, then the last
+        // REST-authoritative matchedEtaMinutes, then a positive driver-card
+        // value — and never drop the transition just because the payload has
+        // no embedded driver: fall back to _lastKnownDriver from the most
+        // recent LoadRide. If no driver identity is known at all, stay put
+        // rather than fabricating a driver card.
+        final matchedDriver = update.driver ?? _lastKnownDriver;
+        if (matchedDriver != null) {
+          if (update.driver != null) _lastKnownDriver = update.driver;
+          final eta = update.etaMinutes ??
+              _lastKnownMatchedEtaMinutes ??
+              (matchedDriver.etaMinutes > 0
+                  ? matchedDriver.etaMinutes
+                  : null);
           final fare = _stateFare();
           emit(DriverMatched(
             rideId: update.rideId,
-            driver: update.driver!,
+            driver: matchedDriver,
             fare: fare,
-            etaMinutes: update.driver!.etaMinutes,
+            etaMinutes: eta,
             // §4.1: real pickup coords carried from the live request state so
             // the AR walk-to-pickup entry has authoritative data from the
             // moment of match (null when unavailable → AR button hidden,
@@ -1909,6 +1933,11 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     _lastKnownCurrency = ride.currency;
     _requestedAt = ride.requestedAt;
     if (ride.driver != null) _lastKnownDriver = ride.driver;
+    // Phase 3: the REST DTO is the authoritative source of the persisted
+    // matched ETA; cache it for WS payloads and later emissions. A null on
+    // this DTO means "server reported none" — clear the cache rather than
+    // keeping a stale value from a previous ride.
+    _lastKnownMatchedEtaMinutes = ride.matchedEtaMinutes;
     // REST DTO is the authoritative source for §2.3 pre-selfie state; a
     // missing block means the feature isn't serving this ride (flag off),
     // which we normalize to the honest `absent` (unavailable) info rather
@@ -1940,11 +1969,17 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         break;
       case 'matched':
         if (ride.driver != null) {
+          // Phase 3 precedence: authoritative persisted matchedEtaMinutes
+          // first (it is the number the assignment transaction wrote), then a
+          // positive driver-card value, then null (chip hidden — never a
+          // fabricated constant).
+          final eta = ride.matchedEtaMinutes ??
+              (ride.driver!.etaMinutes > 0 ? ride.driver!.etaMinutes : null);
           emit(DriverMatched(
             rideId: ride.id,
             driver: ride.driver!,
             fare: ride.fareAmount ?? 0,
-            etaMinutes: ride.driver!.etaMinutes,
+            etaMinutes: eta,
             // §4.1: REST DTO is authoritative on reload — cold re-entry into
             // tracking keeps the pickup pin + AR entry without a live request.
             pickupLat: ride.pickupLat,

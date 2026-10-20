@@ -1580,22 +1580,79 @@ func (h *RideHandler) attachDriverCard(ctx context.Context, resp *RideResponse) 
 			info.YearsActive = &years
 		}
 	}
-	// tier 2 first: seed with the authoritative persisted assignment ETA.
-	if resp.MatchedETAMinutes != nil && *resp.MatchedETAMinutes > 0 {
-		info.ETAMinutes = *resp.MatchedETAMinutes
-	}
-	// tier 1: live traffic-aware ETA overrides the persisted heuristic
-	// estimate only while the driver is still approaching the pickup, and
-	// only when it returns a usable positive value.
+	// Tiered ETA resolution (Phase 3): live traffic-aware prediction wins
+	// while the driver approaches the pickup; otherwise the authoritative
+	// persisted matched_eta_minutes is used; otherwise honest absence.
+	var live *liveETAResult
 	switch entities.RideStatus(resp.Status) {
 	case entities.RideStatusMatched, entities.RideStatusDriverEnRoute:
 		if h.etaService != nil {
-			if eta, err := h.etaService.CalculateETA(ctx, driver.CurrentLat, driver.CurrentLng, resp.PickupLat, resp.PickupLng); err == nil && eta != nil && eta.DurationMinutes > 0 {
-				info.ETAMinutes = eta.DurationMinutes
-				confidence := eta.Confidence
-				info.EtaConfidence = &confidence
+			if eta, err := h.etaService.CalculateETA(ctx, driver.CurrentLat, driver.CurrentLng, resp.PickupLat, resp.PickupLng); err == nil {
+				live = liveResultFromPrediction(eta)
 			}
 		}
 	}
+	applyDriverCardETA(info, resolveDriverCardETA(entities.RideStatus(resp.Status), resp.MatchedETAMinutes, live))
 	resp.Driver = info
+}
+
+// liveETAResult is the internal, normalized shape of a tier-1 prediction from
+// the ETAService (traffic/time-of-day aware, confidence-scored). Non-nil only
+// when the service was wired, returned no error, and produced a positive
+// DurationMinutes — errors and non-positive results collapse to nil so the
+// resolver falls through to tier 2.
+type liveETAResult struct {
+	minutes    int
+	confidence float64
+}
+
+// resolvedETA is the outcome of the tiered precedence applied to a driver
+// card. Minutes == 0 means "no usable source" (tier 3, honest absence);
+// Confidence is non-nil only alongside a tier-1 live value.
+type resolvedETA struct {
+	Minutes    int
+	Confidence *float64
+}
+
+// liveResultFromPrediction maps an ETAPrediction into a liveETAResult,
+// treating nil and non-positive durations as unavailable (returns nil).
+func liveResultFromPrediction(p *services.ETAPrediction) *liveETAResult {
+	if p == nil || p.DurationMinutes <= 0 {
+		return nil
+	}
+	return &liveETAResult{minutes: p.DurationMinutes, confidence: p.Confidence}
+}
+
+// resolveDriverCardETA implements the documented tiered precedence as a pure
+// function so it is unit-testable without a database or HTTP stack:
+//
+//	tier 1: live != nil AND status is matched/driver_en_route -> live value
+//	        plus its confidence.
+//	tier 2: persisted (rides.matched_eta_minutes) when positive.
+//	tier 3: zero-value resolvedETA — never fabricate a constant.
+func resolveDriverCardETA(status entities.RideStatus, persisted *int, live *liveETAResult) resolvedETA {
+	// A live result is only ever constructed from a positive prediction
+	// (see liveResultFromPrediction); treat a pointer to a non-positive
+	// value as unavailable so tier 2 still applies.
+	if live != nil && live.minutes > 0 {
+		switch status {
+		case entities.RideStatusMatched, entities.RideStatusDriverEnRoute:
+			confidence := live.confidence
+			return resolvedETA{Minutes: live.minutes, Confidence: &confidence}
+		}
+	}
+	if persisted != nil && *persisted > 0 {
+		return resolvedETA{Minutes: *persisted}
+	}
+	return resolvedETA{}
+}
+
+// applyDriverCardETA writes a resolved ETA onto the response DTO. A tier-3
+// (zero-minute) result leaves both fields untouched so absent stays absent.
+func applyDriverCardETA(info *DriverInfo, r resolvedETA) {
+	if r.Minutes <= 0 {
+		return
+	}
+	info.ETAMinutes = r.Minutes
+	info.EtaConfidence = r.Confidence
 }
