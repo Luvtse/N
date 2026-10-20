@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"nidaw-backend/internal/shared/eventbus"
@@ -37,11 +38,69 @@ type HubIntf interface {
 type WSBridge struct {
 	hub    HubIntf
 	logger *zap.Logger
+
+	// dedupMu guards seenRideIDs: the bounded LRU of recently fanned-out
+	// idempotency keys (see fanoutKey). The outbox publisher guarantees
+	// at-least-once delivery, so duplicate bus events with the same stable
+	// event key are an expected condition, not a bug; the bridge suppresses
+	// them before they reach client rooms.
+	dedupMu     sync.Mutex
+	seenRideIDs []string // FIFO order; oldest evicted at capacity
+	seenIndex   map[string]struct{}
 }
+
+const (
+	// maxDedupeKeys bounds memory: only ride-lifecycle events are keyed, and
+	// a ride emits at most a handful of lifecycle transitions, so this window
+	// covers realistic broker-replay bursts while staying small.
+	maxDedupeKeys = 4096
+)
 
 // NewWSBridge creates the bridge for a hub. logger may be nil.
 func NewWSBridge(hub HubIntf) *WSBridge {
-	return &WSBridge{hub: hub}
+	return &WSBridge{
+		hub:       hub,
+		seenIndex: make(map[string]struct{}),
+	}
+}
+
+// fanoutKey returns the consumer-deduplication idempotency key for an event,
+// or "" when the event is not eligible for dedupe. Ride lifecycle events are
+// keyed on (event type, ride_id) because the transactional outbox uses
+// event_id = ride_id (one row per ride transition): a redelivered duplicate
+// carries both values unchanged, while legitimately distinct transitions of
+// the same ride differ in type and therefore never collide here. Location
+// updates are high-frequency ephemeral GPS samples with no business side
+// effects, so they stay unkeyed.
+func fanoutKey(ev eventbus.Event) string {
+	switch ev.Type {
+	case "ride.matched", "ride.started", "ride.completed", "ride.cancelled":
+	default:
+		return ""
+	}
+	rideID := extractUUID(ev.Payload, "ride_id")
+	if rideID == uuid.Nil {
+		return ""
+	}
+	return ev.Type + ":" + rideID.String()
+}
+
+// alreadyFannedOut reports whether key was seen before, recording it and
+// evicting the oldest entry when the bounded window is full.
+func (b *WSBridge) alreadyFannedOut(key string) bool {
+	b.dedupMu.Lock()
+	defer b.dedupMu.Unlock()
+	if _, dup := b.seenIndex[key]; dup {
+		return true
+	}
+	if len(b.seenRideIDs) >= maxDedupeKeys {
+		oldest := b.seenRideIDs[0]
+		b.seenRideIDs = b.seenRideIDs[1:]
+		delete(b.seenIndex, oldest)
+	}
+	b.seenRideIDs = append(b.seenRideIDs, key)
+	b.seenIndex[key] = struct{}{}
+	return false
 }
 
 // SetLogger attaches an optional structured warn logger.
@@ -78,6 +137,17 @@ func (b *WSBridge) Subscribe(ctx context.Context, bus eventbus.EventBus) error {
 // money movement — REST + ledger settlement remain authoritative).
 func (b *WSBridge) Handle(ev eventbus.Event) error {
 	if b == nil || b.hub == nil {
+		return nil
+	}
+
+	// Consumer idempotency: at-least-once delivery means a redelivered ride
+	// lifecycle event must not fan out to client rooms twice. Keyed on
+	// (type, ride_id), matching the outbox's event_id = ride_id contract.
+	if key := fanoutKey(ev); key != "" && b.alreadyFannedOut(key) {
+		if b.logger != nil {
+			b.logger.Debug("ws bridge: suppressed duplicate event",
+				zap.String("event_type", ev.Type), zap.String("dedupe_key", key))
+		}
 		return nil
 	}
 

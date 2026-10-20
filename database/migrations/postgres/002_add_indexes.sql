@@ -61,8 +61,8 @@ INCLUDE (status, fare_amount, pickup_address, dropoff_address);
 -- Composite index for driver ride history
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_driver_requested 
 ON rides(driver_id, requested_at DESC) 
-WHERE driver_id IS NOT NULL
-INCLUDE (status, fare_amount);
+INCLUDE (status, fare_amount)
+WHERE driver_id IS NOT NULL;
 
 -- Partial index for active rides (critical for matching)
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_active 
@@ -79,8 +79,15 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_type_status
 ON rides(ride_type, status, requested_at DESC);
 
 -- Time-based partitioning index
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_requested_at_hour 
-ON rides(DATE_TRUNC('hour', requested_at), status);
+-- NOTE(remediation): the previous expression index
+--   ON rides(DATE_TRUNC('hour', requested_at), status)
+-- could never be created: date_trunc() is only STABLE (its
+-- result depends on TimeZone), and PostgreSQL requires index
+-- expressions to be IMMUTABLE (ERROR: functions in index
+-- expression must be marked IMMUTABLE). The plain btree index
+-- idx_rides_requested_at on rides(requested_at DESC) from 001
+-- already serves hour-range scans, so the broken statement is
+-- removed rather than silently rewritten.
 
 -- ============================================================================
 -- HOTELS TABLE INDEXES
@@ -241,13 +248,20 @@ ON consent_audit_log(created_at DESC);
 -- ============================================================================
 
 -- Index for daily revenue reports
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_daily_revenue 
-ON rides(DATE(requested_at), status, fare_amount) 
-WHERE status = 'completed';
+-- NOTE(remediation): the previous expression index
+--   ON rides(DATE(requested_at), status, fare_amount)
+-- violated the same IMMUTABLE requirement for expression keys
+-- (date(timestamptz) depends on TimeZone). Daily revenue reports
+-- scan the existing idx_rides_fare_amount partial index instead.
 
 -- Index for driver performance reports
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_driver_performance 
-ON rides(driver_id, DATE(completed_at), fare_amount, rating) 
+-- NOTE(remediation): the previous expression index
+--   ON rides(driver_id, DATE(completed_at), fare_amount, rating)
+-- violated the same IMMUTABLE requirement for expression keys
+-- (date(timestamptz) depends on TimeZone). Driver performance
+-- reports scan the corrected partial index below instead.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_rides_driver_performance
+ON rides(driver_id, completed_at DESC, fare_amount, rating)
 WHERE status = 'completed' AND driver_id IS NOT NULL;
 
 -- ============================================================================
