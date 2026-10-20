@@ -132,6 +132,12 @@ type Command struct {
 	Payload  map[string]interface{}
 	// Vars feeds the localization templates (e.g. driver name, ETA minutes).
 	Vars map[string]string
+	// IdempotencyKey deduplicates dispatches of the same business event across
+	// at-least-once bus deliveries. Producers that carry a stable key (the
+	// transactional outbox uses event_id = ride_id per transition) populate it;
+	// empty means "no dedupe" and preserves the pre-outbox behavior for
+	// producers without a stable key (direct HTTP-triggered dispatches).
+	IdempotencyKey string
 }
 
 // Repository is the persistence port for notifications and device tokens.

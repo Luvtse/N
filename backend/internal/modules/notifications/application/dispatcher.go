@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -199,6 +200,43 @@ type Dispatcher struct {
 	inApp    WSNotifier
 	push     PushSender // may be nil => fcm rows stay pending for retry worker
 	email    EmailSender
+
+	// Consumer idempotency (Phase 2): the transactional outbox guarantees
+	// at-least-once bus delivery, so a redelivered event carrying the same
+	// stable IdempotencyKey must not produce duplicate notification rows or
+	// duplicate pushes. The window is bounded FIFO memory — safe because the
+	// in-app DB row itself is always the durable source of truth for the
+	// inbox; suppression only prevents redundant fan-out work.
+	dedupeMu  sync.Mutex
+	seenKeys  []string
+	seenIndex map[string]struct{}
+}
+
+// maxDedupeKeys bounds the dispatcher's idempotency window. Ride lifecycle
+// transitions are low-volume per ride, so this covers realistic broker-replay
+// bursts while keeping memory small.
+const maxDedupeKeys = 8192
+
+// alreadyDispatched reports whether key was seen before, recording it and
+// evicting the oldest entry when the bounded window is full. Empty keys are
+// never deduped (returns false without recording).
+func (d *Dispatcher) alreadyDispatched(key string) bool {
+	if key == "" {
+		return false
+	}
+	d.dedupeMu.Lock()
+	defer d.dedupeMu.Unlock()
+	if _, dup := d.seenIndex[key]; dup {
+		return true
+	}
+	if len(d.seenKeys) >= maxDedupeKeys {
+		oldest := d.seenKeys[0]
+		d.seenKeys = d.seenKeys[1:]
+		delete(d.seenIndex, oldest)
+	}
+	d.seenKeys = append(d.seenKeys, key)
+	d.seenIndex[key] = struct{}{}
+	return false
 }
 
 // NewDispatcher wires the ports. push/email may be nil in environments where
@@ -208,7 +246,15 @@ func NewDispatcher(repo domain.Repository, policies map[domain.Category]Category
 	if policies == nil {
 		policies = DefaultPolicyTable()
 	}
-	return &Dispatcher{repo: repo, policies: policies, retry: retry, inApp: inApp, push: push, email: email}
+	return &Dispatcher{
+		repo:      repo,
+		policies:  policies,
+		retry:     retry,
+		inApp:     inApp,
+		push:      push,
+		email:     email,
+		seenIndex: make(map[string]struct{}),
+	}
 }
 
 // Dispatch persists one row per targeted channel and delivers the sync
@@ -223,6 +269,15 @@ func (d *Dispatcher) Dispatch(ctx context.Context, cmd domain.Command) ([]*domai
 	policy, ok := d.policies[cmd.Category]
 	if !ok {
 		return nil, fmt.Errorf("notification: no dispatch policy for category %q", cmd.Category)
+	}
+
+	// Consumer idempotency (Phase 2): a redelivered outbox event carries the
+	// same stable key, so suppress the duplicate fan-out before any rows are
+	// created. Empty keys (producers without a stable event id) fall through
+	// unchanged. Returns nil/nil — callers treat "no rows created" as an
+	// expected outcome, not an error.
+	if d.alreadyDispatched(cmd.IdempotencyKey) {
+		return nil, nil
 	}
 
 	channels := dedupeChannels(policy.Channels, policy.ForceEmail)

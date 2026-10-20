@@ -199,3 +199,90 @@ func inboxCategoriesViaAllUsers(t *testing.T, repo *notifinfra.MemoryRepository)
 	}
 	return counts
 }
+
+// TestConsumerDuplicateMatchedRedelivery_DispatchedOnce proves consumer
+// idempotency on the notification path (Phase 2 gate): the transactional
+// outbox publisher delivers ride.matched with at-least-once semantics and a
+// redelivered duplicate carries the identical (type, ride_id) stable key. The
+// dispatcher must suppress the second fan-out entirely — no extra inbox rows,
+// no duplicate in-app pushes. A distinct transition of the same ride
+// (ride.completed) uses a different key and must still notify exactly once.
+func TestConsumerDuplicateMatchedRedelivery_DispatchedOnce(t *testing.T) {
+	_, bus, repo, ws, _ := newTestConsumer(t)
+
+	riderID := uuid.New()
+	rideID := uuid.New()
+	matched := eventbus.Event{
+		Type: "ride.matched",
+		Payload: map[string]interface{}{
+			"user_id":     riderID.String(),
+			"ride_id":     rideID.String(),
+			"driver_id":   uuid.New().String(),
+			"eta_minutes": 4,
+		},
+	}
+
+	ctx := context.Background()
+	if err := bus.Publish(ctx, "nidaw.events", matched); err != nil {
+		t.Fatalf("Publish(first): %v", err)
+	}
+	// Broker replay: byte-identical redelivery of the committed transition.
+	if err := bus.Publish(ctx, "nidaw.events", matched); err != nil {
+		t.Fatalf("Publish(duplicate): %v", err)
+	}
+
+	counts := inboxCategories(t, repo, riderID)
+	if counts[notifdomain.CategoryRideMatched] != 1 {
+		t.Fatalf("ride_matched rows = %d, want exactly 1 (duplicate redelivery not suppressed): %v",
+			counts[notifdomain.CategoryRideMatched], counts)
+	}
+	if len(ws.pushed) != 1 {
+		t.Fatalf("in-app pushes = %d, want exactly 1 (rider double-notified)", len(ws.pushed))
+	}
+
+	// Different transition, same ride: distinct dedupe key, must dispatch.
+	if err := bus.Publish(ctx, "nidaw.events", eventbus.Event{
+		Type: "ride.completed",
+		Payload: map[string]interface{}{
+			"user_id":    riderID.String(),
+			"ride_id":    rideID.String(),
+			"final_fare": "143.50",
+		},
+	}); err != nil {
+		t.Fatalf("Publish(completed): %v", err)
+	}
+	counts = inboxCategories(t, repo, riderID)
+	if counts[notifdomain.CategoryReceipt] != 1 {
+		t.Fatalf("receipt rows = %d, want 1 (distinct transition wrongly deduped): %v",
+			counts[notifdomain.CategoryReceipt], counts)
+	}
+}
+
+// TestConsumerDedupeKeyDerivation pins the key contract directly: lifecycle
+// events keyed on (type, ride_id), payment.failed on payment_id, promo.granted
+// on code, and everything else unkeyed (dispatched without dedupe).
+func TestConsumerDedupeKeyDerivation(t *testing.T) {
+	rideID := uuid.New()
+	rideStr := rideID.String()
+
+	cases := []struct {
+		name    string
+		ev      eventbus.Event
+		wantKey string
+	}{
+		{"matched keyed by ride", eventbus.Event{Type: "ride.matched", Payload: map[string]interface{}{"ride_id": rideStr}}, "ride.matched:" + rideStr},
+		{"completed keyed by ride", eventbus.Event{Type: "ride.completed", Payload: map[string]interface{}{"ride_id": rideStr}}, "ride.completed:" + rideStr},
+		{"arriving keyed by ride", eventbus.Event{Type: "driver.arriving", Payload: map[string]interface{}{"ride_id": rideStr}}, "driver.arriving:" + rideStr},
+		{"payment failed keyed by payment", eventbus.Event{Type: "payment.failed", Payload: map[string]interface{}{"payment_id": "pay_123"}}, "payment.failed:pay_123"},
+		{"promo keyed by code", eventbus.Event{Type: "promo.granted", Payload: map[string]interface{}{"code": "WELCOME10"}}, "promo.granted:WELCOME10"},
+		{"missing ride id is unkeyed", eventbus.Event{Type: "ride.matched", Payload: map[string]interface{}{}}, ""},
+		{"unknown type unkeyed", eventbus.Event{Type: "some.other.event", Payload: map[string]interface{}{"ride_id": rideStr}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := notififaces.ConsumerIdempotencyKeyForTest(tc.ev); got != tc.wantKey {
+				t.Fatalf("key = %q, want %q", got, tc.wantKey)
+			}
+		})
+	}
+}
