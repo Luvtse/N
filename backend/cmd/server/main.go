@@ -193,6 +193,11 @@ func main() {
 	// §1.4/§1.5: one shared WebSocket hub serves both the nidus router's live
 	// streams and the notifications module's in-app pushes (InAppBroadcaster).
 	wsHub := nidushandlers.NewWebSocketHandler(authService, cfg.Server.CORSOrigins)
+	// Phase 4: install the ride-level subscription authorizer BEFORE serving.
+	// Without it the hub fails closed (private rooms undeliverable); with it,
+	// every "subscribe" to a ride:/driver:/user: room is checked against the
+	// authoritative participants in Postgres (see ws_authz.go).
+	wsHub.SetSubscriptionAuthorizer(nidushandlers.NewPostgresRideAuthorizer(db))
 	nidusDeps := &nidushttp.Dependencies{
 		DB:             db,
 		EventBus:       eventBus,
