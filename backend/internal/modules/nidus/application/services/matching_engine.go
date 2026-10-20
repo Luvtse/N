@@ -308,6 +308,42 @@ func (m *MatchingEngine) GetDriverByID(ctx context.Context, driverID uuid.UUID) 
 // SCORING ALGORITHM
 // ============================================================================
 
+// clampFloat constrains v to the inclusive range [lo, hi]. NaN inputs are
+// mapped to lo so corrupt database values can never inflate a score or make
+// ranking non-deterministic (NaN comparisons are always false, which would
+// otherwise let a bad row silently win or lose depending on iteration order).
+func clampFloat(v, lo, hi float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, -1) {
+		return lo
+	}
+	if math.IsInf(v, 1) {
+		return hi
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// normalizeScoringInputs validates and normalizes the raw driver fields used
+// by calculateDriverScore. The repository convention is:
+//   - Rating:         0..5   (scaled to 0..100 for scoring)
+//   - AcceptanceRate: 0..100 (percentage)
+//   - CompletionRate: 0..100 (percentage)
+//
+// Out-of-range or non-finite values are clamped rather than rejected, so one
+// corrupt row cannot poison the whole matching tick, while still keeping the
+// ranking function deterministic and bounded.
+func normalizeScoringInputs(driver entities.Driver) (rating, acceptance, completion float64) {
+	rating = clampFloat(driver.Rating, 0, 5)
+	acceptance = clampFloat(driver.AcceptanceRate, 0, 100)
+	completion = clampFloat(driver.CompletionRate, 0, 100)
+	return rating, acceptance, completion
+}
+
 // calculateDriverScore computes a driver's suitability score
 func (m *MatchingEngine) calculateDriverScore(driver entities.Driver, ride *entities.Ride) DriverScore {
 	// Calculate distance using Haversine formula
@@ -315,9 +351,11 @@ func (m *MatchingEngine) calculateDriverScore(driver entities.Driver, ride *enti
 		driver.CurrentLat, driver.CurrentLng,
 		ride.PickupLat, ride.PickupLng,
 	)
+	// Guard against non-finite coordinates producing NaN distances.
+	distance = clampFloat(distance, 0, math.MaxFloat32)
 
 	// Calculate ETA (assuming average speed 30 km/h in city)
-	eta := int((distance / 30.0) * 60) // minutes
+	eta := m.calculateETA(distance)
 
 	// Scoring algorithm with weights:
 	// - Distance score (closer is better): 40%
@@ -326,21 +364,24 @@ func (m *MatchingEngine) calculateDriverScore(driver entities.Driver, ride *enti
 	// - Completion rate: 10%
 	// - Time since last ride: 5%
 
+	// Validate/normalize inputs before scoring (Phase 3 hardening).
+	rating, acceptance, completion := normalizeScoringInputs(driver)
+
 	// Distance score (closer is better)
 	// Max distance is 5km, score decreases linearly
 	distanceScore := math.Max(0, 100-(distance*20))
 
 	// Rating score (higher is better)
-	// Rating is 0-5, scale to 0-100
-	ratingScore := driver.Rating * 20
+	// Normalized rating is 0-5, scale to 0-100
+	ratingScore := rating * 20
 
 	// Acceptance rate score (higher is better)
-	// Acceptance rate is 0-100
-	acceptanceScore := driver.AcceptanceRate
+	// Normalized acceptance rate is 0-100
+	acceptanceScore := acceptance
 
 	// Completion rate score (higher is better)
-	// Completion rate is 0-100
-	completionScore := driver.CompletionRate
+	// Normalized completion rate is 0-100
+	completionScore := completion
 
 	// Time since last ride (prefer drivers who haven't had a ride recently)
 	// Default to neutral score
@@ -353,14 +394,17 @@ func (m *MatchingEngine) calculateDriverScore(driver entities.Driver, ride *enti
 		(completionScore * 0.10) +
 		(timeScore * 0.05)
 
+	// Report the normalized inputs so downstream consumers (API responses,
+	// fairness audits) never see raw out-of-range values that were excluded
+	// from scoring anyway.
 	return DriverScore{
 		DriverID:       driver.ID,
 		Score:          totalScore,
 		Distance:       distance,
 		ETA:            eta,
-		Rating:         driver.Rating,
-		AcceptanceRate: driver.AcceptanceRate,
-		CompletionRate: driver.CompletionRate,
+		Rating:         rating,
+		AcceptanceRate: acceptance,
+		CompletionRate: completion,
 	}
 }
 
