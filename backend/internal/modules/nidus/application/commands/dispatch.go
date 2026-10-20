@@ -79,6 +79,13 @@ var (
 	ErrAssignmentIneligible = errors.New("dispatch: driver is not eligible for assignment")
 )
 
+// AllowNilETA is the sentinel accepted by AssignRideAtomically's etaMinutes
+// parameter when no usable distance/position input existed to compute a
+// pickup estimate. The assignment then commits with rides.matched_eta_minutes
+// left NULL — clients render "not provided" instead of a fabricated constant.
+// Any other non-positive value is rejected as a programming error.
+const AllowNilETA = -1
+
 // ============================================================================
 // RESULT
 // ============================================================================

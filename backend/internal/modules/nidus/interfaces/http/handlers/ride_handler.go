@@ -256,6 +256,13 @@ type RideResponse struct {
 	RequestedAt     time.Time   `json:"requested_at"`
 	MatchedAt       *time.Time  `json:"matched_at,omitempty"`
 	CompletedAt     *time.Time  `json:"completed_at,omitempty"`
+	// NIDUS-DISPATCH-001: the selected candidate's actual computed pickup ETA,
+	// persisted atomically with the assignment (rides.matched_eta_minutes).
+	// Omitted when NULL — pre-014 rides and AllowNilETA assignments render
+	// "not provided" instead of a guessed constant (same convention as the
+	// live ETAMinutes on the offer feed). Heuristic routing estimate, not
+	// trained-model inference.
+	MatchedETAMinutes *int `json:"matched_eta_minutes,omitempty"`
 	// §2.5: authoritative cancellation accounting, persisted server-side by
 	// the shared cancellation policy at the instant of cancel. CancelFee is
 	// omitted unless a fee was actually charged; CancelledBy/CancelReason are
@@ -1344,6 +1351,10 @@ func toRideResponse(ride *entities.Ride) RideResponse {
 		MatchedAt:      ride.MatchedAt,
 		CompletedAt:    ride.CompletedAt,
 	}
+
+	// NIDUS-DISPATCH-001: pass the authoritative persisted ETA through; nil
+	// stays omitted (never zero-filled).
+	resp.MatchedETAMinutes = ride.MatchedETAMinutes
 
 	if ride.FareAmount > 0 {
 		resp.FareAmount = &ride.FareAmount

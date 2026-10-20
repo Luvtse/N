@@ -365,8 +365,10 @@ func (h *AcceptRideHandler) Execute(ctx context.Context, cmd *AcceptRideCommand)
 	}
 	if etaMinutes <= 0 {
 		// No usable position input at all: refuse to store a fake estimate.
-		// The column stays NULL and clients render "not provided".
-		etaMinutes = 0
+		// AllowNilETA commits the assignment with matched_eta_minutes NULL and
+		// clients render "not provided" (same omission convention as the live
+		// ETA on the offer feed).
+		etaMinutes = AllowNilETA
 	}
 
 	result, err := AssignRideAtomically(ctx, h.db, ride.ID, driverID, etaMinutes)
@@ -380,16 +382,10 @@ func (h *AcceptRideHandler) Execute(ctx context.Context, cmd *AcceptRideCommand)
 			return nil, err // infrastructure failure stays distinguishable
 		}
 	}
-	// etaMinutes==0 above would have been rejected by AssignRideAtomically
-		// (positive-ETA contract); guard defensively so a future relaxation
-		// cannot silently skip the persisted-ETA step.
-	if result.ETAMinutes > 0 {
-		if _, err := h.db.Exec(ctx,
-			`UPDATE rides SET matched_eta_minutes = $2 WHERE id = $1 AND driver_id = $3 AND status = 'matched'`,
-			ride.ID, result.ETAMinutes, driverID); err != nil {
-			fmt.Printf("warning: failed to persist matched ETA for ride %s: %v\n", ride.ID, err)
-		}
-	}
+	// NOTE: no separate ETA write here — AssignRideAtomically already persisted
+	// result.ETAMinutes (NULL when AllowNilETA was passed) inside the same
+	// transaction that committed the reservation; a second UPDATE would be
+	// racy, non-transactional, and pointless.
 
 	observability.Nidus().RecordMatch("manual")
 
@@ -1109,6 +1105,123 @@ func (h *RateRideHandler) Execute(ctx context.Context, cmd *RateRideCommand) (*e
 		fmt.Printf("warning: failed to publish ride.rated: %v\n", err)
 	}
 	return ride, nil
+}
+
+// ============================================================================
+// MATCHED-EVENTS OUTBOX RE-PUBLISHER (durability worker, NIDUS-DISPATCH-001)
+// ----------------------------------------------------------------------------
+// Pattern-copy of SettlementOutbox above, draining ride_matched_events
+// (migration 014) written inside the atomic dispatch transaction. Guarantees
+// a committed assignment is eventually communicated even when the broker was
+// unavailable at commit time.
+// ============================================================================
+
+// maxMatchedOutboxAttempts bounds the per-row retry count. Rows that exceed it
+// stop being re-published so a permanently malformed payload cannot pin the
+// drain loop; they remain visible for operators (published_at IS NULL AND
+// attempts >= limit) and are counted in logs/metrics by the caller's tick.
+const maxMatchedOutboxAttempts = 25
+
+// MatchedEventsOutbox drains ride_matched_events rows whose synchronous
+// publish failed (or has not run yet) and re-publishes them to the canonical
+// bus topic. Safe on every API replica: claims use FOR UPDATE SKIP LOCKED so
+// two workers never publish the same row concurrently, event_id == ride_id
+// makes replays idempotent, and consumers key on ride_id, so duplicate
+// delivery is a no-op downstream.
+type MatchedEventsOutbox struct {
+	db       *database.Postgres
+	eventBus eventbus.EventBus
+	interval time.Duration
+	limit    int
+}
+
+func NewMatchedEventsOutbox(db *database.Postgres, eventBus eventbus.EventBus, interval time.Duration) *MatchedEventsOutbox {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	return &MatchedEventsOutbox{db: db, eventBus: eventBus, interval: interval, limit: 50}
+}
+
+// Run blocks until ctx is cancelled, draining the outbox on each tick.
+func (o *MatchedEventsOutbox) Run(ctx context.Context) {
+	ticker := time.NewTicker(o.interval)
+	defer ticker.Stop()
+	// Drain immediately on start-up so events left by a previous crash are
+	// delivered without waiting a full interval.
+	o.drainOnce(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.drainOnce(ctx)
+		}
+	}
+}
+
+func (o *MatchedEventsOutbox) drainOnce(ctx context.Context) {
+	_ = o.db.WithTx(ctx, func(tx *database.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT event_id, payload, attempts
+			  FROM ride_matched_events
+			 WHERE published_at IS NULL AND attempts < $2
+			 ORDER BY created_at
+			 LIMIT $1
+			 FOR UPDATE SKIP LOCKED`, o.limit, maxMatchedOutboxAttempts)
+		if err != nil {
+			return err
+		}
+		type pending struct {
+			eventID  uuid.UUID
+			payload  map[string]interface{}
+			attempts int
+		}
+		var batch []pending
+		for rows.Next() {
+			var p pending
+			var raw []byte
+			if err := rows.Scan(&p.eventID, &raw, &p.attempts); err != nil {
+				continue
+			}
+			p.payload, _ = unmarshalPayload(raw)
+			batch = append(batch, p)
+		}
+		rows.Close()
+
+		for _, p := range batch {
+			if o.eventBus == nil {
+				// No bus wired: nothing to publish this tick. Do NOT increment
+				// attempts (that cap is for broker failures, not deployment
+				// configuration); retry once a bus exists.
+				continue
+			}
+			pubErr := o.eventBus.Publish(ctx, "nidaw.events", eventbus.Event{
+				Type:      nidusevents.RideMatchedType,
+				Payload:   p.payload,
+				Timestamp: time.Now().Unix(),
+			})
+			if pubErr != nil {
+				// Bounded-retry accounting happens in its own short transaction
+				// AFTER this one rolls back, so the attempt increment survives the
+				// broker failure (the settlement pattern's version lost it — here a
+				// permanently failing row still reaches the attempts cap instead of
+				// retrying forever). Leave published_at NULL; retry next tick.
+				_ = o.db.WithTx(context.Background(), func(atx *database.Tx) error {
+					_, err := atx.Exec(context.Background(),
+						`UPDATE ride_matched_events SET attempts = attempts + 1 WHERE event_id = $1`,
+						p.eventID)
+					return err
+				})
+				continue
+			}
+			if _, err := tx.Exec(ctx,
+				`UPDATE ride_matched_events SET published_at = NOW(), attempts = attempts + 1 WHERE event_id = $1`,
+				p.eventID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ============================================================================

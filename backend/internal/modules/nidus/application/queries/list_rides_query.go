@@ -141,6 +141,7 @@ func (q *ListRidesQuery) Execute(ctx context.Context, params *ListRidesQueryPara
 			ride_type, status, fare_amount, currency,
 			distance_km, duration_minutes,
 			requested_at, matched_at, completed_at,
+			matched_eta_minutes,
 			rating, review, tip_amount,
 			COALESCE(payment_method_type, ''), cash_collected_at, scheduled_at,
 			COALESCE(promo_code, ''), COALESCE(promo_discount, 0),
@@ -237,6 +238,8 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	var fareAmount, distanceKm pgtype.Float8
 	var durationMinutes, rating pgtype.Int4
 	var matchedAt, completedAt pgtype.Timestamptz
+	// NIDUS-DISPATCH-001: nullable rides.matched_eta_minutes (see GetRideQuery).
+	var matchedEta pgtype.Int4
 	var review pgtype.Text
 	var tipAmount pgtype.Float8
 	// §3.1/§3.6 money + scheduling columns: nullable so legacy rows (created
@@ -271,6 +274,7 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 		&ride.RequestedAt,
 		&matchedAt,
 		&completedAt,
+		&matchedEta,
 		&rating,
 		&review,
 		&tipAmount,
@@ -313,6 +317,10 @@ func (q *ListRidesQuery) scanRide(rows pgx.Rows) (*entities.Ride, error) {
 	if completedAt.Valid {
 		t := completedAt.Time
 		ride.CompletedAt = &t
+	}
+	if matchedEta.Valid {
+		v := int(matchedEta.Int32)
+		ride.MatchedETAMinutes = &v
 	}
 	if rating.Valid {
 		ride.Rating = int(rating.Int32)
