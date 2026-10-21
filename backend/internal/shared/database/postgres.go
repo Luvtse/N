@@ -130,18 +130,25 @@ func NewPostgres(cfg *Config, logger *zap.Logger) (*Postgres, error) {
 	poolCfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		// pgx v5 refuses to scan SQL NULL directly into a plain Go string
 		// (it only accepts the typed-NULL wrappers). Several legacy columns
-		// are nullable text (e.g. transactions.description), so register a
+		// are nullable text (e.g. transactions.description), so swap in a
 		// NULL-tolerant codec for every text-ish OID: NULL scans as "".
+		// We override the Codec on the already-registered builtin types
+		// rather than calling RegisterType — registering three types under
+		// the same name would corrupt the map's name index, and reusing the
+		// existing *Type entries also refreshes any cached scan plans they
+		// hold. Array codecs resolved their element type by OID at map-build
+		// time, so they pick up the wrapper automatically.
+		m := conn.TypeMap()
 		for _, oid := range []uint32{
 			25,   // text
 			1042, // bpchar
 			1043, // varchar
 		} {
-			conn.TypeMap().RegisterType(&pgtype.Type{
-				Name:  "nullable_text",
-				OID:   oid,
-				Codec: &nullableTextCodec{},
-			})
+			if t, ok := m.TypeForOID(oid); ok {
+				t.Codec = nullableTextCodec{inner: t.Codec}
+			} else {
+				m.RegisterType(&pgtype.Type{Name: fmt.Sprintf("nullable_text_%d", oid), OID: oid, Codec: nullableTextCodec{inner: pgtype.TextCodec{}}})
+			}
 		}
 		return nil
 	}

@@ -189,15 +189,37 @@ func (h *RefundPaymentHandler) Execute(ctx context.Context, cmd *RefundPaymentCo
 		}
 	}
 
-	// ------------------------------------------------------------------
-	// Step 4: finalize the ledger row, then publish synchronously.
-	// ------------------------------------------------------------------
-	tag, err := h.db.Exec(ctx, `
-		UPDATE payment_refunds
-		SET status = 'succeeded', updated_at = $1
-		WHERE id = $2 AND status = 'pending'`,
-		time.Now().UTC(), claim.refundID,
-	)
+	// Step 4: finalize the ledger row inside a transaction that also stamps
+	// refunded_at, so the claim is durably terminal (or verifiably not) before
+	// any event is published. h.db.Exec previously ran this on its own
+	// autocommit connection; with the shared pool's default isolation level
+	// (READ COMMITTED) an aborted-but-overlapping finalizer could leave the
+	// row 'pending' while the parent UPDATE committed — losing exactly the
+	// audit trail the reconciler depends on.
+	var finalized bool
+	err = h.db.WithTx(ctx, func(txd *database.Tx) error {
+		tag, err := txd.Exec(ctx, `
+			UPDATE payment_refunds
+			SET status = 'succeeded', updated_at = $1
+			WHERE id = $2 AND status = 'pending'`,
+			time.Now().UTC(), claim.refundID,
+		)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			if _, err := txd.Exec(ctx, `
+				UPDATE transactions
+				SET refunded_at = $1, updated_at = $2
+				WHERE id = $3 AND status IN ('partially_refunded', 'refunded')`,
+				time.Now().UTC(), time.Now().UTC(), cmd.TransactionID,
+			); err != nil {
+				return err
+			}
+			finalized = true
+		}
+		return nil
+	})
 	if err != nil {
 		// Money has moved at the rail but our audit row could not be closed.
 		// Surface loudly; the reconciler resolves stale pending rows.
@@ -207,7 +229,7 @@ func (h *RefundPaymentHandler) Execute(ctx context.Context, cmd *RefundPaymentCo
 		)
 		return nil, fmt.Errorf("finalize refund ledger row: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
+	if !finalized {
 		// Someone else (e.g. the reconciler) already resolved this row. Do
 		// not double-publish; report the authoritative state instead.
 		t, loadErr := loadTransactionByID(ctx, h.db, cmd.TransactionID)
