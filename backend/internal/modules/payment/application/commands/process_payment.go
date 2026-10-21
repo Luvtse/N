@@ -452,10 +452,30 @@ func (h *ProcessPaymentHandler) updateTransaction(ctx context.Context, t *entiti
 	_, err := h.db.Exec(ctx, query,
 		t.Status, t.ExternalTransactionID, t.PaymentIntentID,
 		t.CardLast4, t.CardBrand, t.RefundedAmount,
-		t.RefundReason, t.RefundedAt, t.SettledAt,
-		t.SettlementEvidence, t.UpdatedAt, t.ID,
+		t.RefundReason, nullTimeOrNull(t.RefundedAt), nullTimeOrNull(t.SettledAt),
+		nullTextOrNull(t.SettlementEvidence), t.UpdatedAt, t.ID,
 	)
 	return err
+}
+
+// nullTimeOrNull maps a nil *time.Time to an untyped SQL NULL so pgx sends a
+// correctly typed parameter (a plain nil for a timestamptz column can fail
+// plan-time type inference inside prepared statements).
+func nullTimeOrNull(v *time.Time) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// nullTextOrNull maps the empty string to SQL NULL for nullable text columns
+// that carry a NOT NULL-compatible default elsewhere; used for settlement
+// evidence which is only meaningful on terminal rows.
+func nullTextOrNull(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
 }
 
 func (h *ProcessPaymentHandler) updateTransactionStatus(ctx context.Context, t *entities.Transaction) error {

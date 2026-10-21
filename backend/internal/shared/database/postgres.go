@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
 	"go.uber.org/zap"
@@ -127,7 +128,21 @@ func NewPostgres(cfg *Config, logger *zap.Logger) (*Postgres, error) {
 
 	// Configure custom type mappings (UUID, JSONB, etc.)
 	poolCfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		// Register any custom types here
+		// pgx v5 refuses to scan SQL NULL directly into a plain Go string
+		// (it only accepts the typed-NULL wrappers). Several legacy columns
+		// are nullable text (e.g. transactions.description), so register a
+		// NULL-tolerant codec for every text-ish OID: NULL scans as "".
+		for _, oid := range []uint32{
+			25,   // text
+			1042, // bpchar
+			1043, // varchar
+		} {
+			conn.TypeMap().RegisterType(&pgtype.Type{
+				Name:  "nullable_text",
+				OID:   oid,
+				Codec: &nullableTextCodec{},
+			})
+		}
 		return nil
 	}
 
