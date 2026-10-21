@@ -639,31 +639,57 @@ func TestIntegration_Payment_RailFailure_CompensationThenRetry(t *testing.T) {
 // ===========================================================================
 
 func TestIntegration_Payment_CommitFailure_NoEventPublished(t *testing.T) {
-	db := openPaymentIntegrationDB(t, "gate_nosuper", "gate")
+	db := openPaymentIntegrationDB(t, "nidaw", "nidaw")
+	ctx := context.Background()
+
+	// The finalize path probes t5_fault_injection (migration 017, TEST/CI only).
+	// Arm the fault so the ledger finalization fails AFTER the rail call has
+	// succeeded — a deterministic stand-in for "commit failed after money moved"
+	// (process crash / connection loss at commit time).
+	if _, err := db.Exec(ctx, `TRUNCATE TABLE t5_fault_injection`); err != nil {
+		t.Fatalf("reset fault table (apply migration 017): %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec(context.Background(), `TRUNCATE TABLE t5_fault_injection`)
+	})
+
+	userID := mustInsertUser(t, db)
+	txID := seedSucceededTransaction(t, db, userID, 50.00)
+	if _, err := db.Exec(ctx,
+		`INSERT INTO t5_fault_injection (transaction_id, fail_finalize) VALUES ($1, true)`, txID); err != nil {
+		t.Fatalf("arm finalize fault: %v", err)
+	}
+
 	rail := newFakeRail("chapa")
 	bus := eventbus.NewMemoryBus()
 	defer bus.Close()
 	events := collectEvents(t, bus)
 
-	userID := mustInsertUser(t, db)
-	txID := seedSucceededTransaction(t, db, userID, 50.00)
 	handler := NewRefundPaymentHandler(db, bus, rail, nil)
 
-	ctx := context.Background()
 	_, err := handler.Execute(ctx, &RefundPaymentCommand{
 		TransactionID: txID, Amount: 20.00, Reason: "commit-failure gate", RequestedBy: userID,
 	})
 	if err == nil {
-		t.Fatalf("expected finalize failure to surface as error while the role lacks UPDATE on payment_refunds")
+		t.Fatalf("expected injected finalize failure to surface as an error")
 	}
-	for _, typ := range events.snapshot() {
-		if typ == "payment.refunded" {
-			t.Fatalf("payment.refunded published although persistence did not commit")
+	// Poll briefly: MemoryBus delivers asynchronously, so assert absence with a
+	// deadline rather than racing a guaranteed-pass snapshot.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		for _, typ := range events.snapshot() {
+			if typ == "payment.refunded" {
+				t.Fatalf("payment.refunded published although persistence did not commit")
+			}
 		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	// The durable pending claim survives (reconciler resolves it later) — the
-	// rail was allowed to run because the CLAIM committed; only finalization
-	// failed. Assert exactly one pending row remains, never two.
+	// Money moved at the rail and the CLAIM committed durably; only finalization
+	// failed. The pending audit row MUST survive for the reconciler — never zero
+	// (lost trail) and never two (duplicate claim).
 	var pendingRows int
 	if err := db.QueryRow(ctx,
 		`SELECT count(*) FROM payment_refunds WHERE transaction_id = $1 AND status = 'pending'`, txID).Scan(&pendingRows); err != nil {
@@ -671,5 +697,14 @@ func TestIntegration_Payment_CommitFailure_NoEventPublished(t *testing.T) {
 	}
 	if pendingRows != 1 {
 		t.Fatalf("pending rows = %d; want exactly 1 recoverable claim", pendingRows)
+	}
+	// And the finalize really did roll back: the refund is NOT marked succeeded.
+	var succeededRows int
+	if err := db.QueryRow(ctx,
+		`SELECT count(*) FROM payment_refunds WHERE transaction_id = $1 AND status = 'succeeded'`, txID).Scan(&succeededRows); err != nil {
+		t.Fatalf("count succeeded after failure: %v", err)
+	}
+	if succeededRows != 0 {
+		t.Fatalf("succeeded rows = %d; want 0 (finalize rolled back)", succeededRows)
 	}
 }
