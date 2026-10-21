@@ -144,11 +144,21 @@ func NewPostgres(cfg *Config, logger *zap.Logger) (*Postgres, error) {
 			1042, // bpchar
 			1043, // varchar
 		} {
-			if t, ok := m.TypeForOID(oid); ok {
-				t.Codec = nullableTextCodec{inner: t.Codec}
-			} else {
-				m.RegisterType(&pgtype.Type{Name: fmt.Sprintf("nullable_text_%d", oid), OID: oid, Codec: nullableTextCodec{inner: pgtype.TextCodec{}}})
+			// Register a per-connection override. The connection's TypeMap is
+			// built fresh for every connection, so this never mutates the
+			// process-wide builtin type entries (mutating them left stale
+			// memoized scan plans in play and did not take effect — verified
+			// by TestPostgresScansNullTextIntoString). Map.TypeForOID consults
+			// the connection map first and only falls back to the immutable
+			// default map when the OID is absent, so registering here shadows
+			// the builtin codec for all planning paths on this connection,
+			// including newly memoized plans.
+			codec := nullableTextCodec{inner: &pgtype.TextCodec{}}
+			name := fmt.Sprintf("nullable_text_%d", oid)
+			if existing, ok := m.TypeForOID(oid); ok {
+				name = existing.Name + "_nullable"
 			}
+			m.RegisterType(&pgtype.Type{Name: name, OID: oid, Codec: codec})
 		}
 		return nil
 	}
