@@ -111,6 +111,7 @@ Future<void> configureDependencies() async {
     startRideUseCase: getIt<StartRideUseCase>(),
     completeRideUseCase: getIt<CompleteRideUseCase>(),
     locationService: getIt<LocationService>(),
+    repository: getIt<RideRepository>(),
   ));
 
   getIt.registerFactory(() => EarningsBloc(
