@@ -98,7 +98,23 @@ type refundClaim struct {
 	amount      float64
 	providerRef string
 	replayed    bool // an existing pending row was found; do NOT call the rail
+	preStatus   entities.TransactionStatus
+	preRefunded float64
 }
+
+// refundInFlightError is returned (and rolled back) when a claim could not be
+// created because another committed 'pending' ledger row already reserves the
+// transaction's refund slot. It carries the pending refund id so Execute can
+// replay that authoritative claim instead of issuing a second rail call.
+type refundInFlightError struct {
+	pendingID uuid.UUID
+}
+
+func (e *refundInFlightError) Error() string {
+	return fmt.Sprintf("refund already in flight for pending refund %s", e.pendingID)
+}
+
+func (e *refundInFlightError) Unwrap() error { return ErrRefundInFlight }
 
 // Execute processes a refund.
 func (h *RefundPaymentHandler) Execute(ctx context.Context, cmd *RefundPaymentCommand) (*RefundPaymentResult, error) {
@@ -109,6 +125,27 @@ func (h *RefundPaymentHandler) Execute(ctx context.Context, cmd *RefundPaymentCo
 	// ------------------------------------------------------------------
 	claim, err := h.claimRefund(ctx, cmd.TransactionID, requested, cmd.Reason, cmd.RequestedBy)
 	if err != nil {
+		var inFlight *refundInFlightError
+		if errors.As(err, &inFlight) {
+			// Another request already holds the pending claim for this
+			// transaction. Never call the rail a second time: replay the
+			// authoritative current state instead (idempotent response).
+			t, loadErr := loadTransactionByID(ctx, h.db, cmd.TransactionID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			h.logger.Info("replaying concurrent refund claim",
+				zap.String("transaction_id", cmd.TransactionID.String()),
+				zap.String("pending_refund_id", inFlight.pendingID.String()),
+			)
+			return &RefundPaymentResult{
+				RefundID:            inFlight.pendingID,
+				TransactionID:       t.ID,
+				Status:              t.Status,
+				RefundedAmount:      t.RefundedAmount,
+				RemainingRefundable: t.RemainingRefundable(),
+			}, nil
+		}
 		return nil, err
 	}
 
@@ -260,7 +297,7 @@ func (h *RefundPaymentHandler) claimRefund(
 		locked.RefundReason = refundReason.s
 		locked.SettlementEvidence = settlementEvidence.s
 		locked.SettledAt = settledAt.p
-			locked.RefundedAt = refundedAt.p
+		locked.RefundedAt = refundedAt.p
 
 		// Terminal-state check under the lock: only money that actually moved
 		// (or partially moved) can be refunded back.
@@ -333,19 +370,49 @@ func (h *RefundPaymentHandler) claimRefund(
 			refundID:    uuid.New(),
 			amount:      amount,
 			providerRef: providerRef,
+			preStatus:   locked.Status,
+			preRefunded: locked.RefundedAmount,
 		}
-		_, insErr := tx.Exec(ctx, `
+		// The WHERE NOT EXISTS guard re-checks the pending slot inside this
+		// transaction; combined with the parent FOR UPDATE lock it makes the
+		// "one pending refund per transaction" invariant race-free. A zero
+		// RowsAffected here means a concurrent committed claim won the slot:
+		// roll the whole claim back and surface the winner for replay.
+		ctag, insErr := tx.Exec(ctx, `
 			INSERT INTO payment_refunds (id, transaction_id, amount, reason, requested_by,
 			                             provider_reference, status, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)`,
+			SELECT $1, $2, $3, $4, $5, $6, 'pending', $7, $8
+			WHERE NOT EXISTS (
+				SELECT 1 FROM payment_refunds
+				WHERE transaction_id = $2 AND status = 'pending'
+			)`,
 			claim.refundID, txID, amount, reason, requestedBy,
 			providerRef, now, now,
 		)
 		if insErr != nil {
 			if isUniqueViolation(insErr) {
-				return ErrRefundInFlight
+				// Partial unique index uq_payment_refunds_pending_per_tx won
+				// the arbitration against a concurrently committed claim.
+				var winner uuid.UUID
+				if qErr := tx.QueryRow(ctx, `
+					SELECT id FROM payment_refunds
+					WHERE transaction_id = $1 AND status = 'pending'
+					LIMIT 1`, txID).Scan(&winner); qErr != nil {
+					return insErr
+				}
+				return &refundInFlightError{pendingID: winner}
 			}
 			return insErr
+		}
+		if ctag.RowsAffected() != 1 {
+			var winner uuid.UUID
+			if qErr := tx.QueryRow(ctx, `
+				SELECT id FROM payment_refunds
+				WHERE transaction_id = $1 AND status = 'pending'
+				LIMIT 1`, txID).Scan(&winner); qErr != nil {
+				return fmt.Errorf("pending-slot lost but no committed pending row found: %w", qErr)
+			}
+			return &refundInFlightError{pendingID: winner}
 		}
 		return nil
 	})
@@ -381,19 +448,28 @@ func (h *RefundPaymentHandler) compensateFailedRailCall(
 		if tag.RowsAffected() != 1 {
 			return fmt.Errorf("refund %s no longer pending; skipping compensation", claim.refundID)
 		}
-		_, err = txd.Exec(ctx, `
+		// Restore the EXACT pre-claim state captured under the parent row
+		// lock: refunded_amount returns to its prior value and status returns
+		// to its prior value. The previous heuristic CASE could leave a fully
+		// un-refunded transaction stuck in 'partially_refunded' after a
+		// failed rail call, permanently blocking legitimate retries.
+		ctag, err := txd.Exec(ctx, `
 			UPDATE transactions
-			SET refunded_amount = GREATEST(refunded_amount - $1, 0),
-			    status = CASE
-			                 WHEN status::text = 'refunded' AND refunded_amount - $1 < amount
-			                     THEN 'partially_refunded'
-			                 ELSE status
-			               END,
-			    updated_at = $2
-			WHERE id = $3 AND refunded_amount >= $1`,
-			claim.amount, time.Now().UTC(), txID,
+			SET refunded_amount = $1,
+			    status = $2,
+			    updated_at = $3
+			WHERE id = $4
+			  AND refunded_amount >= $5`,
+			claim.preRefunded, string(claim.preStatus), time.Now().UTC(),
+			txID, claim.amount,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if ctag.RowsAffected() != 1 {
+			return fmt.Errorf("refund %s: pool restore guard did not match for tx %s", claim.refundID, txID)
+		}
+		return nil
 	})
 }
 
