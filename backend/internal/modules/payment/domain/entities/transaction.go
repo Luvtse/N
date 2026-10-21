@@ -26,12 +26,12 @@ var (
 type TransactionStatus string
 
 const (
-	TransactionStatusPending    TransactionStatus = "pending"
-	TransactionStatusProcessing TransactionStatus = "processing"
-	TransactionStatusSucceeded  TransactionStatus = "succeeded"
-	TransactionStatusFailed     TransactionStatus = "failed"
-	TransactionStatusCancelled  TransactionStatus = "cancelled"
-	TransactionStatusRefunded   TransactionStatus = "refunded"
+	TransactionStatusPending           TransactionStatus = "pending"
+	TransactionStatusProcessing        TransactionStatus = "processing"
+	TransactionStatusSucceeded         TransactionStatus = "succeeded"
+	TransactionStatusFailed            TransactionStatus = "failed"
+	TransactionStatusCancelled         TransactionStatus = "cancelled"
+	TransactionStatusRefunded          TransactionStatus = "refunded"
 	TransactionStatusPartiallyRefunded TransactionStatus = "partially_refunded"
 )
 
@@ -49,11 +49,11 @@ const (
 type PaymentMethod string
 
 const (
-	PaymentMethodCreditCard   PaymentMethod = "credit_card"
-	PaymentMethodDebitCard    PaymentMethod = "debit_card"
-	PaymentMethodDigitalWallet PaymentMethod = "digital_wallet"
-	PaymentMethodBankTransfer PaymentMethod = "bank_transfer"
-	PaymentMethodCrypto       PaymentMethod = "crypto"
+	PaymentMethodCreditCard       PaymentMethod = "credit_card"
+	PaymentMethodDebitCard        PaymentMethod = "debit_card"
+	PaymentMethodDigitalWallet    PaymentMethod = "digital_wallet"
+	PaymentMethodBankTransfer     PaymentMethod = "bank_transfer"
+	PaymentMethodCrypto           PaymentMethod = "crypto"
 	PaymentMethodCorporateAccount PaymentMethod = "corporate_account"
 )
 
@@ -70,11 +70,11 @@ type Transaction struct {
 	OrderType OrderType `json:"order_type" db:"order_type"`
 
 	// Financial
-	Amount          float64 `json:"amount" db:"amount"`
-	Currency        string  `json:"currency" db:"currency"`
-	Fee             float64 `json:"fee" db:"fee"`
-	NetAmount       float64 `json:"net_amount" db:"net_amount"`
-	RefundedAmount  float64 `json:"refunded_amount" db:"refunded_amount"`
+	Amount         float64 `json:"amount" db:"amount"`
+	Currency       string  `json:"currency" db:"currency"`
+	Fee            float64 `json:"fee" db:"fee"`
+	NetAmount      float64 `json:"net_amount" db:"net_amount"`
+	RefundedAmount float64 `json:"refunded_amount" db:"refunded_amount"`
 
 	// Status
 	Status TransactionStatus `json:"status" db:"status"`
@@ -91,12 +91,17 @@ type Transaction struct {
 	Metadata    map[string]string `json:"metadata,omitempty" db:"metadata"`
 
 	// Refund Info
-	RefundReason string    `json:"refund_reason,omitempty" db:"refund_reason"`
+	RefundReason string     `json:"refund_reason,omitempty" db:"refund_reason"`
 	RefundedAt   *time.Time `json:"refunded_at,omitempty" db:"refunded_at"`
 
+	// Settlement audit trail (migration 015). Populated only when a terminal
+	// status is backed by authoritative provider evidence — never guessed.
+	SettledAt          *time.Time `json:"settled_at,omitempty" db:"settled_at"`
+	SettlementEvidence string     `json:"settlement_evidence,omitempty" db:"settlement_evidence"`
+
 	// Timestamps
-	CreatedAt time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at" db:"updated_at"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // ============================================================================
@@ -123,9 +128,9 @@ func (t *Transaction) RemainingRefundable() float64 {
 // TransitionStatus attempts to transition to a new status
 func (t *Transaction) TransitionStatus(newStatus TransactionStatus) error {
 	validTransitions := map[TransactionStatus][]TransactionStatus{
-		TransactionStatusPending:   {TransactionStatusProcessing, TransactionStatusSucceeded, TransactionStatusFailed, TransactionStatusCancelled},
-		TransactionStatusProcessing: {TransactionStatusSucceeded, TransactionStatusFailed},
-		TransactionStatusSucceeded: {TransactionStatusRefunded, TransactionStatusPartiallyRefunded},
+		TransactionStatusPending:           {TransactionStatusProcessing, TransactionStatusSucceeded, TransactionStatusFailed, TransactionStatusCancelled},
+		TransactionStatusProcessing:        {TransactionStatusSucceeded, TransactionStatusFailed},
+		TransactionStatusSucceeded:         {TransactionStatusRefunded, TransactionStatusPartiallyRefunded},
 		TransactionStatusPartiallyRefunded: {TransactionStatusRefunded, TransactionStatusPartiallyRefunded},
 	}
 
