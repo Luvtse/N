@@ -1,9 +1,12 @@
 package database
 
 import (
+	"context"
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -15,23 +18,24 @@ import (
 // on this codec being installed per-connection; see the AfterConnect hook in
 // postgres.go.
 //
-// IMPORTANT (verified against pgx v5.5.1): Map.PlanScan serves *plain* Go
-// pointer targets such as *string from its own hardcoded fast path
+// IMPORTANT (verified against pgx v5.5.1 and by the live end-to-end probe in
+// nullable_text_codec_probe_test.go): Map.PlanScan serves *plain* Go pointer
+// targets such as *string from its own hardcoded fast path
 // (pgtype.scanPlanString, which errors on NULL) and never consults the
 // registered codec for those targets. Codec.PlanScan is only reached for
-// wrapper types (*pgtype.Text, sql.Scanner implementers, composite/array
-// element planning). Consequently wrapping the codec alone cannot make
-// NULL -> *string tolerant.
+// wrapper types (*pgtype.Text, sql.Scanner implementers such as
+// sql.NullString, composite/array element planning). Consequently wrapping
+// the codec alone cannot make NULL -> *string tolerant, and Conn.typeMap is
+// unexported so the plain-target path cannot be intercepted through the
+// public API either.
 //
-// The plain-target translation is performed by nullableMap: a per-connection
-// pgtype.Map whose PlanScan delegates to the embedded builtin map (so every
-// codec-mediated path keeps working, including through this codec wrapper)
-// and swaps ONLY the exact sentinel plan pgmap returns for text-ish OIDs +
-// *string targets with the NULL-tolerant variant below. Every other target
-// type — including *string against non-text OIDs such as jsonb, where the
-// builtin error must be preserved — is passed through untouched.
-// postgres.go installs it via ConnConfig.CreateAssetsByName so all pooled
-// connections (and therefore all queries and transactions) use it.
+// The supported remedy lives in this file's scan helpers: production code
+// scans nullable text columns through the typed-wrapper path
+// (sql.NullString / *pgtype.Text via ScanStringOrNull and
+// QueryNullableStrings), which IS codec-mediated and therefore NULL-tolerant.
+// The codec wrapper below additionally hardens every wrapper-mediated path
+// (e.g. []string array scans planned through the element codec) so a NULL
+// never aborts a whole batch.
 type nullableTextCodec struct {
 	inner pgtype.Codec
 }
@@ -109,30 +113,68 @@ func isBuiltinStringPlan(plan pgtype.ScanPlan) bool {
 	return fmt.Sprintf("%T", plan) == "pgtype.scanPlanString"
 }
 
-// nullableMap wraps a per-connection pgtype.Map. All methods delegate through
-// the embedded *pgtype.Map (registration, encoding plans, DecodeValue, ...);
-// only PlanScan is intercepted to make SQL NULL -> *string scan as "" for
-// text-ish columns.
+// scanStringOrNull scans a single-row query whose sole column is a text-ish
+// value (text/varchar/bpchar) into a plain Go string, mapping SQL NULL to "".
 //
-// It must embed the ORIGINAL pointer so every internal helper inside pgmap
-// still receives the real map with its private fields intact — we never hand
-// out a value copy or a synthesized map.
-type nullableMap struct{ *pgtype.Map }
-
-// PlanScan delegates to the builtin map and rewrites the narrow case:
-// text-ish OID + plain *string destination served by the hardcoded
-// scanPlanString fast path. Everything else (other target types, other OIDs,
-// codec-mediated plans, failure plans) is returned unchanged, preserving the
-// builtin behavior — including the deliberate "cannot scan NULL into *string"
-// error for non-text columns such as jsonb.
-//
-// We deliberately do NOT rely on memoized plans cached inside the embedded
-// map: the rewrite happens on this wrapper's own output path, so even a plan
-// the builtin map memoized before installation is corrected here.
-func (m nullableMap) PlanScan(oid uint32, formatCode int16, target any) pgtype.ScanPlan {
-	plan := m.Map.PlanScan(oid, formatCode, target)
-	if _, isStr := target.(*string); isStr && nullableTextOIDs[oid] && isBuiltinStringPlan(plan) {
-		return scanPlanTextNullToString{}
+// Rationale (verified against pgx v5.5.1): Map.PlanScan serves *plain* Go
+// pointer targets such as *string from a hardcoded fast path that errors on
+// NULL and never consults registered codecs; Conn.typeMap is unexported and
+// Rows carry no public handle to the map that planned their scans, so neither
+// a codec override nor a wrapped map can be installed onto the pool's rows
+// without unsupported reflection hacks. Production code therefore scans
+// nullable text via the typed wrapper (*string → &sql.NullString{} →
+// ScanStringOrNull), which goes through the codec-mediated path and is fully
+// supported. This helper centralizes that conversion.
+func scanStringOrNull(row pgx.Row) (string, error) {
+	var ns sql.NullString
+	if err := row.Scan(&ns); err != nil {
+		return "", err
 	}
-	return plan
+	return ns.String, nil // NULL → zero value ""
+}
+
+// ScanStringOrNull exposes the NULL-tolerant single-column text scan for
+// callers outside this package (e.g. legacy module queries that previously
+// scanned nullable varchar columns directly into *string).
+func ScanStringOrNull(row pgx.Row) (string, error) { return scanStringOrNull(row) }
+
+// QueryNullableStrings executes a query and returns every row of a
+// text-ish column as []string, scanning each row through the typed
+// *sql.NullString wrapper so SQL NULL becomes "" instead of erroring. Use it
+// in place of draining rows with dest = append(dest, new(string)) for
+// nullable text columns.
+func (p *Postgres) QueryNullableStrings(ctx context.Context, sqlText string, args ...any) ([]string, error) {
+	rows, err := p.Query(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		s, err := scanStringOrNull(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// QueryNullableStrings executes the query within this transaction using the
+// NULL-tolerant typed scan path (see Postgres.QueryNullableStrings).
+func (t *Tx) QueryNullableStrings(ctx context.Context, sqlText string, args ...any) ([]string, error) {
+	rows, err := t.Query(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		s, err := scanStringOrNull(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }

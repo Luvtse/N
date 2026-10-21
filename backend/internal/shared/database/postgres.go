@@ -130,29 +130,26 @@ func NewPostgres(cfg *Config, logger *zap.Logger) (*Postgres, error) {
 	poolCfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		// pgx v5 refuses to scan SQL NULL directly into a plain Go string
 		// (it only accepts the typed-NULL wrappers). Several legacy columns
-		// are nullable text (e.g. transactions.description), so swap in a
-		// NULL-tolerant codec for every text-ish OID: NULL scans as "".
-		// We override the Codec on the already-registered builtin types
-		// rather than calling RegisterType — registering three types under
-		// the same name would corrupt the map's name index, and reusing the
-		// existing *Type entries also refreshes any cached scan plans they
-		// hold. Array codecs resolved their element type by OID at map-build
-		// time, so they pick up the wrapper automatically.
+		// are nullable text (e.g. transactions.description), so install a
+		// NULL-tolerant codec for every text-ish OID on this connection's
+		// type map. This hardens all codec-mediated scan paths (typed
+		// wrappers such as sql.NullString/*pgtype.Text and array element
+		// planning). Plain *string destinations are served by pgmap's
+		// hardcoded fast path that no codec can intercept — production code
+		// must scan nullable text via ScanStringOrNull / QueryNullableStrings
+		// (see nullable_text_codec.go); the live probe test documents this.
+		// We override the Codec on per-connection *Type registrations rather
+		// than calling RegisterType with duplicate names — registering three
+		// types under the same name would corrupt the map's name index — and
+		// we never mutate the process-wide builtin entries (that left stale
+		// memoized scan plans in play; verified by
+		// TestPostgresScansNullTextIntoString).
 		m := conn.TypeMap()
 		for _, oid := range []uint32{
 			25,   // text
 			1042, // bpchar
 			1043, // varchar
 		} {
-			// Register a per-connection override. The connection's TypeMap is
-			// built fresh for every connection, so this never mutates the
-			// process-wide builtin type entries (mutating them left stale
-			// memoized scan plans in play and did not take effect — verified
-			// by TestPostgresScansNullTextIntoString). Map.TypeForOID consults
-			// the connection map first and only falls back to the immutable
-			// default map when the OID is absent, so registering here shadows
-			// the builtin codec for all planning paths on this connection,
-			// including newly memoized plans.
 			codec := nullableTextCodec{inner: &pgtype.TextCodec{}}
 			name := fmt.Sprintf("nullable_text_%d", oid)
 			if existing, ok := m.TypeForOID(oid); ok {

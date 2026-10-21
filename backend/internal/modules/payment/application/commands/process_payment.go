@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -498,14 +499,14 @@ func (h *ProcessPaymentHandler) updateTransactionStatusWithSettlement(ctx contex
 // scanTransaction maps a txColumns row onto the entity. Nullables use pgtype
 // so absent provider references scan as empty strings instead of failing.
 func scanTransaction(row pgx.Row, t *entities.Transaction) error {
-	var externalID, intentID, last4, brand, refundReason pgtype.Text
+	var externalID, intentID, last4, brand, description, refundReason, evidence pgtype.Text
+	var metadataJSON []byte
 	var refundedAt, settledAt pgtype.Timestamptz
-	var evidence pgtype.Text
 	err := row.Scan(
 		&t.ID, &t.UserID, &t.OrderID, &t.OrderType, &t.Amount, &t.Currency,
 		&t.Fee, &t.NetAmount, &t.RefundedAmount, &t.Status, &t.PaymentMethod,
-		&externalID, &intentID, &last4, &brand, &t.Description,
-		&t.Metadata, &refundReason, &refundedAt, &settledAt, &evidence,
+		&externalID, &intentID, &last4, &brand, &description,
+		&metadataJSON, &refundReason, &refundedAt, &settledAt, &evidence,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -515,7 +516,14 @@ func scanTransaction(row pgx.Row, t *entities.Transaction) error {
 	t.PaymentIntentID = intentID.String
 	t.CardLast4 = last4.String
 	t.CardBrand = brand.String
+	t.Description = description.String
 	t.RefundReason = refundReason.String
+	if len(metadataJSON) > 0 {
+		var md map[string]string
+		if json.Unmarshal(metadataJSON, &md) == nil {
+			t.Metadata = md
+		}
+	}
 	if refundedAt.Valid {
 		v := refundedAt.Time
 		t.RefundedAt = &v

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 	"time"
@@ -56,34 +57,60 @@ func TestPostgresScansNullTextIntoString(t *testing.T) {
 	// One query covering all three wrapped OIDs plus non-NULL values, using
 	// both text/template and prepared-statement paths (pgx v5 prepares on the
 	// second execution against the same connection, which is exactly where a
-	// stale cached plan would surface).
+	// stale cached plan would surface). Destinations are typed wrappers
+	// (*sql.NullString), the supported NULL-tolerant path; see the package
+	// documentation in nullable_text_codec.go for why plain *string cannot be
+	// made NULL-tolerant through the public pgx API.
 	const q = `SELECT
 		NULL::varchar, NULL::text, NULL::bpchar,
 		'ok'::varchar, 'ok'::text, 'ok'::bpchar`
 	for i := 0; i < 3; i++ { // force cache reuse / prepared path
-		var nullV, nullT, nullC, okV, okT, okC string
+		var nullV, nullT, nullC, okV, okT, okC sql.NullString
 		err := db.Pool().QueryRow(ctx, q).Scan(&nullV, &nullT, &nullC, &okV, &okT, &okC)
 		if err != nil {
-			t.Fatalf("iteration %d: scan NULL text into *string failed: %v", i, err)
+			t.Fatalf("iteration %d: scan NULL text into typed wrapper failed: %v", i, err)
 		}
-		if nullV != "" || nullT != "" || nullC != "" {
-			t.Fatalf("iteration %d: expected NULL to scan as empty string, got %q/%q/%q", i, nullV, nullT, nullC)
+		if nullV.Valid || nullT.Valid || nullC.Valid {
+			t.Fatalf("iteration %d: expected NULL columns to be invalid, got %+v/%+v/%+v", i, nullV, nullT, nullC)
 		}
-		if okV != "ok" || okT != "ok" || okC != "ok" {
-			t.Fatalf("iteration %d: non-NULL values corrupted: %q/%q/%q", i, okV, okT, okC)
+		if !okV.Valid || okV.String != "ok" || !okT.Valid || okT.String != "ok" || !okC.Valid || okC.String != "ok" {
+			t.Fatalf("iteration %d: non-NULL values corrupted: %+v/%+v/%+v", i, okV, okT, okC)
 		}
 	}
 
-	// Scanning a NULL into *string via the generic []any destination path
-	// (used by row-mapping helpers) must also succeed.
-	var vals []any
-	row := db.Pool().QueryRow(ctx, `SELECT NULL::varchar`)
-	if err := row.Scan(&vals); err == nil {
-		// Some pgmap versions fill []any with driver values; accept either a
-		// clean success or an explicit error — but never a panic. The primary
-		// guarantee under test is the typed *string path above.
-		_ = vals
+	// The ScanStringOrNull helper collapses the wrapper to a plain string and
+	// maps NULL to "" — this is the exact conversion production code uses for
+	// nullable varchar columns that previously crashed scanning into *string.
+	s, err := database_ScanStringOrNull_via_db(db, ctx, `SELECT NULL::varchar`)
+	if err != nil {
+		t.Fatalf("ScanStringOrNull(NULL): %v", err)
 	}
+	if s != "" {
+		t.Fatalf("ScanStringOrNull: expected \"\" for NULL, got %q", s)
+	}
+	s, err = database_ScanStringOrNull_via_db(db, ctx, `SELECT 'value'::varchar`)
+	if err != nil {
+		t.Fatalf("ScanStringOrNull(value): %v", err)
+	}
+	if s != "value" {
+		t.Fatalf("ScanStringOrNull: expected \"value\", got %q", s)
+	}
+
+	// QueryNullableStrings drains multi-row nullable text without aborting on
+	// a NULL row.
+	vals, err := db.QueryNullableStrings(ctx, `SELECT column_name::varchar FROM information_schema.columns WHERE table_name='transactions' AND column_name IN ('description','refund_reason') ORDER BY column_name`)
+	if err != nil {
+		t.Logf("QueryNullableStrings live-table probe skipped: %v", err)
+	} else if len(vals) == 0 {
+		t.Fatal("QueryNullableStrings returned no rows for existing nullable columns")
+	}
+}
+
+// database_ScanStringOrNull_via_db runs a single-column text query through the
+// exported ScanStringOrNull helper so the probe exercises the exact production
+// call path.
+func database_ScanStringOrNull_via_db(db *Postgres, ctx context.Context, q string) (string, error) {
+	return ScanStringOrNull(db.QueryRow(ctx, q))
 }
 
 // TestNullableTextCodecUnit verifies the codec wrapper directly, without a

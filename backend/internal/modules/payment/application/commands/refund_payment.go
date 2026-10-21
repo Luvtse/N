@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -294,7 +295,7 @@ func (h *RefundPaymentHandler) claimRefund(
 		err := tx.QueryRow(ctx, `
 			SELECT id, user_id, order_id, order_type, amount, currency, fee, net_amount,
 			       refunded_amount, status, payment_method, external_transaction_id,
-			       payment_intent_id, description, metadata, refund_reason, refunded_at,
+			       payment_intent_id, description, refund_reason, refunded_at,
 			       settled_at, settlement_evidence, created_at, updated_at
 			FROM transactions
 			WHERE id = $1
@@ -302,8 +303,7 @@ func (h *RefundPaymentHandler) claimRefund(
 			&locked.ID, &locked.UserID, &locked.OrderID, &locked.OrderType,
 			&locked.Amount, &locked.Currency, &locked.Fee, &locked.NetAmount,
 			&locked.RefundedAmount, &locked.Status, &locked.PaymentMethod,
-			&externalID, &intentID, &description, &locked.Metadata,
-			&refundReason, &refundedAt,
+			&externalID, &intentID, &description, &refundReason, &refundedAt,
 			&settledAt, &settlementEvidence,
 			&locked.CreatedAt, &locked.UpdatedAt,
 		)
@@ -312,6 +312,19 @@ func (h *RefundPaymentHandler) claimRefund(
 				return ErrTransactionNotFound
 			}
 			return err
+		}
+		// metadata is read separately as raw JSON bytes: the jsonb codec scans
+		// into concrete map types, not a plain struct field, so it stays out of
+		// the positional column scan above (the claim path does not need it).
+		var metadataJSON []byte
+		if err := tx.QueryRow(ctx, `SELECT metadata FROM transactions WHERE id = $1`, txID).Scan(&metadataJSON); err != nil {
+			return err
+		}
+		if len(metadataJSON) > 0 {
+			var md map[string]string
+			if json.Unmarshal(metadataJSON, &md) == nil {
+				locked.Metadata = md
+			}
 		}
 		locked.ExternalTransactionID = externalID.s
 		locked.PaymentIntentID = intentID.s
