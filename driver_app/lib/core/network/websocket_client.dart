@@ -11,11 +11,57 @@ class WebSocketClient {
       StreamController.broadcast();
   
   Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
-  
+
+  // Fires `true` after EVERY successful (re)connect so feature layers can
+  // trigger a REST resync — the backend hub drops in-flight topics on
+  // disconnect, so clients must re-subscribe and refetch authoritative state.
+  final StreamController<bool> _connectionStateController =
+      StreamController<bool>.broadcast();
+  Stream<bool> get connectionStateStream => _connectionStateController.stream;
+  bool get isConnected => _isConnected;
+
+  // Topics the app wants joined server-side. The hub authorizes every
+  // subscription (Phase 4); we replay this set after each (re)connect because
+  // client topics are per-connection on the server.
+  final Set<String> _topics = <String>{};
+
   bool _isConnected = false;
   Timer? _heartbeatTimer;
 
   WebSocketClient({required this.baseUrl});
+
+  /// Sends {"type":"subscribe","payload":{"topic":...}} exactly as the
+  /// backend Client.handleMessage contract expects
+  /// (websocket_handler.go case "subscribe"). Remembered even while offline:
+  /// flushed automatically on the next successful connect.
+  void subscribe(String topic) {
+    if (topic.isEmpty) return;
+    _topics.add(topic);
+    send({
+      'type': 'subscribe',
+      'payload': {'topic': topic},
+      'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    });
+  }
+
+  void unsubscribe(String topic) {
+    _topics.remove(topic);
+    send({
+      'type': 'unsubscribe',
+      'payload': {'topic': topic},
+      'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    });
+  }
+
+  void _resubscribeAll() {
+    for (final topic in _topics.toList()) {
+      send({
+        'type': 'subscribe',
+        'payload': {'topic': topic},
+        'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      });
+    }
+  }
 
   Future<void> connect() async {
     try {
@@ -38,6 +84,11 @@ class WebSocketClient {
 
       await _channel!.ready;
       _isConnected = true;
+      // Rejoin every remembered topic: server-side subscriptions die with
+      // the connection, so a reconnect without replay silently loses all
+      // ride updates (Phase 6 convergence fix).
+      _resubscribeAll();
+      _connectionStateController.add(true);
 
       _channel!.stream.listen(
         (message) {
@@ -100,5 +151,6 @@ class WebSocketClient {
   void dispose() {
     disconnect();
     _messageController.close();
+    _connectionStateController.close();
   }
 }

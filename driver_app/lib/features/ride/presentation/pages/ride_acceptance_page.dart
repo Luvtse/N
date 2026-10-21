@@ -4,7 +4,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../domain/entities/active_ride.dart';
+import '../../data/repositories/ride_repository.dart';
+import '../../domain/entities/pending_ride_offer.dart';
 import '../bloc/active_ride_bloc.dart';
 
 class RideAcceptancePage extends StatefulWidget {
@@ -23,10 +24,45 @@ class _RideAcceptancePageState extends State<RideAcceptancePage> {
   int _timeLeft = 30;
   Timer? _timer;
 
+  // Honest server-data states: no fabricated rides while loading or after a
+  // failed load (Global Rule 2).
+  PendingRideOffer? _offer;
+  Object? _loadError;
+  bool _loading = true;
+
   @override
   void initState() {
     super.initState();
     _startTimer();
+    _loadOffer();
+  }
+
+  /// Loads the real offer from the backend feed
+  /// (GET /api/v1/nidus/drivers/pending-rides) — never a hard-coded fake.
+  Future<void> _loadOffer() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final offers = await getIt<RideRepository>().getPendingRides();
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _offer = offers.where((o) => o.rideId == widget.rideId).isNotEmpty
+            ? offers.firstWhere((o) => o.rideId == widget.rideId)
+            : (offers.isNotEmpty ? offers.first : null);
+        if (_offer == null) {
+          _loadError = 'This ride is no longer available.';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = e;
+      });
+    }
   }
 
   void _startTimer() {
