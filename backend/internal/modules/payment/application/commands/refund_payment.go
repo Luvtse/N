@@ -230,8 +230,8 @@ func (h *RefundPaymentHandler) claimRefund(
 	var locked entities.Transaction
 
 	err := h.db.WithTx(ctx, func(tx *database.Tx) error {
-		var externalID, intentID, refundReason, settlementEvidence pgtextScanner
-		var settledAt pgtimeScanner
+		var externalID, intentID, description, refundReason, settlementEvidence pgtextScanner
+		var settledAt, refundedAt pgtimeScanner
 		err := tx.QueryRow(ctx, `
 			SELECT id, user_id, order_id, order_type, amount, currency, fee, net_amount,
 			       refunded_amount, status, payment_method, external_transaction_id,
@@ -243,8 +243,8 @@ func (h *RefundPaymentHandler) claimRefund(
 			&locked.ID, &locked.UserID, &locked.OrderID, &locked.OrderType,
 			&locked.Amount, &locked.Currency, &locked.Fee, &locked.NetAmount,
 			&locked.RefundedAmount, &locked.Status, &locked.PaymentMethod,
-			&externalID, &intentID, &locked.Description, &locked.Metadata,
-			&refundReason, &locked.RefundedAt,
+			&externalID, &intentID, &description, &locked.Metadata,
+			&refundReason, &refundedAt,
 			&settledAt, &settlementEvidence,
 			&locked.CreatedAt, &locked.UpdatedAt,
 		)
@@ -256,9 +256,11 @@ func (h *RefundPaymentHandler) claimRefund(
 		}
 		locked.ExternalTransactionID = externalID.s
 		locked.PaymentIntentID = intentID.s
+		locked.Description = description.s
 		locked.RefundReason = refundReason.s
 		locked.SettlementEvidence = settlementEvidence.s
 		locked.SettledAt = settledAt.p
+			locked.RefundedAt = refundedAt.p
 
 		// Terminal-state check under the lock: only money that actually moved
 		// (or partially moved) can be refunded back.

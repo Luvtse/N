@@ -2,14 +2,18 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"nidaw-backend/internal/modules/payment/domain/entities"
 	"nidaw-backend/internal/shared/database"
 	"nidaw-backend/internal/shared/eventbus"
+	"nidaw-backend/internal/shared/integrations/payments"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // ============================================================================
@@ -18,27 +22,28 @@ import (
 
 // ReconciliationReport contains the results of a reconciliation run
 type ReconciliationReport struct {
-	ID                    uuid.UUID                `json:"id"`
-	PeriodStart           time.Time                `json:"period_start"`
-	PeriodEnd             time.Time                `json:"period_end"`
-	TotalTransactions     int                      `json:"total_transactions"`
-	TotalAmount           float64                  `json:"total_amount"`
-	MatchedTransactions   int                      `json:"matched_transactions"`
-	MatchedAmount         float64                  `json:"matched_amount"`
-	UnmatchedTransactions int                      `json:"unmatched_transactions"`
-	UnmatchedAmount       float64                  `json:"unmatched_amount"`
+	ID                    uuid.UUID                   `json:"id"`
+	PeriodStart           time.Time                   `json:"period_start"`
+	PeriodEnd             time.Time                   `json:"period_end"`
+	TotalTransactions     int                         `json:"total_transactions"`
+	TotalAmount           float64                     `json:"total_amount"`
+	MatchedTransactions   int                         `json:"matched_transactions"`
+	MatchedAmount         float64                     `json:"matched_amount"`
+	UnmatchedTransactions int                         `json:"unmatched_transactions"`
+	UnmatchedAmount       float64                     `json:"unmatched_amount"`
+	SkippedTransactions   int                         `json:"skipped_transactions"`
 	Discrepancies         []ReconciliationDiscrepancy `json:"discrepancies"`
-	Status                string                   `json:"status"` // success, partial, failed
-	CreatedAt             time.Time                `json:"created_at"`
+	Status                string                      `json:"status"` // success, partial, failed
+	CreatedAt             time.Time                   `json:"created_at"`
 }
 
 // ReconciliationDiscrepancy represents a mismatch found during reconciliation
 type ReconciliationDiscrepancy struct {
-	TransactionID    uuid.UUID `json:"transaction_id"`
-	DiscrepancyType  string    `json:"discrepancy_type"` // amount_mismatch, missing, duplicate
-	ExpectedAmount   float64   `json:"expected_amount"`
-	ActualAmount     float64   `json:"actual_amount"`
-	Description      string    `json:"description"`
+	TransactionID   uuid.UUID `json:"transaction_id"`
+	DiscrepancyType string    `json:"discrepancy_type"` // amount_mismatch, missing, duplicate, provider_unverified
+	ExpectedAmount  float64   `json:"expected_amount"`
+	ActualAmount    float64   `json:"actual_amount"`
+	Description     string    `json:"description"`
 }
 
 // PayoutSummary contains summary data for payout generation
@@ -51,21 +56,53 @@ type PayoutSummary struct {
 	TransactionCount int       `json:"transaction_count"`
 }
 
+// errPayoutExists is an internal control-flow error carrying the existing row
+// when a per-period uniqueness conflict occurs during GeneratePayouts.
+var errPayoutExists = errors.New("payout already exists for period")
+
 // ============================================================================
 // SERVICE
 // ============================================================================
 
-// ReconciliationService handles payment reconciliation
+// ReconciliationService handles payment reconciliation.
+//
+// Integrity contract (NIDUS-PAYMENT-001, defect D2):
+//   - External amounts are fetched from the AUTHORITATIVE provider via the
+//     injected payments.PaymentGateway (VerifyPayment), never by re-reading
+//     the same database column we are auditing (the old implementation
+//     reconciled the DB against itself, so amount_mismatch was undetectable).
+//   - Provider lookup failures are recorded as 'provider_unverified'
+//     discrepancies and counted in SkippedTransactions — they are never
+//     silently swallowed.
+//   - GeneratePayouts is idempotent per accounting period: the database
+//     constraint uq_payouts_driver_period (driver_id, period_start,
+//     period_end) arbitrates concurrent/rerun attempts; a conflict replays
+//     the committed payout instead of issuing a duplicate.
 type ReconciliationService struct {
-	db       *database.Postgres
-	eventBus eventbus.EventBus
+	db             *database.Postgres
+	eventBus       eventbus.EventBus
+	paymentGateway payments.PaymentGateway
+	logger         *zap.Logger
 }
 
-// NewReconciliationService creates a new service
-func NewReconciliationService(db *database.Postgres, eventBus eventbus.EventBus) *ReconciliationService {
+// NewReconciliationService creates a new service. A nil logger is replaced by
+// a no-op logger so callers (and tests) never need to supply one. A nil
+// gateway degrades verification to explicit 'provider_unverified' outcomes
+// rather than fake matches (see reconcileTransaction).
+func NewReconciliationService(
+	db *database.Postgres,
+	eventBus eventbus.EventBus,
+	paymentGateway payments.PaymentGateway,
+	logger *zap.Logger,
+) *ReconciliationService {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &ReconciliationService{
-		db:       db,
-		eventBus: eventBus,
+		db:             db,
+		eventBus:       eventBus,
+		paymentGateway: paymentGateway,
+		logger:         logger,
 	}
 }
 
@@ -92,11 +129,26 @@ func (s *ReconciliationService) RunReconciliation(
 		report.TotalAmount += t.Amount
 	}
 
-	// 2. Reconcile each transaction
-	for _, t := range transactions {
-		discrepancy, err := s.reconcileTransaction(ctx, &t)
+	// 2. Reconcile each transaction. Errors are NEVER silently skipped: an
+	// unverifiable transaction becomes a recorded discrepancy so operators
+	// can act on it (audit finding D2c).
+	for i := range transactions {
+		t := &transactions[i]
+		discrepancy, err := s.reconcileTransaction(ctx, t)
 		if err != nil {
-			// Log error but continue
+			report.Discrepancies = append(report.Discrepancies, ReconciliationDiscrepancy{
+				TransactionID:   t.ID,
+				DiscrepancyType: "provider_unverified",
+				ExpectedAmount:  t.Amount,
+				Description:     fmt.Sprintf("provider lookup failed: %v", err),
+			})
+			report.SkippedTransactions++
+			report.UnmatchedTransactions++
+			report.UnmatchedAmount += t.Amount
+			s.logger.Warn("reconciliation provider lookup failed",
+				zap.String("transaction_id", t.ID.String()),
+				zap.Error(err),
+			)
 			continue
 		}
 		if discrepancy != nil {
@@ -123,13 +175,20 @@ func (s *ReconciliationService) RunReconciliation(
 		return nil, fmt.Errorf("failed to save report: %w", err)
 	}
 
-	// 5. Emit reconciliation event
-	s.emitReconciliationEvent(ctx, report)
+	// 5. Emit reconciliation event synchronously with error checking.
+	if err := s.emitReconciliationEvent(ctx, report); err != nil {
+		s.logger.Error("failed to publish reconciliation event",
+			zap.String("report_id", report.ID.String()),
+			zap.Error(err),
+		)
+	}
 
 	return report, nil
 }
 
-// GeneratePayouts generates payouts for drivers for a period
+// GeneratePayouts generates payouts for drivers for a period. It is safe to
+// rerun for the same period: existing committed payouts are replayed, not
+// duplicated (uq_payouts_driver_period + ON CONFLICT DO NOTHING).
 func (s *ReconciliationService) GeneratePayouts(
 	ctx context.Context,
 	periodStart, periodEnd time.Time,
@@ -142,35 +201,41 @@ func (s *ReconciliationService) GeneratePayouts(
 
 	payouts := make([]*entities.Payout, 0, len(summaries))
 
-	// 2. Create payout for each driver
+	// 2. Create payout for each driver (idempotent per period)
 	for _, summary := range summaries {
 		if summary.TotalEarnings <= 0 {
 			continue
 		}
 
+		now := time.Now().UTC()
 		payout := &entities.Payout{
 			ID:               uuid.New(),
 			DriverID:         summary.DriverID,
+			UserID:           summary.DriverID,
+			Amount:           math.Round(summary.TotalEarnings*100) / 100,
+			Currency:         "ETB",
+			NetAmount:        0,
+			Status:           entities.PayoutStatusPending,
+			PeriodStart:      periodStart,
+			PeriodEnd:        periodEnd,
 			TotalEarnings:    summary.TotalEarnings,
 			Tips:             summary.Tips,
 			Bonuses:          summary.Bonuses,
 			PlatformFees:     summary.PlatformFees,
 			TransactionCount: summary.TransactionCount,
-			PeriodStart:      periodStart,
-			PeriodEnd:        periodEnd,
-			Status:           entities.PayoutStatusPending,
-			ScheduledAt:      time.Now().UTC().Add(24 * time.Hour), // Payout after 24 hours
-			CreatedAt:        time.Now().UTC(),
-			UpdatedAt:        time.Now().UTC(),
+			ScheduledAt:      now.Add(24 * time.Hour), // Payout after 24 hours
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 
 		payout.CalculateNetAmount()
 
-		if err := s.savePayout(ctx, payout); err != nil {
+		created, err := s.savePayoutIdempotent(ctx, payout)
+		if err != nil {
 			return nil, fmt.Errorf("failed to save payout: %w", err)
 		}
 
-		payouts = append(payouts, payout)
+		payouts = append(payouts, created)
 	}
 
 	return payouts, nil
@@ -199,33 +264,60 @@ func (s *ReconciliationService) reconcileTransaction(
 		}, nil
 	}
 
-	// Query external payment gateway for transaction details
-	externalAmount, err := s.getExternalTransactionAmount(ctx, t.ExternalTransactionID)
+	// No gateway wired: we cannot obtain authoritative evidence. Report it
+	// explicitly instead of fabricating a match (the pre-fix code compared
+	// the DB against itself and always "matched").
+	if s.paymentGateway == nil {
+		return &ReconciliationDiscrepancy{
+			TransactionID:   t.ID,
+			DiscrepancyType: "provider_unverified",
+			ExpectedAmount:  t.Amount,
+			Description:     "no payment gateway configured for authoritative verification",
+		}, nil
+	}
+
+	// Query the AUTHORITATIVE provider state for this reference.
+	status, err := s.paymentGateway.VerifyPayment(ctx, t.ExternalTransactionID)
 	if err != nil {
 		return nil, err
 	}
+	if status == nil {
+		return nil, fmt.Errorf("gateway %s returned nil status for %s",
+			s.paymentGateway.Name(), t.ExternalTransactionID)
+	}
 
-	// Compare amounts
-	if externalAmount != t.Amount {
+	externalAmount := roundMoney(float64(status.AmountSantim) / 100.0)
+
+	// Compare amounts (minor-unit rounding tolerance of half a santim).
+	if math.Abs(externalAmount-roundMoney(t.Amount)) >= 0.005 {
 		return &ReconciliationDiscrepancy{
 			TransactionID:   t.ID,
 			DiscrepancyType: "amount_mismatch",
 			ExpectedAmount:  t.Amount,
 			ActualAmount:    externalAmount,
-			Description:     fmt.Sprintf("Expected %.2f, got %.2f", t.Amount, externalAmount),
+			Description:     fmt.Sprintf("ledger %.2f vs provider %.2f", t.Amount, externalAmount),
+		}, nil
+	}
+
+	// Provider disagrees about terminality: flag it, do not trust our copy.
+	switch status.Status {
+	case payments.StatusSucceeded, payments.StatusRefunded:
+		// consistent with refundable states handled above
+	default:
+		return &ReconciliationDiscrepancy{
+			TransactionID:   t.ID,
+			DiscrepancyType: "provider_unverified",
+			ExpectedAmount:  t.Amount,
+			ActualAmount:    externalAmount,
+			Description:     fmt.Sprintf("provider reports non-terminal status %q for a succeeded ledger row", status.Status),
 		}, nil
 	}
 
 	return nil, nil
 }
 
-func (s *ReconciliationService) getExternalTransactionAmount(ctx context.Context, externalID string) (float64, error) {
-	// In production, call the payment gateway API
-	// For now, return from database cache
-	var amount float64
-	query := `SELECT amount FROM transactions WHERE external_transaction_id = $1`
-	err := s.db.QueryRow(ctx, query, externalID).Scan(&amount)
-	return amount, err
+func roundMoney(amount float64) float64 {
+	return math.Round(amount*100) / 100
 }
 
 // ============================================================================
@@ -276,25 +368,27 @@ func (s *ReconciliationService) getPayoutSummaries(
 		summaries = append(summaries, summary)
 	}
 
-	return summaries, nil
+	return summaries, rows.Err()
 }
 
 // ============================================================================
 // DATABASE OPERATIONS
 // ============================================================================
 
+const txSelectColumns = `id, user_id, order_id, order_type, amount, currency, fee, net_amount,
+		 refunded_amount, status, payment_method, external_transaction_id,
+						 payment_intent_id, created_at, updated_at`
+
 func (s *ReconciliationService) getTransactionsInPeriod(
 	ctx context.Context,
 	periodStart, periodEnd time.Time,
 ) ([]entities.Transaction, error) {
-	query := `
-		SELECT id, user_id, order_id, order_type, amount, currency, fee, net_amount,
-		       refunded_amount, status, payment_method, external_transaction_id,
-		       created_at, updated_at
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM transactions
 		WHERE created_at BETWEEN $1 AND $2
 		ORDER BY created_at
-	`
+	`, txSelectColumns)
 
 	rows, err := s.db.Query(ctx, query, periodStart, periodEnd)
 	if err != nil {
@@ -305,18 +399,21 @@ func (s *ReconciliationService) getTransactionsInPeriod(
 	transactions := make([]entities.Transaction, 0)
 	for rows.Next() {
 		var t entities.Transaction
+		var externalID, intentID pgNullableText
 		err := rows.Scan(
 			&t.ID, &t.UserID, &t.OrderID, &t.OrderType, &t.Amount, &t.Currency,
 			&t.Fee, &t.NetAmount, &t.RefundedAmount, &t.Status, &t.PaymentMethod,
-			&t.ExternalTransactionID, &t.CreatedAt, &t.UpdatedAt,
+			&externalID, &intentID, &t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
+		t.ExternalTransactionID = externalID.s
+		t.PaymentIntentID = intentID.s
 		transactions = append(transactions, t)
 	}
 
-	return transactions, nil
+	return transactions, rows.Err()
 }
 
 func (s *ReconciliationService) saveReport(ctx context.Context, report *ReconciliationReport) error {
@@ -337,49 +434,135 @@ func (s *ReconciliationService) saveReport(ctx context.Context, report *Reconcil
 	return err
 }
 
-func (s *ReconciliationService) savePayout(ctx context.Context, payout *entities.Payout) error {
+// savePayoutIdempotent inserts the payout under the per-period uniqueness
+// constraint uq_payouts_driver_period (migration 016). On conflict it loads
+// and returns the committed payout (bounded retries cover the instant the
+// winner's row becomes visible), so reruns and concurrent generators can
+// never double-issue payouts for one period.
+func (s *ReconciliationService) savePayoutIdempotent(ctx context.Context, payout *entities.Payout) (*entities.Payout, error) {
 	query := `
 		INSERT INTO payouts (
-			id, driver_id, amount, currency, fee, net_amount, status,
+			id, driver_id, user_id, amount, currency, fee, net_amount, status,
 			total_earnings, tips, bonuses, platform_fees, transaction_count,
 			period_start, period_end, scheduled_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		ON CONFLICT (driver_id, period_start, period_end) DO NOTHING
 	`
-	_, err := s.db.Exec(ctx, query,
-		payout.ID, payout.DriverID, payout.Amount, payout.Currency,
+	tag, err := s.db.Exec(ctx, query,
+		payout.ID, payout.DriverID, payout.UserID, payout.Amount, payout.Currency,
 		payout.Fee, payout.NetAmount, payout.Status,
 		payout.TotalEarnings, payout.Tips, payout.Bonuses,
 		payout.PlatformFees, payout.TransactionCount,
 		payout.PeriodStart, payout.PeriodEnd, payout.ScheduledAt,
 		payout.CreatedAt, payout.UpdatedAt,
 	)
-	return err
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 1 {
+		return payout, nil
+	}
+
+	// Conflict: another generator (or a previous run) owns this period.
+	// Replay its committed row with bounded retries.
+	for attempt := 0; attempt < 4; attempt++ {
+		existing, loadErr := s.loadPayoutForPeriod(ctx, payout.DriverID, payout.PeriodStart, payout.PeriodEnd)
+		if loadErr == nil {
+			s.logger.Debug("payout already generated for period; replaying existing row",
+				zap.String("driver_id", payout.DriverID.String()),
+				zap.String("payout_id", existing.ID.String()),
+			)
+			return existing, nil
+		}
+		if !errors.Is(loadErr, errPayoutExists) {
+			return nil, loadErr
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 50 * time.Millisecond):
+		}
+	}
+	return nil, fmt.Errorf("payout for driver %s period [%s, %s] conflicted but no committed row found",
+		payout.DriverID, payout.PeriodStart, payout.PeriodEnd)
+}
+
+func (s *ReconciliationService) loadPayoutForPeriod(
+	ctx context.Context,
+	driverID uuid.UUID,
+	periodStart, periodEnd time.Time,
+) (*entities.Payout, error) {
+	var p entities.Payout
+	query := `
+		SELECT id, driver_id, user_id, amount, currency, fee, net_amount, status,
+		       total_earnings, tips, bonuses, platform_fees, adjustments,
+		       transaction_count, period_start, period_end, scheduled_at,
+		       created_at, updated_at
+		FROM payouts
+		WHERE driver_id = $1 AND period_start = $2 AND period_end = $3
+		LIMIT 1
+	`
+	err := s.db.QueryRow(ctx, query, driverID, periodStart, periodEnd).Scan(
+		&p.ID, &p.DriverID, &p.UserID, &p.Amount, &p.Currency, &p.Fee, &p.NetAmount,
+		&p.Status,
+		&p.TotalEarnings, &p.Tips, &p.Bonuses, &p.PlatformFees, &p.Adjustments,
+		&p.TransactionCount, &p.PeriodStart, &p.PeriodEnd, &p.ScheduledAt,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		// pgx.ErrNoRows surfaces here when the conflicting winner aborted
+		// before committing; callers retry within a bounded window.
+		return nil, fmt.Errorf("%w: %v", errPayoutExists, err)
+	}
+	return &p, nil
+}
+
+// ============================================================================
+// SCAN HELPERS
+// ============================================================================
+
+// pgNullableText scans a possibly-NULL text column into a plain string.
+type pgNullableText struct {
+	s string
+}
+
+func (o *pgNullableText) Scan(src any) error {
+	switch v := src.(type) {
+	case nil:
+		o.s = ""
+	case string:
+		o.s = v
+	case []byte:
+		o.s = string(v)
+	default:
+		return fmt.Errorf("pgNullableText: cannot scan %T", src)
+	}
+	return nil
 }
 
 // ============================================================================
 // EVENT EMISSION
 // ============================================================================
 
-func (s *ReconciliationService) emitReconciliationEvent(ctx context.Context, report *ReconciliationReport) {
+// emitReconciliationEvent publishes synchronously and returns the error so
+// operational visibility into reconciliation runs is not lost (the previous
+// fire-and-forget goroutine swallowed every failure).
+func (s *ReconciliationService) emitReconciliationEvent(ctx context.Context, report *ReconciliationReport) error {
 	event := eventbus.Event{
 		Type: "payment.reconciliation.completed",
 		Payload: map[string]interface{}{
-			"report_id":             report.ID,
-			"period_start":          report.PeriodStart,
-			"period_end":            report.PeriodEnd,
-			"total_transactions":    report.TotalTransactions,
-			"total_amount":          report.TotalAmount,
-			"matched_transactions":  report.MatchedTransactions,
+			"report_id":              report.ID,
+			"period_start":           report.PeriodStart,
+			"period_end":             report.PeriodEnd,
+			"total_transactions":     report.TotalTransactions,
+			"total_amount":           report.TotalAmount,
+			"matched_transactions":   report.MatchedTransactions,
 			"unmatched_transactions": report.UnmatchedTransactions,
-			"discrepancies_count":   len(report.Discrepancies),
-			"status":                report.Status,
+			"skipped_transactions":   report.SkippedTransactions,
+			"discrepancies_count":    len(report.Discrepancies),
+			"status":                 report.Status,
 		},
 		Timestamp: time.Now().Unix(),
 	}
-
-	go func() {
-		if err := s.eventBus.Publish(context.Background(), "payments", event); err != nil {
-			// Log error
-		}
-	}()
+	return s.eventBus.Publish(ctx, "payments", event)
 }

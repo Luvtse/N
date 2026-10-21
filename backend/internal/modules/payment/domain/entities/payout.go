@@ -25,11 +25,11 @@ var (
 type PayoutStatus string
 
 const (
-	PayoutStatusPending   PayoutStatus = "pending"
+	PayoutStatusPending    PayoutStatus = "pending"
 	PayoutStatusProcessing PayoutStatus = "processing"
-	PayoutStatusCompleted PayoutStatus = "completed"
-	PayoutStatusFailed    PayoutStatus = "failed"
-	PayoutStatusCancelled PayoutStatus = "cancelled"
+	PayoutStatusCompleted  PayoutStatus = "completed"
+	PayoutStatusFailed     PayoutStatus = "failed"
+	PayoutStatusCancelled  PayoutStatus = "cancelled"
 )
 
 // PayoutMethod represents the payout method
@@ -64,10 +64,10 @@ type Payout struct {
 	UserID   uuid.UUID `json:"user_id" db:"user_id"` // Driver's user account
 
 	// Financial
-	Amount         float64 `json:"amount" db:"amount"`
-	Currency       string  `json:"currency" db:"currency"`
-	Fee            float64 `json:"fee" db:"fee"`
-	NetAmount      float64 `json:"net_amount" db:"net_amount"`
+	Amount    float64 `json:"amount" db:"amount"`
+	Currency  string  `json:"currency" db:"currency"`
+	Fee       float64 `json:"fee" db:"fee"`
+	NetAmount float64 `json:"net_amount" db:"net_amount"`
 
 	// Status
 	Status PayoutStatus `json:"status" db:"status"`
@@ -78,16 +78,16 @@ type Payout struct {
 	AccountLast4 string       `json:"account_last4,omitempty" db:"account_last4"`
 
 	// Period
-	PeriodStart time.Time  `json:"period_start" db:"period_start"`
-	PeriodEnd   time.Time  `json:"period_end" db:"period_end"`
+	PeriodStart time.Time `json:"period_start" db:"period_start"`
+	PeriodEnd   time.Time `json:"period_end" db:"period_end"`
 
 	// Breakdown
-	TotalEarnings   float64 `json:"total_earnings" db:"total_earnings"`
-	Tips            float64 `json:"tips" db:"tips"`
-	Bonuses         float64 `json:"bonuses" db:"bonuses"`
-	PlatformFees    float64 `json:"platform_fees" db:"platform_fees"`
-	Adjustments     float64 `json:"adjustments" db:"adjustments"`
-	TransactionCount int    `json:"transaction_count" db:"transaction_count"`
+	TotalEarnings    float64 `json:"total_earnings" db:"total_earnings"`
+	Tips             float64 `json:"tips" db:"tips"`
+	Bonuses          float64 `json:"bonuses" db:"bonuses"`
+	PlatformFees     float64 `json:"platform_fees" db:"platform_fees"`
+	Adjustments      float64 `json:"adjustments" db:"adjustments"`
+	TransactionCount int     `json:"transaction_count" db:"transaction_count"`
 
 	// Metadata
 	Description string            `json:"description,omitempty" db:"description"`
@@ -184,12 +184,12 @@ func (p *Payout) IsOverdue() bool {
 
 // DriverBalance represents a driver's available balance
 type DriverBalance struct {
-	DriverID       uuid.UUID `json:"driver_id" db:"driver_id"`
-	AvailableBalance float64 `json:"available_balance" db:"available_balance"`
-	PendingBalance   float64 `json:"pending_balance" db:"pending_balance"`
-	TotalEarnings    float64 `json:"total_earnings" db:"total_earnings"`
-	TotalWithdrawn   float64 `json:"total_withdrawn" db:"total_withdrawn"`
-	Currency         string  `json:"currency" db:"currency"`
+	DriverID         uuid.UUID `json:"driver_id" db:"driver_id"`
+	AvailableBalance float64   `json:"available_balance" db:"available_balance"`
+	PendingBalance   float64   `json:"pending_balance" db:"pending_balance"`
+	TotalEarnings    float64   `json:"total_earnings" db:"total_earnings"`
+	TotalWithdrawn   float64   `json:"total_withdrawn" db:"total_withdrawn"`
+	Currency         string    `json:"currency" db:"currency"`
 	UpdatedAt        time.Time `json:"updated_at" db:"updated_at"`
 }
 
