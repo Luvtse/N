@@ -509,6 +509,10 @@ func NewRouter(deps *Dependencies) http.Handler {
 				// Driver offer feed: unassigned rides available for acceptance.
 				// Registered before /{driverID} so the literal path wins.
 				r.Get("/pending-rides", rideHandler.PendingRides)
+				// Phase 6: active-ride rehydration for the driver app's cold-start /
+				// crash-recovery / post-reconnect resync. Same literal-before-param
+				// convention as /pending-rides so chi matches the static segment first.
+				r.Get("/active-ride", rideHandler.GetActiveRide)
 				r.Get("/{driverID}", driverHandler.GetDriver)
 			})
 
