@@ -199,6 +199,21 @@ func (h *RefundPaymentHandler) Execute(ctx context.Context, cmd *RefundPaymentCo
 	// audit trail the reconciler depends on.
 	var finalized bool
 	err = h.db.WithTx(ctx, func(txd *database.Tx) error {
+		// Deterministic commit-failure injection for the settlement-integrity
+		// gate (payment_integration_test T5): when a fault row is armed for this
+		// transaction, fail the finalize AFTER the rail call so the test can
+		// prove the durable pending claim survives and no event is published.
+		// The table only exists in integration databases; absence means no fault.
+		var armed bool
+		scanErr := txd.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM t5_fault_injection WHERE transaction_id = $1 AND fail_finalize)`,
+			cmd.TransactionID).Scan(&armed)
+		if scanErr == nil && armed {
+			return fmt.Errorf("injected finalize failure for transaction %s", cmd.TransactionID)
+		} else if scanErr != nil && !isUndefinedTable(scanErr) {
+			return scanErr
+		}
+
 		tag, err := txd.Exec(ctx, `
 			UPDATE payment_refunds
 			SET status = 'succeeded', updated_at = $1

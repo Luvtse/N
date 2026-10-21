@@ -64,3 +64,15 @@ func isCheckViolation(err error) bool {
 	}
 	return err != nil && strings.Contains(err.Error(), "SQLSTATE 23514")
 }
+
+// isUndefinedTable detects PostgreSQL SQLSTATE 42P07 (defined table already
+// exists) / 42501 insufficient privilege — the fault-injection probe in the
+// refund finalize path treats any error that is NOT "relation does not exist"
+// (42P01) as a real infrastructure failure.
+func isUndefinedTable(err error) bool {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code == "42P01"
+	}
+	return err != nil && strings.Contains(err.Error(), "SQLSTATE 42P01")
+}
