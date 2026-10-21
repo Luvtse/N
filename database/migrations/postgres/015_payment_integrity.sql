@@ -1,5 +1,10 @@
 -- ============================================================================
 -- Migration 015 — Payment integrity (Phase 5: NIDUS-PAYMENT-001)
+-- PREREQUISITE: 016_payment_integrity_base.sql creates the base `transactions`
+-- table (no earlier migration ever did; verified against 001..014). The
+-- ALTER/CREATE-INDEX statements below assume that table exists. Both files are
+-- idempotent, so applying 015 after 016 is safe in either order on fresh and
+-- existing databases.
 -- ----------------------------------------------------------------------------
 -- Closes the verified defects in internal/modules/payment:
 --   D1a process_payment.go TOCTOU idempotency: check-then-insert with no
@@ -22,6 +27,37 @@
 -- ============================================================================
 
 BEGIN;
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ---------------------------------------------------------------------------
+-- 0. Base table (self-sufficiency): `transactions` is created by migration
+--    016_payment_integrity_base.sql, but no deployment may assume 016 has run
+--    before this one, and no earlier migration (001..014) ever created it.
+--    The CREATE TABLE IF NOT EXISTS below uses the identical definition so
+--    either ordering converges to the same physical shape. Column list
+--    verified against the payment module's own INSERT/SELECT statements
+--    (process_payment.go saveTransaction, refund_payment.go loadTransaction).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS transactions (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id                 UUID NOT NULL,
+    order_id                UUID NOT NULL,
+    order_type              VARCHAR(50) NOT NULL,
+    amount                  DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+    currency                CHAR(3) NOT NULL DEFAULT 'ETB',
+    fee                     DECIMAL(12,2) NOT NULL DEFAULT 0,
+    net_amount              DECIMAL(12,2) NOT NULL DEFAULT 0,
+    refunded_amount         DECIMAL(12,2) NOT NULL DEFAULT 0,
+    status                  VARCHAR(50) NOT NULL DEFAULT 'pending',
+    payment_method          VARCHAR(50),
+    external_transaction_id VARCHAR(255),
+    description             TEXT,
+    metadata                JSONB NOT NULL DEFAULT '{}'::jsonb,
+    refund_reason           TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- ---------------------------------------------------------------------------
 -- 1. transactions: legacy-module columns + authoritative references
